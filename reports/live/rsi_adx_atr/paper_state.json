@@ -1,14 +1,9 @@
 {
   "initial_cash": 10000,
-  "cash": 5033.808634806661,
+  "cash": 10029.05286113988,
   "fee_bps": 6,
   "slippage_bps": 5,
-  "positions": {
-    "ETHUSDT": {
-      "qty": 2.3950035891017514,
-      "avg_entry": 2081.9904852709656
-    }
-  },
+  "positions": {},
   "trades": [
     {
       "timestamp": 1770486875.665524,
@@ -53,6 +48,17 @@
       "value": 2487.87468469966,
       "pnl": null,
       "reason": "signal=100%\u00d750%"
+    },
+    {
+      "timestamp": 1770492801.2496085,
+      "symbol": "ETHUSDT",
+      "side": "SELL",
+      "qty": 2.3950035891017514,
+      "price": 2086.946005,
+      "fee": 2.9989459033419363,
+      "value": 4998.243172236561,
+      "pnl": 8.869541633559564,
+      "reason": "signal=0%\u00d750%"
     }
   ]
 }
