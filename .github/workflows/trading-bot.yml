@@ -1,0 +1,114 @@
+# ============================================================
+# GitHub Actions — 每小时自动运行交易策略
+# ============================================================
+#
+# 原理：
+#   1. 每小时第 5 分钟触发（等 K 线收盘 + 数据入库）
+#   2. 拉取最新代码 → 安装依赖 → 运行 run_live.py --once
+#   3. Paper Trading 模式会把状态文件 commit 回 repo（断线恢复）
+#
+# 设置步骤（只需做一次）：
+#   1. 把项目 push 到 GitHub
+#   2. 到 GitHub Repo → Settings → Secrets and variables → Actions
+#   3. 添加以下 Secrets：
+#      - TELEGRAM_BOT_TOKEN  （Telegram 通知用）
+#      - TELEGRAM_CHAT_ID    （Telegram 通知用）
+#   4. ✅ 完成！每小时会自动运行
+#
+# 切换到真实交易时，额外添加：
+#      - BINANCE_API_KEY
+#      - BINANCE_API_SECRET
+#   并将下方 mode 改为 "real"
+#
+# 免费额度：
+#   - Public repo：无限分钟
+#   - Private repo：每月 2,000 分钟（每次约 1~2 分钟，一天 24 次 ≈ 月用 720 分钟）
+# ============================================================
+
+name: Trading Bot
+
+on:
+  # ── 定时触发：每小时第 5 分钟 ──
+  schedule:
+    - cron: '5 * * * *'
+
+  # ── 手动触发（方便测试）──
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '交易模式'
+        required: true
+        default: 'paper'
+        type: choice
+        options:
+          - paper
+          - real
+
+# 防止同时运行多个实例
+concurrency:
+  group: trading-bot
+  cancel-in-progress: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ── 1. 拉取代码 ──
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # 需要 push 权限（用于保存 paper trading 状态）
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 2. 设置 Python ──
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. 安装依赖 ──
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      # ── 4. 运行策略（一次性） ──
+      - name: Run trading strategy
+        env:
+          # Telegram 通知（可选，不设也能跑）
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Binance API（真实交易才需要）
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+        run: |
+          echo "🕐 $(date -u '+%Y-%m-%d %H:%M UTC') — 开始运行策略"
+          python scripts/run_live.py \
+            --config config/rsi_adx_atr.yaml \
+            --paper \
+            --once
+          echo "✅ 策略执行完成"
+
+      # ── 5. 保存 Paper Trading 状态 ──
+      # 每次运行后把 paper_state.json commit 回 repo
+      # 这样下次运行时可以恢复持仓状态
+      - name: Save paper trading state
+        run: |
+          git config user.name "Trading Bot"
+          git config user.email "bot@github-actions"
+
+          # 只 commit 状态文件
+          git add reports/live/ || true
+
+          # 如果有变化才 commit
+          if git diff --staged --quiet; then
+            echo "📝 状态无变化，跳过 commit"
+          else
+            git commit -m "🤖 Paper Trading state update $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+            echo "💾 状态已保存"
+          fi
+
