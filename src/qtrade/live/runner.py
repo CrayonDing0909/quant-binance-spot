@@ -88,15 +88,26 @@ class LiveRunner:
 
         # 获取当前价格
         prices: dict[str, float] = {}
+        open_positions = []
         for sym in self.symbols:
             pos = self.broker.get_position(sym)
             if pos.is_open:
+                open_positions.append(sym)
                 try:
                     from .signal_generator import fetch_recent_klines
                     df = fetch_recent_klines(sym, self.interval, 5)
                     prices[sym] = float(df["close"].iloc[-1])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"⚠️  获取 {sym} 价格失败: {e}")
+
+        # 如果有持仓但抓不到价格，跳过熔断检查（避免假性触发）
+        if open_positions and len(prices) < len(open_positions):
+            missing = set(open_positions) - set(prices.keys())
+            logger.warning(
+                f"⚠️  熔断检查跳过：无法获取 {missing} 的价格，"
+                f"无法准确计算权益"
+            )
+            return False
 
         equity = self.broker.get_equity(prices)
         initial = self.broker.account.initial_cash

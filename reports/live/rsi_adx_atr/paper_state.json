@@ -1,62 +1,8 @@
 {
   "initial_cash": 10000,
-  "cash": 3113.4078749138253,
+  "cash": 10000,
   "fee_bps": 6,
   "slippage_bps": 5,
-  "positions": {
-    "BTCUSDT": {
-      "qty": 0.05415814721487641,
-      "avg_entry": 69297.201285
-    },
-    "ETHUSDT": {
-      "qty": 1.517788743290168,
-      "avg_entry": 2057.0986323647094
-    }
-  },
-  "trades": [
-    {
-      "timestamp": 1770480314.203277,
-      "symbol": "BTCUSDT",
-      "side": "BUY",
-      "qty": 0.07215298608433549,
-      "price": 69297.201285,
-      "fee": 2.9999999999999996,
-      "value": 5000.0,
-      "pnl": null,
-      "reason": "signal=100%\u00d750%"
-    },
-    {
-      "timestamp": 1770480314.359814,
-      "symbol": "ETHUSDT",
-      "side": "BUY",
-      "qty": 1.213872516994859,
-      "price": 2058.28863,
-      "fee": 1.4990999999999999,
-      "value": 2498.5,
-      "pnl": null,
-      "reason": "signal=100%\u00d750%"
-    },
-    {
-      "timestamp": 1770483604.902905,
-      "symbol": "BTCUSDT",
-      "side": "SELL",
-      "qty": 0.017994838869459073,
-      "price": 68979.06321500002,
-      "fee": 0.744760276752094,
-      "value": 1241.2671279201568,
-      "pnl": -6.46960358464254,
-      "reason": "signal=100%\u00d750%"
-    },
-    {
-      "timestamp": 1770483605.985437,
-      "symbol": "ETHUSDT",
-      "side": "BUY",
-      "qty": 0.303916226295309,
-      "price": 2052.34566,
-      "fee": 0.37424468882445316,
-      "value": 623.7411480407553,
-      "pnl": null,
-      "reason": "signal=100%\u00d750%"
-    }
-  ]
+  "positions": {},
+  "trades": []
 }
