@@ -78,6 +78,9 @@ jobs:
       # ── 4. 运行策略（一次性） ──
       - name: Run trading strategy
         env:
+          # GitHub Actions 在美国，api.binance.com 会封锁美国 IP (HTTP 451)
+          # 使用 data-api.binance.vision 作为公开数据端点，不受地区限制
+          BINANCE_BASE_URL: "https://data-api.binance.vision"
           # Telegram 通知（可选，不设也能跑）
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
