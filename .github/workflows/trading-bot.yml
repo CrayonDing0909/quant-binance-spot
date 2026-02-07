@@ -49,6 +49,9 @@ concurrency:
   group: trading-bot
   cancel-in-progress: false
 
+permissions:
+  contents: write    # 允许 git push 保存 paper trading 状态
+
 jobs:
   trade:
     runs-on: ubuntu-latest
