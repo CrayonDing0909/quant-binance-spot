@@ -123,6 +123,29 @@ def get_param_grid(strategy_name: str) -> dict:
             "oversold": [25, 30, 35],
             "overbought": [65, 70, 75],
         },
+        # RSI + ADX + ATR 组合策略
+        "rsi_adx_atr": {
+            "rsi_period": [10, 14, 18],
+            "oversold": [30, 35, 40],
+            "overbought": [65, 70, 75],
+            "min_adx": [15, 20, 25],
+            "stop_loss_atr": [1.5, 2.0, 2.5],
+            "take_profit_atr": [2.5, 3.0, 4.0],
+        },
+        "rsi_adx_atr_trailing": {
+            "rsi_period": [10, 14, 18],
+            "oversold": [30, 35, 40],
+            "min_adx": [15, 20, 25],
+            "stop_loss_atr": [1.5, 2.0, 2.5],
+            "trailing_stop_atr": [2.0, 2.5, 3.0],
+        },
+        "ema_cross_protected": {
+            "fast": [15, 20, 25],
+            "slow": [50, 60, 70],
+            "min_adx": [20, 25, 30],
+            "stop_loss_atr": [1.5, 2.0, 2.5],
+            "take_profit_atr": [2.5, 3.0, 4.0],
+        },
     }
     
     return grids.get(strategy_name, {})
@@ -179,15 +202,6 @@ def main() -> None:
         print(f"   3. 如果策略文件已创建，确保在 src/qtrade/strategy/__init__.py 中导入")
         return
     
-    # 准备回测配置
-    bt_cfg = {
-        "initial_cash": cfg.backtest.initial_cash,
-        "fee_bps": cfg.backtest.fee_bps,
-        "slippage_bps": cfg.backtest.slippage_bps,
-        "strategy_params": cfg.strategy.params,
-        "strategy_name": args.strategy,
-    }
-    
     # 获取参数网格
     param_grid = get_param_grid(args.strategy)
     if not param_grid:
@@ -200,7 +214,6 @@ def main() -> None:
             param_grid = {}
             for key, val in strategy_params.items():
                 if isinstance(val, (int, float)):
-                    # 在原始值附近生成参数网格（±20%）
                     base_val = float(val)
                     if base_val > 0:
                         param_grid[key] = [
@@ -209,21 +222,17 @@ def main() -> None:
                             int(base_val * 1.2) if isinstance(val, int) else base_val * 1.2,
                         ]
                     else:
-                        # 对于负数或零，使用固定范围
                         param_grid[key] = [val]
                 elif isinstance(val, list):
-                    # 如果已经是列表，直接使用
                     param_grid[key] = val
             
             if param_grid:
                 print(f"✅ 自动生成的参数网格: {param_grid}")
             else:
                 print("❌ 无法自动生成参数网格")
-                print("请手动在 get_param_grid 函数中添加参数网格，或修改配置文件")
                 return
         else:
             print("❌ 配置文件中没有策略参数")
-            print("请手动在 get_param_grid 函数中添加参数网格")
             return
     
     print(f"参数网格: {param_grid}")
@@ -235,6 +244,14 @@ def main() -> None:
     all_results = {}
     
     for sym in symbols:
+        # 准备回测配置（每个币种使用合并后的参数）
+        bt_cfg = {
+            "initial_cash": cfg.backtest.initial_cash,
+            "fee_bps": cfg.backtest.fee_bps,
+            "slippage_bps": cfg.backtest.slippage_bps,
+            "strategy_params": cfg.strategy.get_params(sym),
+            "strategy_name": args.strategy,
+        }
         print(f"\n{'='*60}")
         print(f"优化策略: {args.strategy} - {sym}")
         print(f"{'='*60}")

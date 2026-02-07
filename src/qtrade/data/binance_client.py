@@ -31,7 +31,7 @@ class BinanceHTTP:
         r.raise_for_status()
         return r.json()
 
-    def signed_post(self, path: str, params: dict) -> dict:
+    def _sign_params(self, params: dict) -> dict:
         if not self.api_secret:
             raise RuntimeError("Missing BINANCE_API_SECRET")
         params = dict(params)
@@ -39,6 +39,17 @@ class BinanceHTTP:
         query = urlencode(params)
         sig = hmac.new(self.api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
         params["signature"] = sig
+        return params
+
+    def signed_get(self, path: str, params: dict) -> dict | list:
+        params = self._sign_params(params)
+        url = f"{self.base_url}{path}"
+        r = requests.get(url, params=params, headers=self._headers(), timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def signed_post(self, path: str, params: dict) -> dict:
+        params = self._sign_params(params)
         url = f"{self.base_url}{path}"
         r = requests.post(url, params=params, headers=self._headers(), timeout=30)
         r.raise_for_status()

@@ -12,6 +12,7 @@ import pandas as pd
 class StrategyContext:
     """策略上下文信息"""
     symbol: str
+    interval: str = "1h"
 
 
 @dataclass

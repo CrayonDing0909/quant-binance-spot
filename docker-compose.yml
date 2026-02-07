@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  # ── Paper Trading 主程序 ──────────────────────
+  paper-trading:
+    build: .
+    container_name: qtrade-paper
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # 持久化状态和报告（容器重启不丢失）
+      - ./reports:/app/reports
+      - ./data:/app/data
+    command: >
+      python scripts/run_live.py
+      -c config/rsi_adx_atr.yaml
+      --paper
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── 每日报表（定时任务）──────────────────────
+  daily-report:
+    build: .
+    container_name: qtrade-report
+    restart: "no"
+    env_file: .env
+    volumes:
+      - ./reports:/app/reports
+    # 由 cron 或外部调度器触发
+    # docker compose run --rm daily-report
+    command: >
+      python scripts/daily_report.py
+      -c config/rsi_adx_atr.yaml
+    profiles:
+      - report  # 不自动启动，手动 / cron 触发
+

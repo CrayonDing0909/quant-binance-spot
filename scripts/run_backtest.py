@@ -83,21 +83,21 @@ def main() -> None:
     print(f"📊 策略: {strategy_name}")
     print(f"📁 输出目录: {report_dir}")
 
-    # 准备回测配置
-    bt_cfg = {
-        "initial_cash": cfg.backtest.initial_cash,
-        "fee_bps": cfg.backtest.fee_bps,
-        "slippage_bps": cfg.backtest.slippage_bps,
-        "strategy_params": cfg.strategy.params,
-        "strategy_name": strategy_name,
-        "validate_data": cfg.backtest.validate_data,
-        "clean_data_before": cfg.backtest.clean_data,
-    }
-
     # 确定交易对
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
 
     for sym in symbols:
+        # 准备回测配置（每个币种使用合并后的参数）
+        bt_cfg = {
+            "initial_cash": cfg.backtest.initial_cash,
+            "fee_bps": cfg.backtest.fee_bps,
+            "slippage_bps": cfg.backtest.slippage_bps,
+            "strategy_params": cfg.strategy.get_params(sym),
+            "strategy_name": strategy_name,
+            "validate_data": cfg.backtest.validate_data,
+            "clean_data_before": cfg.backtest.clean_data,
+            "interval": cfg.market.interval,
+        }
         data_path = cfg.data_dir / "binance" / "spot" / cfg.market.interval / f"{sym}.parquet"
 
         if not data_path.exists():

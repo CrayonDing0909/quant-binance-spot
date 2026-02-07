@@ -1,0 +1,73 @@
+# ============================================================
+# RSI + ADX + ATR 策略 — 优化后参数 (2026-02-07)
+# Grid Search 729 组合 → Walk-Forward 5-fold 验证通过
+# ============================================================
+#
+# BTCUSDT 最佳: Sharpe 3.71 → WF测试 Sharpe 3.84 (5/5 正收益)
+# ETHUSDT 最佳: Sharpe 4.12 → WF测试 Sharpe 3.83 (5/5 正收益)
+#
+# 核心逻辑:
+#   RSI < oversold 且 ADX > min_adx → 做多
+#   止损 = entry - 1.5×ATR, 止盈 = entry + 4.0×ATR (RR 1:2.67)
+# ============================================================
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 6
+  slippage_bps: 5
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+strategy:
+  name: "rsi_adx_atr"
+  # ── 基础参数（所有币种共用）──
+  params:
+    rsi_period: 10
+    overbought: 65
+    min_adx: 15
+    adx_period: 14
+    stop_loss_atr: 1.5
+    take_profit_atr: 4.0
+    trailing_stop_atr: null
+    atr_period: 14
+    cooldown_bars: 1
+    # ── 多时间框架趋势过滤（可选）──
+    # 4h EMA20>EMA50 = 上升趋势才允许 1h 做多
+    # 回测显示：现有 ADX filter 已足够，HTF 过滤器过度保守
+    # 设为 null = 不启用（推荐），设为 "4h" = 启用
+    htf_interval: null
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+  # ── 币种专属参数覆写（合并到 params）──
+  symbol_overrides:
+    BTCUSDT:
+      oversold: 30        # Sharpe 3.71, WF-test 3.84
+    ETHUSDT:
+      oversold: 35        # Sharpe 4.12, WF-test 3.83
+
+# ── 风控 ──
+# max_drawdown_pct: 最大回撤比例，超过则触发熔断
+#   设置原则：历史最大回撤 × 1.5~2 倍
+#   本策略 BTC MDD=17%, ETH MDD=13.5% → 熔断线设 30%
+#   null = 不启用熔断
+risk:
+  max_drawdown_pct: 0.30
+
+# ── 多币种仓位分配 ──
+# 总和 <= 1.0，剩余为现金储备
+# 不设置则按币种数量等权分配（各 50%）
+portfolio:
+  allocation:
+    BTCUSDT: 0.5
+    ETHUSDT: 0.5
+
+output:
+  report_dir: "./reports"
+

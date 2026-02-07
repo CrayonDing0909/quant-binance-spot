@@ -24,5 +24,7 @@ def get_strategy(name: str) -> Callable:
 # 导入策略模块以触发注册
 from . import ema_cross  # noqa: E402
 from . import rsi_strategy  # noqa: E402
-from . import smc_strategy  # noqa: E402  # noqa: E402
+from . import smc_strategy  # noqa: E402
 from . import my_strategy  # noqa: E402
+from . import example_stateful_strategy  # noqa: E402
+from . import rsi_adx_atr_strategy  # noqa: E402

@@ -55,7 +55,7 @@ def run_symbol_backtest(
     if should_clean:
         df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
 
-    ctx = StrategyContext(symbol=symbol)
+    ctx = StrategyContext(symbol=symbol, interval=cfg.get("interval", "1h"))
 
     # 获取策略函数
     strategy_name = strategy_name or cfg.get("strategy_name", "ema_cross")
