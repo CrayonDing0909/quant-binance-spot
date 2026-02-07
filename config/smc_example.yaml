@@ -1,0 +1,23 @@
+# SMC (Smart Money Concept) 策略配置示例
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 6
+  slippage_bps: 5
+  trade_on: "next_open"
+
+strategy:
+  name: "smc_basic"  # 使用 SMC 基础策略
+  params:
+    order_block_lookback: 20      # 订单块回看周期
+    liquidity_lookback: 50        # 流动性池回看周期
+    min_volume_multiplier: 1.5    # 最小成交量倍数
+
+output:
+  report_dir: "./reports"
+

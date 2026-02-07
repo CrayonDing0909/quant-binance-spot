@@ -1,0 +1,52 @@
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null   # null = now
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 6          # 0.06% example (maker/taker differs; start simple)
+  slippage_bps: 5     # fixed bps model for now
+  trade_on: "next_open"  # signal at close, execute next open
+  validate_data: true  # 是否验证数据质量
+  clean_data: true     # 是否在回测前清洗数据
+
+strategy:
+  name: "ema_cross"
+  params:
+    fast: 20
+    slow: 60
+
+# 风险管理配置
+risk:
+  max_position_pct: 1.0      # 最大仓位比例 [0, 1]
+  max_drawdown_pct: 0.5      # 最大回撤限制 [0, 1]
+  max_leverage: 1.0          # 最大杠杆（现货为 1.0）
+  max_single_position_pct: 0.5  # 单个资产最大仓位 [0, 1]
+  min_cash_reserve_pct: 0.0   # 最小现金储备比例 [0, 1]
+
+# 数据质量检查配置
+data_quality:
+  outlier_threshold: 3.0      # Z-score 阈值
+  max_price_change_pct: 0.5   # 最大价格变化百分比（50%）
+  min_volume: 0.0              # 最小成交量
+
+# 策略组合配置（可选）
+portfolio:
+  enabled: false
+  strategies:
+    - name: "ema_cross"
+      weight: 0.5
+      min_weight: 0.0
+      max_weight: 1.0
+    - name: "rsi"
+      weight: 0.5
+      min_weight: 0.0
+      max_weight: 1.0
+  weight_method: "equal"  # equal, fixed, performance, volatility, sharpe, dynamic
+  rebalance_freq: "D"     # D, W, M
+  lookback_period: 30     # 用于计算动态权重的回看期
+
+output:
+  report_dir: "./reports"

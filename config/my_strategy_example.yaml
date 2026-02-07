@@ -1,0 +1,7 @@
+# my_strategy 策略配置示例
+strategy:
+  name: "my_strategy"
+  params:
+    # TODO: 根据策略类型添加参数
+    param1: value1
+    param2: value2

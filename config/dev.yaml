@@ -1,0 +1,20 @@
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2024-01-01"
+  end: null
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 6
+  slippage_bps: 5
+  trade_on: "next_open"
+
+strategy:
+  name: "ema_cross"
+  params:
+    fast: 20
+    slow: 60
+
+output:
+  report_dir: "./reports"

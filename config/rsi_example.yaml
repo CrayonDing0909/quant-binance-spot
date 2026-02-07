@@ -1,0 +1,24 @@
+# RSI 策略配置示例
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 6
+  slippage_bps: 5
+  trade_on: "next_open"
+
+strategy:
+  name: "rsi"  # 使用 RSI 策略
+  params:
+    period: 14        # RSI 周期
+    oversold: 30      # 超卖阈值
+    overbought: 70    # 超买阈值
+    use_divergence: false  # 是否使用背离信号
+
+output:
+  report_dir: "./reports"
+
