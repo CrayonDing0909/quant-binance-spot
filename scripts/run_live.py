@@ -11,8 +11,14 @@
     # Paper Trading - 立即执行一次（不等待 K 线收盘）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once
 
+    # Real Trading — dry-run 模式（不下单，只看信号和模拟结果）
+    python scripts/run_live.py -c config/rsi_adx_atr.yaml --real --dry-run --once
+
     # Real Trading（需要 BINANCE_API_KEY + BINANCE_API_SECRET）
-    python scripts/run_live.py -c config/rsi_adx_atr.yaml --real
+    python scripts/run_live.py -c config/rsi_adx_atr.yaml --real --once
+
+    # 检查 Binance API 连接
+    python scripts/run_live.py -c config/rsi_adx_atr.yaml --check
 
     # 查看 Paper Trading 账户状态
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --status
@@ -55,47 +61,144 @@ def cmd_run(args, cfg) -> None:
             data_dir=cfg.data_dir,
         )
 
-    if args.real:
-        mode = "real"
-        print("⚠️  真实交易模式尚未完全启用")
-        print("   请先用 --paper 模式验证策略表现")
-        print("   确认后再取消此限制")
-        return
-    else:
-        mode = "paper"
-
-    # 初始化 Paper Broker
-    state_dir = Path(cfg.output.report_dir) / "live" / strategy_name
-    state_dir.mkdir(parents=True, exist_ok=True)
-
-    broker = PaperBroker(
-        initial_cash=cfg.backtest.initial_cash,
-        fee_bps=cfg.backtest.fee_bps,
-        slippage_bps=cfg.backtest.slippage_bps,
-        state_path=state_dir / "paper_state.json",
-    )
-
     # 初始化 Telegram 通知
     notifier = TelegramNotifier()
 
-    runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
+    if args.real:
+        # ── Real Trading 模式 ──
+        mode = "real"
+        dry_run = getattr(args, "dry_run", False)
 
-    if args.once:
-        # 立即执行一次
-        signals = runner.run_once()
-        print(f"\n{'─'*50}")
-        for sig in signals:
-            ind = sig["indicators"]
-            print(f"  {sig['symbol']}: signal={sig['signal']:.0%}, "
-                  f"price={sig['price']:.2f}, "
-                  f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
+        from qtrade.live.binance_spot_broker import BinanceSpotBroker
 
-        # 打印账户状态
-        prices = {s["symbol"]: s["price"] for s in signals if s["price"] > 0}
-        print(f"\n{broker.summary(prices)}")
+        broker = BinanceSpotBroker(dry_run=dry_run)
+        runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
+
+        if dry_run:
+            print("🧪 DRY-RUN 模式：所有下单指令只会记录，不会真的执行")
+            print()
+
+        if args.once:
+            signals = runner.run_once()
+            print(f"\n{'─'*50}")
+            for sig in signals:
+                ind = sig["indicators"]
+                print(f"  {sig['symbol']}: signal={sig['signal']:.0%}, "
+                      f"price={sig['price']:.2f}, "
+                      f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
+
+            # 打印账户余额
+            print(f"\n{'='*50}")
+            print(f"  Real Trading 账户 {'[DRY-RUN]' if dry_run else ''}")
+            print(f"{'='*50}")
+            usdt = broker.get_balance("USDT")
+            print(f"  USDT 余额: ${usdt:,.2f}")
+            for sym in symbols:
+                qty = broker.get_position(sym)
+                price = broker.get_price(sym)
+                if qty > 0:
+                    print(f"  {sym}: {qty:.6f} ≈ ${qty * price:,.2f}")
+            equity = broker.get_equity(symbols)
+            print(f"  总权益: ${equity:,.2f}")
+            print(f"{'='*50}")
+        else:
+            if not dry_run:
+                print("⚠️  即将以真实交易模式持续运行！")
+                print("    按 Ctrl+C 可随时停止")
+                print()
+            runner.run(max_ticks=args.max_ticks)
     else:
-        # 持续运行
-        runner.run(max_ticks=args.max_ticks)
+        # ── Paper Trading 模式 ──
+        mode = "paper"
+
+        state_dir = Path(cfg.output.report_dir) / "live" / strategy_name
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        broker = PaperBroker(
+            initial_cash=cfg.backtest.initial_cash,
+            fee_bps=cfg.backtest.fee_bps,
+            slippage_bps=cfg.backtest.slippage_bps,
+            state_path=state_dir / "paper_state.json",
+        )
+
+        runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
+
+        if args.once:
+            signals = runner.run_once()
+            print(f"\n{'─'*50}")
+            for sig in signals:
+                ind = sig["indicators"]
+                print(f"  {sig['symbol']}: signal={sig['signal']:.0%}, "
+                      f"price={sig['price']:.2f}, "
+                      f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
+
+            # 打印账户状态
+            prices = {s["symbol"]: s["price"] for s in signals if s["price"] > 0}
+            print(f"\n{broker.summary(prices)}")
+        else:
+            runner.run(max_ticks=args.max_ticks)
+
+
+def cmd_check(args, cfg) -> None:
+    """检查 Binance API 连接"""
+    from qtrade.live.binance_spot_broker import BinanceSpotBroker
+
+    print("=" * 50)
+    print("  🔍 Binance API 连接检查")
+    print("=" * 50)
+
+    try:
+        broker = BinanceSpotBroker(dry_run=True)
+    except RuntimeError as e:
+        print(f"\n{e}")
+        return
+
+    result = broker.check_connection(symbols=cfg.market.symbols)
+
+    print()
+    if "server_time" in result:
+        print(f"  ✅ 服务器时间: {result['server_time']}")
+    else:
+        print(f"  ❌ 服务器连接失败: {result.get('server_time_error', '未知错误')}")
+
+    if "account_error" in result:
+        print(f"  ❌ 账户连接失败: {result['account_error']}")
+    else:
+        print(f"  ✅ 账户类型: {result.get('account_type', '?')}")
+        print(f"  ✅ 可交易: {result.get('can_trade', '?')}")
+        print(f"  💰 USDT 余额: ${result.get('usdt_balance', 0):,.2f}")
+
+        balances = result.get("balances", {})
+        for asset, val in balances.items():
+            if asset != "USDT" and val["free"] > 0:
+                print(f"  💰 {asset}: {val['free']}")
+
+    prices = result.get("prices", {})
+    if prices:
+        print()
+        for sym, price in prices.items():
+            print(f"  📊 {sym}: ${price:,.2f}")
+
+    filters = result.get("filters", {})
+    if filters:
+        print()
+        print("  📋 交易规则:")
+        for sym, f in filters.items():
+            print(f"    {sym}: minQty={f['min_qty']}, "
+                  f"stepSize={f['step_size']}, "
+                  f"minNotional=${f['min_notional']}")
+
+    print()
+    print("=" * 50)
+    print("  ✅ 连接检查完成")
+    print()
+    print("  下一步:")
+    print("    # dry-run 测试（不下单）")
+    print(f"    python scripts/run_live.py -c {args.config} --real --dry-run --once")
+    print()
+    print("    # 真实交易（真金白银！）")
+    print(f"    python scripts/run_live.py -c {args.config} --real --once")
+    print("=" * 50)
 
 
 def cmd_status(args, cfg) -> None:
@@ -155,10 +258,14 @@ def main() -> None:
                             help="真实交易模式（需要 API Key）")
     mode_group.add_argument("--status", action="store_true",
                             help="查看 Paper Trading 账户状态")
+    mode_group.add_argument("--check", action="store_true",
+                            help="检查 Binance API 连接")
 
     # 运行选项
     parser.add_argument("--once", action="store_true",
                         help="只执行一次（不等待 K 线收盘）")
+    parser.add_argument("--dry-run", action="store_true", dest="dry_run",
+                        help="Real 模式下不实际下单（测试用）")
     parser.add_argument("--max-ticks", type=int, default=None,
                         help="最大运行次数")
 
@@ -168,6 +275,8 @@ def main() -> None:
 
     if args.status:
         cmd_status(args, cfg)
+    elif args.check:
+        cmd_check(args, cfg)
     else:
         cmd_run(args, cfg)
 

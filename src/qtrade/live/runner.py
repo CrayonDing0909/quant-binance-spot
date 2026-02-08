@@ -43,7 +43,7 @@ class LiveRunner:
     def __init__(
         self,
         cfg: AppConfig,
-        broker: PaperBroker,
+        broker: BrokerProtocol,
         mode: str = "paper",
         notifier: TelegramNotifier | None = None,
     ):
@@ -83,7 +83,10 @@ class LiveRunner:
         """
         if self._circuit_breaker_triggered:
             return True
-        if not self.max_drawdown_pct or not isinstance(self.broker, PaperBroker):
+        if not self.max_drawdown_pct:
+            return False
+        # 熔断只支持 Paper 模式（Real 模式靠手动管理）
+        if not isinstance(self.broker, PaperBroker):
             return False
 
         # 获取当前价格
@@ -294,36 +297,8 @@ class LiveRunner:
                     break
 
                 # 定期打印 + 推送账户摘要（每 6 tick = 6 小时）
-                if self.tick_count % 6 == 0 and isinstance(self.broker, PaperBroker):
-                    prices = {}
-                    for sym in self.symbols:
-                        pos = self.broker.get_position(sym)
-                        if pos.is_open:
-                            from .signal_generator import fetch_recent_klines
-                            try:
-                                df = fetch_recent_klines(sym, self.interval, 5)
-                                prices[sym] = float(df["close"].iloc[-1])
-                            except Exception:
-                                pass
-                    if prices:
-                        summary = self.broker.summary(prices)
-                        logger.info(f"\n{summary}")
-
-                        # Telegram 账户摘要
-                        equity = self.broker.get_equity(prices)
-                        positions_info = {
-                            sym: {"qty": p.qty, "avg_entry": p.avg_entry}
-                            for sym, p in self.broker.account.positions.items()
-                            if p.is_open
-                        }
-                        self.notifier.send_account_summary(
-                            initial_cash=self.broker.account.initial_cash,
-                            equity=equity,
-                            cash=self.broker.account.cash,
-                            positions=positions_info,
-                            trade_count=len(self.broker.account.trades),
-                            mode=self.mode.upper(),
-                        )
+                if self.tick_count % 6 == 0:
+                    self._send_periodic_summary()
 
                 if max_ticks and self.tick_count >= max_ticks:
                     logger.info(f"🏁 达到最大运行次数 ({max_ticks})，停止")
@@ -338,6 +313,73 @@ class LiveRunner:
                         f"{self.trade_count} trades, {elapsed/3600:.1f}h")
             # 停止通知
             self.notifier.send_shutdown(self.tick_count, self.trade_count, elapsed / 3600)
+
+    def _send_periodic_summary(self) -> None:
+        """定期推送账户摘要（支持 Paper + Real 模式）"""
+        from .signal_generator import fetch_recent_klines
+
+        if isinstance(self.broker, PaperBroker):
+            # Paper 模式：从 K 线获取价格计算权益
+            prices = {}
+            for sym in self.symbols:
+                pos = self.broker.get_position(sym)
+                if pos.is_open:
+                    try:
+                        df = fetch_recent_klines(sym, self.interval, 5)
+                        prices[sym] = float(df["close"].iloc[-1])
+                    except Exception:
+                        pass
+            if prices:
+                summary = self.broker.summary(prices)
+                logger.info(f"\n{summary}")
+
+                equity = self.broker.get_equity(prices)
+                positions_info = {
+                    sym: {"qty": p.qty, "avg_entry": p.avg_entry}
+                    for sym, p in self.broker.account.positions.items()
+                    if p.is_open
+                }
+                self.notifier.send_account_summary(
+                    initial_cash=self.broker.account.initial_cash,
+                    equity=equity,
+                    cash=self.broker.account.cash,
+                    positions=positions_info,
+                    trade_count=len(self.broker.account.trades),
+                    mode=self.mode.upper(),
+                )
+        else:
+            # Real 模式：直接查 Binance API
+            try:
+                usdt = self.broker.get_balance("USDT")
+                positions_info = {}
+                total_value = usdt
+                for sym in self.symbols:
+                    qty = self.broker.get_position(sym)
+                    if qty > 0:
+                        price = self.broker.get_price(sym)
+                        val = qty * price
+                        total_value += val
+                        positions_info[sym] = {"qty": qty, "avg_entry": price}
+
+                logger.info(
+                    f"\n{'='*50}\n"
+                    f"  Real Trading 账户摘要\n"
+                    f"{'='*50}\n"
+                    f"  USDT: ${usdt:,.2f}\n"
+                    f"  总权益: ${total_value:,.2f}\n"
+                    f"{'='*50}"
+                )
+
+                self.notifier.send_account_summary(
+                    initial_cash=0,  # Real 模式没有 initial_cash 概念
+                    equity=total_value,
+                    cash=usdt,
+                    positions=positions_info,
+                    trade_count=self.trade_count,
+                    mode=self.mode.upper(),
+                )
+            except Exception as e:
+                logger.warning(f"⚠️  获取 Real 账户摘要失败: {e}")
 
     def stop(self) -> None:
         self.is_running = False
