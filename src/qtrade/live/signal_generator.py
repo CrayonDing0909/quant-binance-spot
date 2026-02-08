@@ -27,7 +27,11 @@ def fetch_recent_klines(
     bars: int = MIN_BARS,
 ) -> pd.DataFrame:
     """
-    从 Binance 拉取最近 N 根 K 线
+    从 Binance 拉取最近 N 根 **已收盘** K 线
+
+    Binance API 总是返回当前未收盘的 K 线作为最后一根，
+    在 Live Trading 中使用未收盘 K 线会导致指标不可靠（假信号）。
+    因此这里会自动丢弃未收盘的 K 线。
 
     Args:
         symbol: 交易对, e.g. "BTCUSDT"
@@ -35,7 +39,7 @@ def fetch_recent_klines(
         bars: 需要的 K 线数量
 
     Returns:
-        DataFrame with OHLCV
+        DataFrame with OHLCV (只包含已收盘的 K 线)
     """
     from datetime import datetime, timezone, timedelta
 
@@ -52,6 +56,17 @@ def fetch_recent_klines(
 
     df = fetch_klines(symbol, interval, start_str)
     df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
+
+    # ── 丢弃未收盘的 K 线 ──────────────────────────
+    # Binance close_time 是该 K 线的结束时间 (e.g. 1h K 线 12:00 → close_time=12:59:59.999)
+    # 如果 close_time > 当前时间 → 该 K 线尚未收盘，必须丢弃
+    if "close_time" in df.columns:
+        now = pd.Timestamp.now(tz="UTC")
+        closed_mask = df["close_time"] <= now
+        n_dropped = (~closed_mask).sum()
+        if n_dropped > 0:
+            logger.debug(f"  {symbol}: 丢弃 {n_dropped} 根未收盘 K 线")
+        df = df[closed_mask]
 
     # 只保留最近 bars 根
     if len(df) > bars:
