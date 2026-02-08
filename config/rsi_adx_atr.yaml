@@ -63,10 +63,11 @@ risk:
 # ── 多币种仓位分配 ──
 # 总和 <= 1.0，剩余为现金储备
 # 不设置则按币种数量等权分配（各 50%）
+# BTC+ETH 相关性 ~0.85+，降低总曝险到 70%，留 30% 现金缓冲
 portfolio:
   allocation:
-    BTCUSDT: 0.5
-    ETHUSDT: 0.5
+    BTCUSDT: 0.35
+    ETHUSDT: 0.35
 
 output:
   report_dir: "./reports"

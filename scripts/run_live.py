@@ -31,6 +31,7 @@ Telegram 通知:
 from __future__ import annotations
 import argparse
 import json
+import time
 from pathlib import Path
 
 from qtrade.config import load_config
@@ -38,6 +39,42 @@ from qtrade.live.paper_broker import PaperBroker
 from qtrade.live.runner import LiveRunner
 from qtrade.live.signal_generator import generate_signal
 from qtrade.monitor.notifier import TelegramNotifier
+
+
+# ── Heartbeat（心跳监控）──────────────────────
+# 每 HEARTBEAT_INTERVAL_HOURS 小时发送一次 Telegram 心跳
+# 用于确认 cron / VM 仍在正常运行
+HEARTBEAT_INTERVAL_HOURS = 6
+HEARTBEAT_FILE = Path.home() / ".trading_heartbeat"
+
+
+def _maybe_send_heartbeat(notifier: TelegramNotifier, mode: str) -> None:
+    """如果距离上次心跳已超过 N 小时，发送一次心跳通知"""
+    if not notifier.enabled:
+        return
+
+    now = time.time()
+    last_beat = 0.0
+
+    if HEARTBEAT_FILE.exists():
+        try:
+            last_beat = float(HEARTBEAT_FILE.read_text().strip())
+        except (ValueError, OSError):
+            last_beat = 0.0
+
+    elapsed_hours = (now - last_beat) / 3600
+    if elapsed_hours >= HEARTBEAT_INTERVAL_HOURS:
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        notifier.send(
+            f"💚 <b>心跳正常</b> [{mode.upper()}]\n"
+            f"  🕐 {ts}\n"
+            f"  ✅ Cron 执行正常，Bot 运行中"
+        )
+        try:
+            HEARTBEAT_FILE.write_text(str(now))
+        except OSError:
+            pass
 
 
 def cmd_run(args, cfg) -> None:
@@ -101,6 +138,9 @@ def cmd_run(args, cfg) -> None:
             equity = broker.get_equity(symbols)
             print(f"  总权益: ${equity:,.2f}")
             print(f"{'='*50}")
+
+            # 心跳监控
+            _maybe_send_heartbeat(notifier, mode)
         else:
             if not dry_run:
                 print("⚠️  即将以真实交易模式持续运行！")
@@ -135,6 +175,9 @@ def cmd_run(args, cfg) -> None:
             # 打印账户状态
             prices = {s["symbol"]: s["price"] for s in signals if s["price"] > 0}
             print(f"\n{broker.summary(prices)}")
+
+            # 心跳监控
+            _maybe_send_heartbeat(notifier, mode)
         else:
             runner.run(max_ticks=args.max_ticks)
 
