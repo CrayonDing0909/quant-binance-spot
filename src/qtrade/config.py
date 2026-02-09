@@ -43,23 +43,31 @@ class PortfolioConfig:
     """
     多幣種倉位分配
 
-    allocation: { "BTCUSDT": 0.6, "ETHUSDT": 0.4 }
+    allocation: { "BTCUSDT": 0.3, "ETHUSDT": 0.3 } 或 null
         - 值為該幣種可用的最大權益比例
         - 總和應 <= 1.0（剩餘為現金儲備）
-        - 未指定時，按 symbols 數量等權分配
+        - 設為 null 或不設定 → 自動等權分配（考慮 cash_reserve）
+    
+    cash_reserve: 現金保留比例 [0, 1]，預設 0.2 (20%)
+        - 自動分配時：每幣權重 = (1 - cash_reserve) / n_symbols
+        - 例如 4 幣 + 20% 現金 → 每幣 20%
     """
     allocation: dict[str, float] | None = None
+    cash_reserve: float = 0.2  # 預設保留 20% 現金
 
     def get_weight(self, symbol: str, n_symbols: int = 1) -> float:
         """
         取得某幣種的權重 [0, 1]
 
-        如果有明確配置就用配置值，否則等權分配。
+        優先級：
+        1. 有明確 allocation 且包含該幣種 → 用設定值
+        2. 否則 → 自動等權分配，考慮 cash_reserve
         """
         if self.allocation and symbol in self.allocation:
             return float(self.allocation[symbol])
-        # 等權分配
-        return 1.0 / max(n_symbols, 1)
+        # 自動等權分配（扣除現金保留）
+        available = 1.0 - self.cash_reserve
+        return available / max(n_symbols, 1)
 
 
 @dataclass(frozen=True)
@@ -147,6 +155,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     portfolio_raw = raw.get("portfolio", {})
     portfolio = PortfolioConfig(
         allocation=portfolio_raw.get("allocation"),
+        cash_reserve=portfolio_raw.get("cash_reserve", 0.2),
     )
 
     # risk 可選

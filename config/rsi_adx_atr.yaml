@@ -82,13 +82,18 @@ position_sizing:
   min_trades_for_kelly: 20
 
 # ── 多幣種倉位分配 ──
-# 總和 <= 1.0，剩餘為現金儲備
-# 不設置則按幣種數量等權分配（各 50%）
-# BTC+ETH 相關性 ~0.85+，降低總曝險到 70%，留 30% 現金緩衝
+# cash_reserve: 現金保留比例（預設 0.2 = 20%）
+# allocation: 手動分配（null = 自動等權分配）
+#
+# 自動分配邏輯：
+#   每幣權重 = (1 - cash_reserve) / 幣種數量
+#   例如：4 幣 + 20% 現金 → 每幣 20%
+#        5 幣 + 20% 現金 → 每幣 16%
+#
+# 新增幣種只需修改 market.symbols，倉位會自動重新分配！
 portfolio:
-  allocation:
-    BTCUSDT: 0.35
-    ETHUSDT: 0.35
+  cash_reserve: 0.20  # 保留 20% 現金緩衝
+  allocation: null    # null = 自動等權分配
 
 output:
   report_dir: "./reports"
