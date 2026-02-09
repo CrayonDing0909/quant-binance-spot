@@ -1,0 +1,30 @@
+# Quant Trading Bot - Dependencies
+# 自動從 pyproject.toml 提取
+
+# 核心數據處理
+pandas>=2.0
+numpy>=1.24
+pyarrow>=14.0.0
+
+# 配置與環境
+pyyaml>=6.0
+python-dotenv>=1.0
+
+# 網路請求
+requests>=2.31
+
+# 回測引擎
+vectorbt>=0.26.0
+
+# Numba JIT（vectorbt 需要特定版本）
+numba==0.58.1
+llvmlite==0.41.1
+
+# 視覺化
+matplotlib>=3.7.0
+
+# 進度條
+tqdm>=4.66
+
+# 可選：安全存儲
+# keyring>=24.0
