@@ -1,11 +1,11 @@
 """
-Paper Trading Broker — 模拟下单引擎
+Paper Trading Broker — 模擬下單引擎
 
 功能：
-    - 追踪虚拟现金和持仓
-    - 模拟市价单（含手续费 + 滑点）
-    - 记录每笔交易
-    - 持久化状态到 JSON（可断线恢复）
+    - 追蹤虛擬現金和持倉
+    - 模擬市價單（含手續費 + 滑點）
+    - 記錄每筆交易
+    - 持久化狀態到 JSON（可斷線恢復）
 """
 from __future__ import annotations
 import json
@@ -28,8 +28,8 @@ class TradeRecord:
     price: float
     fee: float
     value: float            # price * qty
-    pnl: float | None       # 平仓时计算
-    reason: str = ""        # 开仓 / 止损 / 止盈 / 信号
+    pnl: float | None       # 平倉時計算
+    reason: str = ""        # 開倉 / 止損 / 止盈 / 信號
 
 
 @dataclass
@@ -63,7 +63,7 @@ class PaperAccount:
 
 
 class PaperBroker:
-    """Paper Trading 模拟下单引擎"""
+    """Paper Trading 模擬下單引擎"""
 
     def __init__(
         self,
@@ -80,16 +80,16 @@ class PaperBroker:
         )
         self.state_path = Path(state_path) if state_path else None
 
-        # 尝试从文件恢复状态
+        # 嘗試從檔案恢復狀態
         if self.state_path and self.state_path.exists():
             self._load_state()
-            logger.info(f"📂 恢复 Paper Trading 状态: cash={self.account.cash:.2f}, "
-                        f"持仓={len([p for p in self.account.positions.values() if p.is_open])} 个")
+            logger.info(f"📂 恢復 Paper Trading 狀態: cash={self.account.cash:.2f}, "
+                        f"持倉={len([p for p in self.account.positions.values() if p.is_open])} 個")
 
-    # ── 公开接口 ──────────────────────────────────────────
+    # ── 公開介面 ──────────────────────────────────────────
 
     def get_equity(self, prices: dict[str, float]) -> float:
-        """计算总权益 = 现金 + 持仓市值"""
+        """計算總權益 = 現金 + 持倉市值"""
         equity = self.account.cash
         for sym, pos in self.account.positions.items():
             if pos.is_open and sym in prices:
@@ -102,7 +102,7 @@ class PaperBroker:
         return self.account.positions[symbol]
 
     def get_position_pct(self, symbol: str, current_price: float) -> float:
-        """获取某币种持仓占总权益的比例 [0, 1]"""
+        """獲取某幣種持倉佔總權益的比例 [0, 1]"""
         pos = self.get_position(symbol)
         if not pos.is_open or current_price <= 0:
             return 0.0
@@ -117,15 +117,20 @@ class PaperBroker:
         target_pct: float,
         current_price: float,
         reason: str = "signal",
+        stop_loss_price: float | None = None,  # v2.0: 介面對齊（Paper 模式不使用）
     ) -> TradeRecord | None:
         """
-        执行目标仓位调整
+        執行目標倉位調整
 
-        将持仓调整到 target_pct（占总权益比例）。
-        如果当前仓位已接近目标（差距 < 2%），不执行。
+        將持倉調整到 target_pct（佔總權益比例）。
+        如果當前倉位已接近目標（差距 < 2%），不執行。
+        
+        Note:
+            stop_loss_price 在 Paper 模式不使用（回測已模擬止損邏輯），
+            僅用於與 BinanceSpotBroker 介面對齊。
 
         Returns:
-            TradeRecord 如果执行了交易，否则 None
+            TradeRecord 如果執行了交易，否則 None
         """
         target_pct = max(0.0, min(1.0, target_pct))
         current_pct = self.get_position_pct(symbol, current_price)
@@ -138,25 +143,25 @@ class PaperBroker:
         equity = self.get_equity({symbol: current_price})
 
         if diff > 0:
-            # 需要买入
+            # 需要買入
             buy_value = diff * equity
             return self._buy(symbol, buy_value, current_price, reason)
         else:
-            # 需要卖出
+            # 需要賣出
             sell_value = abs(diff) * equity
             return self._sell(symbol, sell_value, current_price, reason)
 
-    # ── 内部方法 ──────────────────────────────────────────
+    # ── 內部方法 ──────────────────────────────────────────
 
     def _buy(self, symbol: str, value: float, price: float, reason: str) -> TradeRecord | None:
-        # 滑点：买入价格更高
+        # 滑點：買入價格更高
         exec_price = price * (1 + self.account.slippage_pct)
         qty = value / exec_price
         fee = value * self.account.fee_pct
         total_cost = value + fee
 
         if total_cost > self.account.cash:
-            # 调整到可用现金
+            # 調整到可用現金
             total_cost = self.account.cash
             value = total_cost / (1 + self.account.fee_pct)
             fee = total_cost - value
@@ -169,7 +174,7 @@ class PaperBroker:
 
         pos = self.get_position(symbol)
         if pos.is_open:
-            # 加仓：更新均价
+            # 加倉：更新均價
             total_qty = pos.qty + qty
             pos.avg_entry = (pos.avg_entry * pos.qty + exec_price * qty) / total_qty
             pos.qty = total_qty
@@ -200,9 +205,9 @@ class PaperBroker:
         if not pos.is_open:
             return None
 
-        # 滑点：卖出价格更低
+        # 滑點：賣出價格更低
         exec_price = price * (1 - self.account.slippage_pct)
-        qty = min(value / exec_price, pos.qty)  # 不能卖超过持仓
+        qty = min(value / exec_price, pos.qty)  # 不能賣超過持倉
 
         if qty < 1e-10:
             return None
@@ -237,7 +242,7 @@ class PaperBroker:
                     f"(fee={fee:.2f}, pnl={pnl:+.2f} {emoji}, reason={reason})")
         return trade
 
-    # ── 状态持久化 ────────────────────────────────────────
+    # ── 狀態持久化 ────────────────────────────────────────
 
     def _save_state(self) -> None:
         if not self.state_path:
@@ -287,20 +292,20 @@ class PaperBroker:
         for tdata in state.get("trades", []):
             self.account.trades.append(TradeRecord(**tdata))
 
-    # ── 报告 ─────────────────────────────────────────────
+    # ── 報告 ─────────────────────────────────────────────
 
     def summary(self, prices: dict[str, float]) -> str:
         equity = self.get_equity(prices)
         ret = (equity / self.account.initial_cash - 1) * 100
         lines = [
             "=" * 50,
-            f"  Paper Trading 账户摘要",
+            f"  Paper Trading 帳戶摘要",
             "=" * 50,
-            f"  初始资金:   ${self.account.initial_cash:,.2f}",
-            f"  当前现金:   ${self.account.cash:,.2f}",
-            f"  总权益:     ${equity:,.2f}",
-            f"  总收益:     {ret:+.2f}%",
-            f"  交易笔数:   {len(self.account.trades)}",
+            f"  初始資金:   ${self.account.initial_cash:,.2f}",
+            f"  當前現金:   ${self.account.cash:,.2f}",
+            f"  總權益:     ${equity:,.2f}",
+            f"  總收益:     {ret:+.2f}%",
+            f"  交易筆數:   {len(self.account.trades)}",
         ]
         for sym, pos in self.account.positions.items():
             if pos.is_open:
@@ -309,4 +314,3 @@ class PaperBroker:
                 lines.append(f"  {sym}: {pos.qty:.6f} @ {pos.avg_entry:.2f} (PnL: {pnl:+.2f})")
         lines.append("=" * 50)
         return "\n".join(lines)
-

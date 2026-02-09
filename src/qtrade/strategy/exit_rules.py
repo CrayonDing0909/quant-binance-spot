@@ -1,9 +1,14 @@
 """
-通用出场规则（止损 / 止盈 / 移动止损 / 冷却期）
+通用出場規則（止損 / 止盈 / 移動止損 / 冷卻期）
 
-设计理念：
-    策略只负责产生「进出场信号」（raw position），
-    出场规则作为后处理器，叠加在任何策略上。
+設計理念：
+    策略只負責產生「進出場信號」（raw position），
+    出場規則作為後處理器，疊加在任何策略上。
+
+止損/止盈檢查邏輯（v2.0 更新）：
+    - 止損：用 K 棒「最低價」檢查（模擬硬止損/預掛單行為）
+    - 止盈：用 K 棒「最高價」檢查
+    - 這比用「收盤價」更真實，與實盤預掛單行為一致
 
 用法：
     from qtrade.strategy.exit_rules import apply_exit_rules
@@ -11,10 +16,10 @@
     raw_pos = my_indicator_logic(df, params)
     pos = apply_exit_rules(
         df, raw_pos,
-        stop_loss_atr=2.0,      # 止损 = 入场价 - 2×ATR
-        take_profit_atr=3.0,    # 止盈 = 入场价 + 3×ATR
-        trailing_stop_atr=2.5,  # 移动止损 = 最高价 - 2.5×ATR
-        cooldown_bars=6,        # 止损后 6 根 bar 不进场
+        stop_loss_atr=2.0,      # 止損 = 入場價 - 2×ATR
+        take_profit_atr=3.0,    # 止盈 = 入場價 + 3×ATR
+        trailing_stop_atr=2.5,  # 移動止損 = 最高價 - 2.5×ATR
+        cooldown_bars=6,        # 止損後 6 根 bar 不進場
     )
 """
 from __future__ import annotations
@@ -35,36 +40,37 @@ def apply_exit_rules(
     cooldown_bars: int = 0,
 ) -> pd.Series:
     """
-    对原始持仓信号叠加出场规则
+    對原始持倉信號疊加出場規則
 
-    优先级：ATR-based > 固定百分比
+    優先級：ATR-based > 固定百分比
     如果 stop_loss_atr 和 stop_loss_pct 都提供，使用 ATR 版本。
 
     Args:
-        df:               K线数据（需要 high, low, close 列）
-        raw_pos:          原始持仓信号 [0, 1]，已经 shift(1) 过
-        stop_loss_atr:    止损距离（ATR 倍数），None = 不用
-        take_profit_atr:  止盈距离（ATR 倍数），None = 不用
-        trailing_stop_atr: 移动止损（ATR 倍数），None = 不用
-        stop_loss_pct:    止损百分比（备选），None = 不用
-        take_profit_pct:  止盈百分比（备选），None = 不用
-        atr_period:       ATR 计算周期
-        cooldown_bars:    出场后冷却期（bar 数）
+        df:               K線數據（需要 high, low, close 列）
+        raw_pos:          原始持倉信號 [0, 1]，已經 shift(1) 過
+        stop_loss_atr:    止損距離（ATR 倍數），None = 不用
+        take_profit_atr:  止盈距離（ATR 倍數），None = 不用
+        trailing_stop_atr: 移動止損（ATR 倍數），None = 不用
+        stop_loss_pct:    止損百分比（備選），None = 不用
+        take_profit_pct:  止盈百分比（備選），None = 不用
+        atr_period:       ATR 計算週期
+        cooldown_bars:    出場後冷卻期（bar 數）
 
     Returns:
-        调整后的持仓序列 [0, 1]
+        調整後的持倉序列 [0, 1]
     """
     close = df["close"].values
     high = df["high"].values
+    low = df["low"].values  # 用於更真實的止損檢查
     n = len(df)
 
-    # 预计算 ATR
+    # 預計算 ATR
     atr = calculate_atr(df, atr_period).values
 
     raw = raw_pos.values.copy()
     result = np.zeros(n, dtype=float)
 
-    # 状态变量
+    # 狀態變數
     in_position = False
     entry_price = 0.0
     sl_price = 0.0
@@ -75,34 +81,37 @@ def apply_exit_rules(
     for i in range(n):
         current_close = close[i]
         current_high = high[i]
+        current_low = low[i]
         current_atr = atr[i] if not np.isnan(atr[i]) else 0.0
 
-        # ── 冷却期检查 ──
+        # ── 冷卻期檢查 ──
         if cooldown_remaining > 0:
             cooldown_remaining -= 1
             result[i] = 0.0
             continue
 
-        # ── 持仓中：检查 SL / TP / Trailing ──
+        # ── 持倉中：檢查 SL / TP / Trailing ──
         if in_position:
             triggered_exit = False
 
-            # 更新移动止损的最高价
+            # 更新移動止損的最高價
             if current_high > highest_since_entry:
                 highest_since_entry = current_high
-                # 更新移动止损价
+                # 更新移動止損價
                 if trailing_stop_atr is not None and current_atr > 0:
                     sl_price = max(sl_price, highest_since_entry - trailing_stop_atr * current_atr)
 
-            # 检查止损
-            if sl_price > 0 and current_close <= sl_price:
+            # 檢查止損（用 low 價，更貼近硬止損行為）
+            # 如果 K 棒最低價觸及止損線，視為止損觸發
+            if sl_price > 0 and current_low <= sl_price:
                 triggered_exit = True
 
-            # 检查止盈
-            if tp_price > 0 and current_close >= tp_price:
+            # 檢查止盈（用 high 價，更貼近實際行為）
+            # 如果 K 棒最高價觸及止盈線，視為止盈觸發
+            if tp_price > 0 and current_high >= tp_price:
                 triggered_exit = True
 
-            # 策略本身发出平仓信号
+            # 策略本身發出平倉信號
             if raw[i] <= 0:
                 triggered_exit = True
 
@@ -113,14 +122,14 @@ def apply_exit_rules(
             else:
                 result[i] = 1.0
 
-        # ── 空仓中：检查是否该进场 ──
+        # ── 空倉中：檢查是否該進場 ──
         else:
             if raw[i] > 0:
                 in_position = True
                 entry_price = current_close
                 highest_since_entry = current_high
 
-                # 设定止损价
+                # 設定止損價
                 if stop_loss_atr is not None and current_atr > 0:
                     sl_price = entry_price - stop_loss_atr * current_atr
                 elif stop_loss_pct is not None:
@@ -128,7 +137,7 @@ def apply_exit_rules(
                 else:
                     sl_price = 0.0
 
-                # 设定止盈价
+                # 設定止盈價
                 if take_profit_atr is not None and current_atr > 0:
                     tp_price = entry_price + take_profit_atr * current_atr
                 elif take_profit_pct is not None:
@@ -141,4 +150,3 @@ def apply_exit_rules(
                 result[i] = 0.0
 
     return pd.Series(result, index=raw_pos.index)
-

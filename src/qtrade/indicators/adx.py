@@ -1,14 +1,14 @@
 """
-ADX (Average Directional Index) 指标
+ADX (Average Directional Index) 指標
 
-衡量趋势强度（不区分方向）：
-- ADX < 20: 无趋势 / 震荡市
-- ADX 20-40: 趋势形成中
-- ADX > 40: 强趋势
-- +DI > -DI: 上升趋势
-- -DI > +DI: 下降趋势
+衡量趨勢強度（不區分方向）：
+- ADX < 20: 無趨勢 / 震盪市
+- ADX 20-40: 趨勢形成中
+- ADX > 40: 強趨勢
+- +DI > -DI: 上升趨勢
+- -DI > +DI: 下降趨勢
 
-典型用法：ADX > 25 时使用趋势策略，ADX < 20 时使用均值回归策略。
+典型用法：ADX > 25 時使用趨勢策略，ADX < 20 時使用均值回歸策略。
 """
 from __future__ import annotations
 import pandas as pd
@@ -17,23 +17,23 @@ import numpy as np
 
 def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
-    计算 ADX、+DI、-DI
+    計算 ADX、+DI、-DI
 
     Args:
         df: 包含 high, low, close 列的 DataFrame
-        period: ADX 周期，默认 14
+        period: ADX 週期，預設 14
 
     Returns:
         DataFrame 包含：
-        - ADX:  趋势强度（0-100）
-        - +DI:  正方向指标
-        - -DI:  负方向指标
+        - ADX:  趨勢強度（0-100）
+        - +DI:  正方向指標
+        - -DI:  負方向指標
 
     Example:
         >>> adx_data = calculate_adx(df, period=14)
         >>> strong_trend = adx_data["ADX"] > 25
         >>> uptrend = adx_data["+DI"] > adx_data["-DI"]
-        >>> # 强上升趋势
+        >>> # 強上升趨勢
         >>> strong_uptrend = strong_trend & uptrend
     """
     high = df["high"]
@@ -79,4 +79,3 @@ def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         "+DI": plus_di,
         "-DI": minus_di,
     }, index=df.index)
-

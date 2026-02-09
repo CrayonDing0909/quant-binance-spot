@@ -1,5 +1,5 @@
 """
-MACD (Moving Average Convergence Divergence) 指标
+MACD (Moving Average Convergence Divergence) 指標
 """
 from __future__ import annotations
 import pandas as pd
@@ -13,24 +13,24 @@ def calculate_macd(
     signal_period: int = 9
 ) -> pd.DataFrame:
     """
-    计算 MACD 指标
+    計算 MACD 指標
     
-    MACD 由三条线组成：
-    - MACD 线：快线 EMA - 慢线 EMA
-    - 信号线：MACD 线的 EMA
-    - 柱状图：MACD 线 - 信号线
+    MACD 由三條線組成：
+    - MACD 線：快線 EMA - 慢線 EMA
+    - 信號線：MACD 線的 EMA
+    - 柱狀圖：MACD 線 - 信號線
     
     Args:
-        close: 收盘价序列
-        fast_period: 快线周期，默认 12
-        slow_period: 慢线周期，默认 26
-        signal_period: 信号线周期，默认 9
+        close: 收盤價序列
+        fast_period: 快線週期，預設 12
+        slow_period: 慢線週期，預設 26
+        signal_period: 信號線週期，預設 9
     
     Returns:
         DataFrame 包含以下列：
-        - macd: MACD 线
-        - signal: 信号线
-        - histogram: 柱状图（MACD - Signal）
+        - macd: MACD 線
+        - signal: 信號線
+        - histogram: 柱狀圖（MACD - Signal）
     
     Example:
         >>> macd_data = calculate_macd(close, fast_period=12, slow_period=26)
@@ -50,4 +50,3 @@ def calculate_macd(
         "signal": signal_line,
         "histogram": histogram,
     }, index=close.index)
-

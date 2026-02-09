@@ -1,22 +1,22 @@
 """
-回测脚本
+回測腳本
 
-支持命令行参数和配置文件两种方式。
+支援命令列參數和配置檔兩種方式。
 
 使用方法:
-    # 使用配置文件（默认）
+    # 使用配置檔（預設）
     python scripts/run_backtest.py
 
-    # 指定配置文件
+    # 指定配置檔
     python scripts/run_backtest.py -c config/rsi.yaml
 
-    # 指定策略（覆盖配置文件中的策略）
+    # 指定策略（覆蓋配置檔中的策略）
     python scripts/run_backtest.py -s rsi
 
-    # 指定策略和配置文件
+    # 指定策略和配置檔
     python scripts/run_backtest.py -c config/rsi.yaml -s rsi
 
-    # 指定交易对（只回测指定交易对）
+    # 指定交易對（只回測指定交易對）
     python scripts/run_backtest.py --symbol BTCUSDT
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ from qtrade.backtest.plotting import plot_backtest_summary
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="运行策略回测",
+        description="運行策略回測",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -38,40 +38,40 @@ def main() -> None:
         "-c", "--config",
         type=str,
         default="config/base.yaml",
-        help="配置文件路径（默认: config/base.yaml）"
+        help="配置檔路徑（預設: config/base.yaml）"
     )
     parser.add_argument(
         "-s", "--strategy",
         type=str,
         default=None,
-        help="策略名称（覆盖配置文件中的策略）"
+        help="策略名稱（覆蓋配置檔中的策略）"
     )
     parser.add_argument(
         "--symbol",
         type=str,
         default=None,
-        help="指定交易对（默认使用配置文件中的所有交易对）"
+        help="指定交易對（預設使用配置檔中的所有交易對）"
     )
     parser.add_argument(
         "--output-dir",
         type=str,
         default=None,
-        help="输出目录（默认: reports/{strategy_name}）"
+        help="輸出目錄（預設: reports/{strategy_name}）"
     )
 
     args = parser.parse_args()
 
-    # 加载配置
+    # 載入配置
     cfg = load_config(args.config)
 
-    # 确定使用的策略
+    # 確定使用的策略
     strategy_name = args.strategy or cfg.strategy.name
     if not strategy_name:
-        print("❌ 错误: 未指定策略名称")
-        print("   请在配置文件中设置 strategy.name，或使用 -s/--strategy 参数")
+        print("❌ 錯誤: 未指定策略名稱")
+        print("   請在配置檔中設定 strategy.name，或使用 -s/--strategy 參數")
         return
 
-    # 确定输出目录
+    # 確定輸出目錄
     if args.output_dir:
         report_dir = Path(args.output_dir)
     else:
@@ -81,13 +81,13 @@ def main() -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"📊 策略: {strategy_name}")
-    print(f"📁 输出目录: {report_dir}")
+    print(f"📁 輸出目錄: {report_dir}")
 
-    # 确定交易对
+    # 確定交易對
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
 
     for sym in symbols:
-        # 准备回测配置（每个币种使用合并后的参数）
+        # 準備回測配置（每個幣種使用合併後的參數）
         bt_cfg = {
             "initial_cash": cfg.backtest.initial_cash,
             "fee_bps": cfg.backtest.fee_bps,
@@ -101,19 +101,19 @@ def main() -> None:
         data_path = cfg.data_dir / "binance" / "spot" / cfg.market.interval / f"{sym}.parquet"
 
         if not data_path.exists():
-            print(f"⚠️  数据文件不存在: {data_path}")
-            print(f"   请先运行: python scripts/download_data.py --symbol {sym}")
+            print(f"⚠️  數據檔案不存在: {data_path}")
+            print(f"   請先運行: python scripts/download_data.py --symbol {sym}")
             continue
 
         print(f"\n{'='*60}")
-        print(f"回测: {strategy_name} - {sym}")
+        print(f"回測: {strategy_name} - {sym}")
         print(f"{'='*60}")
 
         res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name)
         pf = res["pf"]
         pf_bh = res["pf_bh"]
 
-        # ── 1. 策略 vs Buy & Hold 对比报告 ──────────────
+        # ── 1. 策略 vs Buy & Hold 對比報告 ──────────────
         report = full_report(pf, pf_bh, strategy_name)
         print(f"\n{'─'*50}")
         print(f"  {sym}  策略 vs Buy & Hold")
@@ -122,7 +122,7 @@ def main() -> None:
 
         stats_path = report_dir / f"stats_{sym}.csv"
         report.to_csv(stats_path)
-        print(f"\n✅ 统计报告: {stats_path}")
+        print(f"\n✅ 統計報告: {stats_path}")
 
         # ── 2. 交易摘要 ────────────────────────────────
         t_summary = trade_summary(pf)
@@ -136,21 +136,21 @@ def main() -> None:
             t_summary.to_csv(ts_path)
             print(f"\n✅ 交易摘要: {ts_path}")
 
-        # ── 3. 逐笔交易记录 ────────────────────────────
+        # ── 3. 逐筆交易記錄 ────────────────────────────
         trades_df = trade_analysis(pf)
         if not trades_df.empty:
             trades_path = report_dir / f"trades_{sym}.csv"
             trades_df.to_csv(trades_path, index=False)
-            print(f"✅ 逐笔交易: {trades_path}  ({len(trades_df)} 笔)")
+            print(f"✅ 逐筆交易: {trades_path}  ({len(trades_df)} 筆)")
 
-        # ── 4. 资金曲线图（含 Buy & Hold）───────────────
+        # ── 4. 資金曲線圖（含 Buy & Hold）───────────────
         plot_path = report_dir / f"equity_curve_{sym}.png"
         plot_backtest_summary(
             pf, res["df"], res["pos"], sym, plot_path,
             pf_benchmark=pf_bh,
             strategy_name=strategy_name,
         )
-        print(f"✅ 资金曲线图: {plot_path}")
+        print(f"✅ 資金曲線圖: {plot_path}")
 
 
 if __name__ == "__main__":

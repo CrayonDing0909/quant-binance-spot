@@ -1,11 +1,11 @@
 """
-回测可视化
+回測視覺化
 
 提供：
-- 策略 vs Buy & Hold 对比资金曲线
-- 价格 + 买卖信号
-- 持仓比例
-- 回撤图
+- 策略 vs Buy & Hold 對比資金曲線
+- 價格 + 買賣信號
+- 持倉比例
+- 回撤圖
 """
 from __future__ import annotations
 from pathlib import Path
@@ -23,12 +23,12 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
                           pf_benchmark: vbt.Portfolio | None = None,
                           strategy_name: str = "Strategy") -> None:
     """
-    绘制完整的回测摘要图
+    繪製完整的回測摘要圖
 
-    4 个子图：
-      1. 价格 + 买卖信号
-      2. 持仓比例
-      3. 资金曲线（策略 vs Buy & Hold）
+    4 個子圖：
+      1. 價格 + 買賣信號
+      2. 持倉比例
+      3. 資金曲線（策略 vs Buy & Hold）
       4. 回撤
     """
     fig, axes = plt.subplots(4, 1, figsize=(16, 14), sharex=True,
@@ -36,7 +36,7 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
     fig.suptitle(f"{symbol}  —  {strategy_name}  Backtest Report",
                  fontsize=16, fontweight="bold", y=0.98)
 
-    # ── 1. 价格 + 买卖信号 ──────────────────────────────
+    # ── 1. 價格 + 買賣信號 ──────────────────────────────
     ax = axes[0]
     ax.plot(df.index, df["close"], linewidth=1.2, alpha=0.85, color="#333", label="Close")
 
@@ -54,14 +54,14 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
     ax.legend(loc="upper left", fontsize=9)
     ax.grid(True, alpha=0.25)
 
-    # ── 2. 持仓比例 ────────────────────────────────────
+    # ── 2. 持倉比例 ────────────────────────────────────
     ax = axes[1]
     ax.fill_between(pos.index, 0, pos.values, alpha=0.4, color="#42a5f5", label="Position")
     ax.set_ylabel("Position [0-1]")
     ax.set_ylim(-0.05, 1.15)
     ax.grid(True, alpha=0.25)
 
-    # ── 3. 资金曲线：策略 vs Buy & Hold ────────────────
+    # ── 3. 資金曲線：策略 vs Buy & Hold ────────────────
     ax = axes[2]
     equity = pf.value()
     ax.plot(equity.index, equity.values, linewidth=2, color="#1565c0",
@@ -78,7 +78,7 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
     ax.legend(loc="upper left", fontsize=10)
     ax.grid(True, alpha=0.25)
 
-    # 在图上标注最终收益
+    # 在圖上標註最終收益
     strat_ret = (equity.iloc[-1] / equity.iloc[0] - 1) * 100
     label_x = equity.index[-1]
     ax.annotate(f"{strat_ret:+.1f}%", xy=(label_x, equity.iloc[-1]),
@@ -92,7 +92,7 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
 
     # ── 4. 回撤 ────────────────────────────────────────
     ax = axes[3]
-    dd = pf.drawdown() * 100  # 转为百分比
+    dd = pf.drawdown() * 100  # 轉為百分比
     ax.fill_between(dd.index, dd.values, 0, alpha=0.35, color="#ef5350", label="Strategy DD")
 
     if pf_benchmark is not None:
@@ -121,7 +121,7 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
 
 def plot_equity_curve(pf: vbt.Portfolio, symbol: str,
                       save_path: Path | None = None) -> None:
-    """简版资金曲线图（向后兼容）"""
+    """簡版資金曲線圖（向後相容）"""
     plot_backtest_summary(pf, pd.DataFrame({"close": pf.close}), 
                           pd.Series(0.0, index=pf.close.index),
                           symbol, save_path)

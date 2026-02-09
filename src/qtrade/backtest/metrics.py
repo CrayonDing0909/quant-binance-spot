@@ -1,10 +1,10 @@
 """
-回测指标计算
+回測指標計算
 
 提供：
-- 策略 vs Buy & Hold 基准对比
-- 完整的风险/收益指标
-- 逐笔交易分析
+- 策略 vs Buy & Hold 基準對比
+- 完整的風險/收益指標
+- 逐筆交易分析
 """
 from __future__ import annotations
 import pandas as pd
@@ -13,7 +13,7 @@ import vectorbt as vbt
 
 
 def pretty_stats(stats: pd.Series) -> pd.Series:
-    """原始精简输出（向后兼容）"""
+    """原始精簡輸出（向後相容）"""
     keys = [
         "Start", "End", "Total Return [%]", "Max Drawdown [%]",
         "Sharpe Ratio", "Win Rate [%]", "Total Trades"
@@ -25,19 +25,19 @@ def pretty_stats(stats: pd.Series) -> pd.Series:
 def benchmark_buy_and_hold(df: pd.DataFrame, initial_cash: float,
                            fee_bps: float = 0, slippage_bps: float = 0) -> vbt.Portfolio:
     """
-    计算 Buy & Hold 基准
+    計算 Buy & Hold 基準
     
-    在第一根 bar 全仓买入，持有到最后。
+    在第一根 bar 全倉買入，持有到最後。
     """
     close = df["close"]
     open_ = df["open"]
     fee = fee_bps / 10_000.0
     slippage = slippage_bps / 10_000.0
 
-    # 全程持仓 100%
+    # 全程持倉 100%
     bh_pos = pd.Series(1.0, index=df.index)
-    # 第一根 bar 买入
-    bh_pos.iloc[0] = 0.0  # shift 效果：第一根信号，第二根执行
+    # 第一根 bar 買入
+    bh_pos.iloc[0] = 0.0  # shift 效果：第一根信號，第二根執行
 
     pf_bh = vbt.Portfolio.from_orders(
         close=close,
@@ -56,10 +56,10 @@ def benchmark_buy_and_hold(df: pd.DataFrame, initial_cash: float,
 def full_report(pf: vbt.Portfolio, pf_bh: vbt.Portfolio,
                 strategy_name: str = "Strategy") -> pd.DataFrame:
     """
-    生成完整回测报告：策略 vs Buy & Hold 对比
+    生成完整回測報告：策略 vs Buy & Hold 對比
 
     Returns:
-        DataFrame，两列：Strategy / Buy & Hold
+        DataFrame，兩列：Strategy / Buy & Hold
     """
     s = pf.stats()
     b = pf_bh.stats()
@@ -89,7 +89,7 @@ def full_report(pf: vbt.Portfolio, pf_bh: vbt.Portfolio,
 
     report = pd.DataFrame(rows, index=[strategy_name, "Buy & Hold"]).T
     
-    # 添加 alpha（策略超额收益）
+    # 添加 alpha（策略超額收益）
     strat_ret = _get(s, "Total Return [%]", 0)
     bh_ret = _get(b, "Total Return [%]", 0)
     alpha_row = pd.DataFrame(
@@ -103,7 +103,7 @@ def full_report(pf: vbt.Portfolio, pf_bh: vbt.Portfolio,
 
 
 def _annualized_return(pf: vbt.Portfolio) -> float:
-    """计算年化收益率"""
+    """計算年化收益率"""
     total_ret = pf.stats().get("Total Return [%]", 0) / 100.0
     equity = pf.value()
     if len(equity) < 2:
@@ -120,10 +120,10 @@ def _annualized_return(pf: vbt.Portfolio) -> float:
 
 def trade_analysis(pf: vbt.Portfolio) -> pd.DataFrame:
     """
-    逐笔交易分析
+    逐筆交易分析
     
     Returns:
-        DataFrame: 每笔交易的详情
+        DataFrame: 每筆交易的詳情
             - Entry Time, Exit Time
             - Entry Price, Exit Price
             - PnL, Return [%]
@@ -145,7 +145,7 @@ def trade_analysis(pf: vbt.Portfolio) -> pd.DataFrame:
     result["PnL"] = trades["PnL"]
     result["Return [%]"] = trades["Return"].apply(lambda x: round(x * 100, 2))
     result["Duration"] = trades["Exit Timestamp"] - trades["Entry Timestamp"]
-    # vectorbt 可能返回 int (0=Open,1=Closed) 或字符串
+    # vectorbt 可能返回 int (0=Open,1=Closed) 或字串
     def _parse_status(x):
         if isinstance(x, str):
             return x
@@ -157,10 +157,10 @@ def trade_analysis(pf: vbt.Portfolio) -> pd.DataFrame:
 
 def trade_summary(pf: vbt.Portfolio) -> pd.Series:
     """
-    交易摘要统计
+    交易摘要統計
     
     Returns:
-        Series: 交易层面的汇总指标
+        Series: 交易層面的彙總指標
     """
     trades_df = trade_analysis(pf)
     if trades_df.empty:
@@ -194,7 +194,7 @@ def trade_summary(pf: vbt.Portfolio) -> pd.Series:
 
 
 def _max_consecutive(mask: pd.Series) -> int:
-    """计算最大连续 True 的次数"""
+    """計算最大連續 True 的次數"""
     if mask.empty:
         return 0
     groups = (~mask).cumsum()

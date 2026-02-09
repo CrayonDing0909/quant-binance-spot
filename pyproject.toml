@@ -16,6 +16,11 @@ dependencies = [
   "matplotlib>=3.7.0",
 ]
 
+[project.optional-dependencies]
+security = [
+  "keyring>=24.0",  # 系統安全存儲密鑰
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

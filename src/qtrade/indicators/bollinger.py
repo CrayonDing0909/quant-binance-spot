@@ -1,5 +1,5 @@
 """
-Bollinger Bands (布林带) 指标
+Bollinger Bands (布林帶) 指標
 """
 from __future__ import annotations
 import pandas as pd
@@ -12,32 +12,32 @@ def calculate_bollinger_bands(
     std_mult: float = 2.0
 ) -> pd.DataFrame:
     """
-    计算布林带指标
+    計算布林帶指標
     
-    布林带由三条线组成：
-    - 中轨：移动平均线（SMA）
-    - 上轨：中轨 + N倍标准差
-    - 下轨：中轨 - N倍标准差
+    布林帶由三條線組成：
+    - 中軌：移動平均線（SMA）
+    - 上軌：中軌 + N倍標準差
+    - 下軌：中軌 - N倍標準差
     
     Args:
-        close: 收盘价序列
-        period: 移动平均周期，默认 20
-        std_mult: 标准差倍数，默认 2.0
+        close: 收盤價序列
+        period: 移動平均週期，預設 20
+        std_mult: 標準差倍數，預設 2.0
     
     Returns:
         DataFrame 包含以下列：
-        - upper: 上轨
-        - middle: 中轨（SMA）
-        - lower: 下轨
-        - bandwidth: 带宽（(上轨-下轨)/中轨）
-        - %b: 价格在布林带中的位置（0-1）
+        - upper: 上軌
+        - middle: 中軌（SMA）
+        - lower: 下軌
+        - bandwidth: 帶寬（(上軌-下軌)/中軌）
+        - %b: 價格在布林帶中的位置（0-1）
     
     Example:
         >>> bb = calculate_bollinger_bands(close, period=20, std_mult=2.0)
         >>> upper = bb['upper']
         >>> middle = bb['middle']
         >>> lower = bb['lower']
-        >>> # 价格触及下轨 -> 可能超卖
+        >>> # 價格觸及下軌 -> 可能超賣
         >>> oversold = close < bb['lower']
     """
     middle = calculate_sma(close, period)
@@ -46,11 +46,11 @@ def calculate_bollinger_bands(
     upper = middle + (std * std_mult)
     lower = middle - (std * std_mult)
     
-    # 带宽：衡量布林带的宽度
+    # 帶寬：衡量布林帶的寬度
     bandwidth = (upper - lower) / middle
     
-    # %b：价格在布林带中的位置
-    # 0 = 在下轨，0.5 = 在中轨，1 = 在上轨
+    # %b：價格在布林帶中的位置
+    # 0 = 在下軌，0.5 = 在中軌，1 = 在上軌
     percent_b = (close - lower) / (upper - lower)
     
     return pd.DataFrame({
@@ -60,4 +60,3 @@ def calculate_bollinger_bands(
         "bandwidth": bandwidth,
         "%b": percent_b,
     }, index=close.index)
-

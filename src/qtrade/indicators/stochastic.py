@@ -1,11 +1,11 @@
 """
-Stochastic Oscillator（随机指标）
+Stochastic Oscillator（隨機指標）
 
-衡量收盘价在一段时间内的价格范围中的位置。
-- %K > 80: 超买
-- %K < 20: 超卖
-- %K 上穿 %D: 买入信号
-- %K 下穿 %D: 卖出信号
+衡量收盤價在一段時間內的價格範圍中的位置。
+- %K > 80: 超買
+- %K < 20: 超賣
+- %K 上穿 %D: 買入信號
+- %K 下穿 %D: 賣出信號
 """
 from __future__ import annotations
 import pandas as pd
@@ -18,24 +18,24 @@ def calculate_stochastic(
     smooth_k: int = 3,
 ) -> pd.DataFrame:
     """
-    计算 Stochastic Oscillator
+    計算 Stochastic Oscillator
 
     Args:
         df: 包含 high, low, close 列的 DataFrame
-        k_period: %K 回看周期，默认 14
-        d_period: %D 平滑周期，默认 3
-        smooth_k: %K 的额外平滑（1 = Fast Stoch, 3 = Slow Stoch），默认 3
+        k_period: %K 回看週期，預設 14
+        d_period: %D 平滑週期，預設 3
+        smooth_k: %K 的額外平滑（1 = Fast Stoch, 3 = Slow Stoch），預設 3
 
     Returns:
         DataFrame 包含：
-        - %K: 快线（经平滑后）
-        - %D: 慢线（%K 的 SMA）
+        - %K: 快線（經平滑後）
+        - %D: 慢線（%K 的 SMA）
 
     Example:
         >>> stoch = calculate_stochastic(df, k_period=14, d_period=3)
         >>> oversold = stoch["%K"] < 20
         >>> overbought = stoch["%K"] > 80
-        >>> # 金叉买入
+        >>> # 金叉買入
         >>> buy = (stoch["%K"] > stoch["%D"]) & (stoch["%K"].shift(1) <= stoch["%D"].shift(1))
     """
     high = df["high"]
@@ -55,4 +55,3 @@ def calculate_stochastic(
     d = k.rolling(window=d_period).mean()
 
     return pd.DataFrame({"%K": k, "%D": d}, index=df.index)
-

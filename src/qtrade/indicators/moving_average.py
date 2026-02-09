@@ -1,5 +1,5 @@
 """
-移动平均线指标
+移動平均線指標
 """
 from __future__ import annotations
 import pandas as pd
@@ -7,11 +7,11 @@ import pandas as pd
 
 def calculate_sma(close: pd.Series, period: int) -> pd.Series:
     """
-    计算 SMA (简单移动平均线)
+    計算 SMA (簡單移動平均線)
     
     Args:
-        close: 收盘价序列
-        period: 移动平均周期
+        close: 收盤價序列
+        period: 移動平均週期
     
     Returns:
         SMA 值序列
@@ -21,14 +21,14 @@ def calculate_sma(close: pd.Series, period: int) -> pd.Series:
 
 def calculate_ema(close: pd.Series, period: int, adjust: bool = False) -> pd.Series:
     """
-    计算 EMA (指数移动平均线)
+    計算 EMA (指數移動平均線)
     
-    EMA 对近期价格给予更高权重，反应更快。
+    EMA 對近期價格給予更高權重，反應更快。
     
     Args:
-        close: 收盘价序列
-        period: 移动平均周期
-        adjust: 是否使用调整因子，默认 False
+        close: 收盤價序列
+        period: 移動平均週期
+        adjust: 是否使用調整因子，預設 False
     
     Returns:
         EMA 值序列
@@ -38,13 +38,13 @@ def calculate_ema(close: pd.Series, period: int, adjust: bool = False) -> pd.Ser
 
 def calculate_wma(close: pd.Series, period: int) -> pd.Series:
     """
-    计算 WMA (加权移动平均线)
+    計算 WMA (加權移動平均線)
     
-    WMA 对近期价格给予线性递减的权重。
+    WMA 對近期價格給予線性遞減的權重。
     
     Args:
-        close: 收盘价序列
-        period: 移动平均周期
+        close: 收盤價序列
+        period: 移動平均週期
     
     Returns:
         WMA 值序列
@@ -56,4 +56,3 @@ def calculate_wma(close: pd.Series, period: int) -> pd.Series:
         return (series * weights).sum()
     
     return close.rolling(window=period).apply(weighted_mean, raw=False)
-

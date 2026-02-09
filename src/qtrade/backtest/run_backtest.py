@@ -26,45 +26,45 @@ def run_symbol_backtest(
     risk_limits: Optional[RiskLimits] = None
 ) -> dict:
     """
-    运行单个交易对的回测
+    運行單個交易對的回測
 
     Returns:
         {
             "pf":       策略 Portfolio,
-            "pf_bh":    Buy & Hold Portfolio (基准),
+            "pf_bh":    Buy & Hold Portfolio (基準),
             "stats":    策略原始 stats,
-            "df":       K线 DataFrame,
-            "pos":      持仓序列,
+            "df":       K線 DataFrame,
+            "pos":      持倉序列,
         }
     """
     df = load_klines(data_path)
 
-    # 数据质量检查
+    # 數據質量檢查
     should_validate = validate_data if validate_data is not None else cfg.get("validate_data", True)
     if should_validate:
         quality_report = validate_data_quality(df)
         if not quality_report.is_valid:
-            print(f"⚠️  警告: {symbol} 数据质量问题")
+            print(f"⚠️  警告: {symbol} 數據質量問題")
             for error in quality_report.errors:
                 print(f"  - {error}")
             for warning in quality_report.warnings:
                 print(f"  - {warning}")
 
-    # 数据清洗
+    # 數據清洗
     should_clean = clean_data_before if clean_data_before is not None else cfg.get("clean_data_before", True)
     if should_clean:
         df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
 
     ctx = StrategyContext(symbol=symbol, interval=cfg.get("interval", "1h"))
 
-    # 获取策略函数
+    # 獲取策略函數
     strategy_name = strategy_name or cfg.get("strategy_name", "ema_cross")
     strategy_func = get_strategy(strategy_name)
 
     # positions: 0..1 (Spot long-only)
     pos = strategy_func(df, ctx, cfg["strategy_params"])
 
-    # 应用风险限制（如果提供）
+    # 應用風險限制（如果提供）
     if risk_limits is not None:
         equity_curve = (1 + df["close"].pct_change()).cumprod() * cfg["initial_cash"]
         adjusted_pos = pd.Series(0.0, index=pos.index)
@@ -96,7 +96,7 @@ def run_symbol_backtest(
         direction="longonly",
     )
 
-    # ── Buy & Hold 基准 ────────────────────────────
+    # ── Buy & Hold 基準 ────────────────────────────
     pf_bh = benchmark_buy_and_hold(
         df,
         initial_cash=cfg["initial_cash"],

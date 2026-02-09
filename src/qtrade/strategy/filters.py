@@ -1,22 +1,24 @@
 """
-通用信号过滤器
+通用信號過濾器
 
-设计理念：
-    过滤器作为后处理器，叠加在策略的原始信号上。
-    如果当前 bar 不满足过滤条件，不允许新开仓（但不强制平仓）。
+設計理念：
+    過濾器作為後處理器，疊加在策略的原始信號上。
+    如果當前 bar 不滿足過濾條件，不允許新開倉（但不強制平倉）。
 
 用法：
-    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter
+    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter
 
     raw_pos = my_indicator_logic(df, params)
     pos = trend_filter(df, raw_pos, min_adx=25)
     pos = volume_filter(df, pos, min_volume_ratio=1.2)
-    pos = htf_trend_filter(df, pos, htf_interval="4h")  # 高级时间框架趋势
+    pos = volatility_filter(df, pos, min_atr_ratio=0.005)  # 波動率過濾
+    pos = htf_trend_filter(df, pos, htf_interval="4h")  # 高級時間框架趨勢
 """
 from __future__ import annotations
 import pandas as pd
 import numpy as np
 from ..indicators.adx import calculate_adx
+from ..indicators.atr import calculate_atr
 from ..indicators.volume import calculate_obv
 from ..indicators.moving_average import calculate_ema
 
@@ -29,22 +31,22 @@ def trend_filter(
     require_uptrend: bool = True,
 ) -> pd.Series:
     """
-    ADX 趋势过滤器
+    ADX 趨勢過濾器
 
-    规则：
-    - ADX < min_adx → 无趋势，禁止新开仓
-    - require_uptrend=True → 还要求 +DI > -DI（上升趋势）
-    - 已有持仓不受影响（由出场规则或策略信号决定平仓）
+    規則：
+    - ADX < min_adx → 無趨勢，禁止新開倉
+    - require_uptrend=True → 還要求 +DI > -DI（上升趨勢）
+    - 已有持倉不受影響（由出場規則或策略信號決定平倉）
 
     Args:
-        df:              K线数据
-        raw_pos:         原始持仓信号
-        min_adx:         最小 ADX 值，低于此值不开新仓
-        adx_period:      ADX 周期
-        require_uptrend: 是否要求上升趋势（+DI > -DI）
+        df:              K線數據
+        raw_pos:         原始持倉信號
+        min_adx:         最小 ADX 值，低於此值不開新倉
+        adx_period:      ADX 週期
+        require_uptrend: 是否要求上升趨勢（+DI > -DI）
 
     Returns:
-        过滤后的持仓序列
+        過濾後的持倉序列
     """
     adx_data = calculate_adx(df, adx_period)
     adx = adx_data["ADX"].values
@@ -61,14 +63,14 @@ def trend_filter(
 
         if raw[i] > 0:
             if was_in_position:
-                # 已有持仓 → 保持（不因 ADX 下降而强制平仓）
+                # 已有持倉 → 保持（不因 ADX 下降而強制平倉）
                 result[i] = raw[i]
             elif has_trend and is_uptrend:
-                # 允许新开仓
+                # 允許新開倉
                 result[i] = raw[i]
                 was_in_position = True
             else:
-                # 不允许新开仓
+                # 不允許新開倉
                 result[i] = 0.0
         else:
             result[i] = 0.0
@@ -84,19 +86,19 @@ def volume_filter(
     volume_period: int = 20,
 ) -> pd.Series:
     """
-    成交量过滤器
+    成交量過濾器
 
-    规则：当前成交量 > 均量 × min_volume_ratio 时才允许新开仓。
-    避免在低流动性时段进场。
+    規則：當前成交量 > 均量 × min_volume_ratio 時才允許新開倉。
+    避免在低流動性時段進場。
 
     Args:
-        df:                K线数据
-        raw_pos:           原始持仓信号
-        min_volume_ratio:  最小成交量倍数
-        volume_period:     均量计算周期
+        df:                K線數據
+        raw_pos:           原始持倉信號
+        min_volume_ratio:  最小成交量倍數
+        volume_period:     均量計算週期
 
     Returns:
-        过滤后的持仓序列
+        過濾後的持倉序列
     """
     volume = df["volume"].values
     vol_ma = df["volume"].rolling(volume_period).mean().values
@@ -123,9 +125,97 @@ def volume_filter(
     return pd.Series(result, index=raw_pos.index)
 
 
-# ── 高级时间框架重采样映射 ──────────────────────────────────
+def volatility_filter(
+    df: pd.DataFrame,
+    raw_pos: pd.Series,
+    min_atr_ratio: float = 0.005,
+    atr_period: int = 14,
+    lookback: int = 50,
+    use_percentile: bool = False,
+    min_percentile: float = 25.0,
+) -> pd.Series:
+    """
+    波動率過濾器（ATR Ratio）
+
+    專業量化交易的標準做法：當波動率不足時暫停交易，避免：
+    - 假突破信號增多
+    - 止損被噪音觸發
+    - 獲利空間不足以覆蓋手續費
+
+    兩種模式：
+    1. 絕對閾值模式 (use_percentile=False)：
+       - ATR / Close >= min_atr_ratio 時允許交易
+       - min_atr_ratio=0.005 表示波動率至少 0.5%
+
+    2. 百分位模式 (use_percentile=True)：
+       - ATR 在歷史 lookback 期的百分位 >= min_percentile 時允許交易
+       - min_percentile=25 表示波動率要高於歷史 25% 的水平
+
+    Args:
+        df:              K線數據
+        raw_pos:         原始持倉信號
+        min_atr_ratio:   最小 ATR/Price 比率（絕對閾值模式）
+        atr_period:      ATR 計算週期
+        lookback:        百分位計算的回看週期
+        use_percentile:  是否使用百分位模式
+        min_percentile:  最小百分位閾值（百分位模式）
+
+    Returns:
+        過濾後的持倉序列
+
+    Example:
+        # 絕對閾值：波動率至少 0.8%
+        pos = volatility_filter(df, raw_pos, min_atr_ratio=0.008)
+
+        # 百分位：波動率要高於歷史 30% 水平
+        pos = volatility_filter(df, raw_pos, use_percentile=True, min_percentile=30)
+    """
+    atr = calculate_atr(df, atr_period)
+    close = df["close"]
+
+    # 計算 ATR Ratio
+    atr_ratio = (atr / close).values
+
+    if use_percentile:
+        # 百分位模式：計算滾動百分位
+        atr_series = pd.Series(atr_ratio, index=df.index)
+        rolling_pct = atr_series.rolling(lookback).apply(
+            lambda x: (x.iloc[-1] > x).sum() / len(x) * 100 if len(x) > 0 else 50,
+            raw=False,
+        ).values
+        vol_ok_arr = rolling_pct >= min_percentile
+    else:
+        # 絕對閾值模式
+        vol_ok_arr = atr_ratio >= min_atr_ratio
+
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+    was_in_position = False
+
+    for i in range(len(raw)):
+        vol_ok = not np.isnan(atr_ratio[i]) and vol_ok_arr[i]
+
+        if raw[i] > 0:
+            if was_in_position:
+                # 已有持倉 → 保持（不因波動率下降而強制平倉）
+                result[i] = raw[i]
+            elif vol_ok:
+                # 波動率足夠 → 允許新開倉
+                result[i] = raw[i]
+                was_in_position = True
+            else:
+                # 波動率不足 → 禁止新開倉
+                result[i] = 0.0
+        else:
+            result[i] = 0.0
+            was_in_position = False
+
+    return pd.Series(result, index=raw_pos.index)
+
+
+# ── 高級時間框架重採樣映射 ──────────────────────────────────
 _RESAMPLE_MAP = {
-    # 当前周期 → 可用的高级周期及其 pandas resample rule
+    # 當前週期 → 可用的高級週期及其 pandas resample rule
     "1m":  {"5m": "5min",  "15m": "15min", "1h": "1h",  "4h": "4h"},
     "5m":  {"15m": "15min", "30m": "30min", "1h": "1h",  "4h": "4h"},
     "15m": {"1h": "1h",     "4h": "4h",     "1d": "1D"},
@@ -138,14 +228,14 @@ _RESAMPLE_MAP = {
 
 def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     """
-    将低级时间框架 K 线重采样为高级时间框架
+    將低級時間框架 K 線重採樣為高級時間框架
 
     Args:
-        df:   低级 K 线数据（必须有 DatetimeIndex）
+        df:   低級 K 線數據（必須有 DatetimeIndex）
         rule: pandas resample rule, e.g. "4h", "1D"
 
     Returns:
-        高级 K 线 DataFrame（OHLCV）
+        高級 K 線 DataFrame（OHLCV）
     """
     return df.resample(rule).agg({
         "open": "first",
@@ -165,56 +255,56 @@ def htf_trend_filter(
     current_interval: str = "1h",
 ) -> pd.Series:
     """
-    多时间框架趋势过滤器
+    多時間框架趨勢過濾器
 
-    逻辑：
-        1. 将 1h 数据重采样为 4h
-        2. 在 4h 上计算 EMA20 和 EMA50
-        3. EMA20 > EMA50 = 上升趋势 → 允许做多
-        4. EMA20 < EMA50 = 下降趋势 → 禁止新开仓（已有持仓不强制平仓）
+    邏輯：
+        1. 將 1h 數據重採樣為 4h
+        2. 在 4h 上計算 EMA20 和 EMA50
+        3. EMA20 > EMA50 = 上升趨勢 → 允許做多
+        4. EMA20 < EMA50 = 下降趨勢 → 禁止新開倉（已有持倉不強制平倉）
 
-    为什么用 EMA 交叉而不是 ADX？
-        - ADX 只判断趋势强度，不判断方向
-        - EMA 交叉同时判断趋势方向和强度（间距越大趋势越强）
-        - 4h EMA20/50 对应日线 EMA5/12.5，是经典趋势判断
+    為什麼用 EMA 交叉而不是 ADX？
+        - ADX 只判斷趨勢強度，不判斷方向
+        - EMA 交叉同時判斷趨勢方向和強度（間距越大趨勢越強）
+        - 4h EMA20/50 對應日線 EMA5/12.5，是經典趨勢判斷
 
     Args:
-        df:               低级 K 线数据（e.g. 1h）
-        raw_pos:          原始持仓信号
-        htf_interval:     高级时间框架，e.g. "4h"
-        ema_fast:         快速 EMA 周期（在高级 TF 上），默认 20
-        ema_slow:         慢速 EMA 周期（在高级 TF 上），默认 50
-        current_interval: 当前 K 线周期，e.g. "1h"
+        df:               低級 K 線數據（e.g. 1h）
+        raw_pos:          原始持倉信號
+        htf_interval:     高級時間框架，e.g. "4h"
+        ema_fast:         快速 EMA 週期（在高級 TF 上），預設 20
+        ema_slow:         慢速 EMA 週期（在高級 TF 上），預設 50
+        current_interval: 當前 K 線週期，e.g. "1h"
 
     Returns:
-        过滤后的持仓序列
+        過濾後的持倉序列
     """
-    # 获取重采样规则
+    # 獲取重採樣規則
     resample_options = _RESAMPLE_MAP.get(current_interval, {})
     resample_rule = resample_options.get(htf_interval)
 
     if resample_rule is None:
-        # 无法重采样，原样返回
+        # 無法重採樣，原樣返回
         return raw_pos
 
-    # 重采样到高级时间框架
+    # 重採樣到高級時間框架
     htf_df = _resample_ohlcv(df, resample_rule)
     if len(htf_df) < ema_slow + 5:
-        # 数据不足以计算 EMA，原样返回
+        # 數據不足以計算 EMA，原樣返回
         return raw_pos
 
-    # 在高级 TF 上计算 EMA
+    # 在高級 TF 上計算 EMA
     ema_f = calculate_ema(htf_df["close"], ema_fast)
     ema_s = calculate_ema(htf_df["close"], ema_slow)
 
-    # 判断趋势方向：EMA_fast > EMA_slow → 上升趋势
+    # 判斷趨勢方向：EMA_fast > EMA_slow → 上升趨勢
     htf_uptrend = (ema_f > ema_s).astype(float)
 
-    # 将高级 TF 的信号映射回低级 TF
-    # 使用 reindex + forward fill：每根 4h K 线的趋势应用到其包含的所有 1h K 线
+    # 將高級 TF 的信號映射回低級 TF
+    # 使用 reindex + forward fill：每根 4h K 線的趨勢應用到其包含的所有 1h K 線
     htf_uptrend_ltf = htf_uptrend.reindex(df.index, method="ffill").fillna(0.0)
 
-    # 应用过滤逻辑（同 trend_filter 的设计：不强制平已有仓位）
+    # 應用過濾邏輯（同 trend_filter 的設計：不強制平已有倉位）
     raw = raw_pos.values.copy()
     trend = htf_uptrend_ltf.values
     result = np.zeros(len(raw), dtype=float)
@@ -225,18 +315,17 @@ def htf_trend_filter(
 
         if raw[i] > 0:
             if was_in_position:
-                # 已有持仓 → 保持（不因高级 TF 转弱而强制平仓）
+                # 已有持倉 → 保持（不因高級 TF 轉弱而強制平倉）
                 result[i] = raw[i]
             elif is_uptrend:
-                # 高级 TF 上升趋势 → 允许新开仓
+                # 高級 TF 上升趨勢 → 允許新開倉
                 result[i] = raw[i]
                 was_in_position = True
             else:
-                # 高级 TF 下降趋势 → 禁止新开仓
+                # 高級 TF 下降趨勢 → 禁止新開倉
                 result[i] = 0.0
         else:
             result[i] = 0.0
             was_in_position = False
 
     return pd.Series(result, index=raw_pos.index)
-

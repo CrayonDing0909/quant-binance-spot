@@ -13,27 +13,27 @@ def walk_forward_analysis(
     n_splits: int = 5,
 ) -> pd.DataFrame:
     """
-    Expanding-window Walk-Forward 验证
+    Expanding-window Walk-Forward 驗證
 
-    将数据等分成 (n_splits + 1) 个区间：
-      Split 1: train = 区间[0]，           test = 区间[1]
-      Split 2: train = 区间[0:1]（累加），  test = 区间[2]
+    將數據等分成 (n_splits + 1) 個區間：
+      Split 1: train = 區間[0]，           test = 區間[1]
+      Split 2: train = 區間[0:1]（累加），  test = 區間[2]
       ...
-      Split N: train = 区间[0:N-1]，       test = 区间[N]
+      Split N: train = 區間[0:N-1]，       test = 區間[N]
 
-    训练集持续扩大，测试集始终是「未见过」的下一段数据。
-    这比固定比例更贴近实际：你用历史数据训练，然后在新数据上验证。
+    訓練集持續擴大，測試集始終是「未見過」的下一段數據。
+    這比固定比例更貼近實際：你用歷史數據訓練，然後在新數據上驗證。
     """
     from ..data.storage import load_klines
 
     df = load_klines(data_path)
     total_len = len(df)
 
-    # 等分成 n_splits+1 个区间
+    # 等分成 n_splits+1 個區間
     n_segments = n_splits + 1
     seg_len = total_len // n_segments
     if seg_len < 500:  # 至少 500 根 bar（1h × 500 ≈ 21 天）
-        print(f"  ⚠️  数据太短，每段只有 {seg_len} 根 bar")
+        print(f"  ⚠️  數據太短，每段只有 {seg_len} 根 bar")
         n_segments = max(2, total_len // 500)
         n_splits = n_segments - 1
         seg_len = total_len // n_segments
@@ -52,7 +52,7 @@ def walk_forward_analysis(
         period_test = f"{df.index[test_start].strftime('%Y-%m')} → {df.index[test_end-1].strftime('%Y-%m')}"
         print(f"  Split {i+1}/{n_splits}: train {period_train}  |  test {period_test}", end="")
 
-        # 训练集回测
+        # 訓練集回測
         train_df = df.iloc[:train_end].copy()
         train_data_path = data_path.parent / f"{symbol}_train_{i}.parquet"
         train_df.to_parquet(train_data_path)
@@ -65,7 +65,7 @@ def walk_forward_analysis(
             train_data_path.unlink(missing_ok=True)
             continue
 
-        # 测试集回测
+        # 測試集回測
         test_df = df.iloc[test_start:test_end].copy()
         test_data_path = data_path.parent / f"{symbol}_test_{i}.parquet"
         test_df.to_parquet(test_data_path)
@@ -113,7 +113,7 @@ def parameter_sensitivity_analysis(
     param_grid: Dict[str, List],
 ) -> pd.DataFrame:
     """
-    参数敏感性分析 - 检测过拟合
+    參數敏感性分析 - 檢測過擬合
     """
     import itertools
 
@@ -147,7 +147,7 @@ def parameter_sensitivity_analysis(
         results.append(result)
 
         if idx % 5 == 0 or idx == total:
-            print(f"  进度: {idx}/{total} ({idx/total*100:.0f}%)")
+            print(f"  進度: {idx}/{total} ({idx/total*100:.0f}%)")
 
     return pd.DataFrame(results)
 
@@ -157,7 +157,7 @@ def detect_overfitting(
     test_metrics: pd.Series,
     threshold: float = 0.3,
 ) -> Dict[str, bool]:
-    """检测过拟合指标"""
+    """檢測過擬合指標"""
     warnings = {}
 
     train_return = train_metrics.get("Total Return [%]", 0)

@@ -1,8 +1,8 @@
 """
-Signal Generator — 即时信号产生器
+Signal Generator — 即時信號產生器
 
-从 Binance 拉取最新 K 线数据，运行策略，输出交易信号。
-设计为复用回测策略代码，无需改写策略。
+從 Binance 拉取最新 K 線數據，運行策略，輸出交易信號。
+設計為復用回測策略程式碼，無需改寫策略。
 """
 from __future__ import annotations
 from pathlib import Path
@@ -17,7 +17,7 @@ from ..utils.log import get_logger
 
 logger = get_logger("signal_gen")
 
-# 策略至少需要多少根 K 线才能计算指标
+# 策略至少需要多少根 K 線才能計算指標
 MIN_BARS = 300
 
 
@@ -27,23 +27,23 @@ def fetch_recent_klines(
     bars: int = MIN_BARS,
 ) -> pd.DataFrame:
     """
-    从 Binance 拉取最近 N 根 **已收盘** K 线
+    從 Binance 拉取最近 N 根 **已收盤** K 線
 
-    Binance API 总是返回当前未收盘的 K 线作为最后一根，
-    在 Live Trading 中使用未收盘 K 线会导致指标不可靠（假信号）。
-    因此这里会自动丢弃未收盘的 K 线。
+    Binance API 總是返回當前未收盤的 K 線作為最後一根，
+    在 Live Trading 中使用未收盤 K 線會導致指標不可靠（假信號）。
+    因此這裡會自動丟棄未收盤的 K 線。
 
     Args:
-        symbol: 交易对, e.g. "BTCUSDT"
-        interval: K 线周期, e.g. "1h"
-        bars: 需要的 K 线数量
+        symbol: 交易對, e.g. "BTCUSDT"
+        interval: K 線週期, e.g. "1h"
+        bars: 需要的 K 線數量
 
     Returns:
-        DataFrame with OHLCV (只包含已收盘的 K 线)
+        DataFrame with OHLCV (只包含已收盤的 K 線)
     """
     from datetime import datetime, timezone, timedelta
 
-    # 根据 interval 估算需要多少时间
+    # 根據 interval 估算需要多少時間
     interval_minutes = {
         "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
         "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
@@ -57,15 +57,15 @@ def fetch_recent_klines(
     df = fetch_klines(symbol, interval, start_str)
     df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
 
-    # ── 丢弃未收盘的 K 线 ──────────────────────────
-    # Binance close_time 是该 K 线的结束时间 (e.g. 1h K 线 12:00 → close_time=12:59:59.999)
-    # 如果 close_time > 当前时间 → 该 K 线尚未收盘，必须丢弃
+    # ── 丟棄未收盤的 K 線 ──────────────────────────
+    # Binance close_time 是該 K 線的結束時間 (e.g. 1h K 線 12:00 → close_time=12:59:59.999)
+    # 如果 close_time > 當前時間 → 該 K 線尚未收盤，必須丟棄
     if "close_time" in df.columns:
         now = pd.Timestamp.now(tz="UTC")
         closed_mask = df["close_time"] <= now
         n_dropped = (~closed_mask).sum()
         if n_dropped > 0:
-            logger.debug(f"  {symbol}: 丢弃 {n_dropped} 根未收盘 K 线")
+            logger.debug(f"  {symbol}: 丟棄 {n_dropped} 根未收盤 K 線")
         df = df[closed_mask]
 
     # 只保留最近 bars 根
@@ -84,32 +84,32 @@ def generate_signal(
     df: pd.DataFrame | None = None,
 ) -> dict:
     """
-    生成单个交易对的信号
+    生成單個交易對的信號
 
     Args:
-        symbol: 交易对
-        strategy_name: 策略名称
-        params: 策略参数
-        interval: K 线周期
-        bars: 需要的 K 线数量
-        df: 可选，直接传入 K 线数据（测试用）
+        symbol: 交易對
+        strategy_name: 策略名稱
+        params: 策略參數
+        interval: K 線週期
+        bars: 需要的 K 線數量
+        df: 可選，直接傳入 K 線數據（測試用）
 
     Returns:
         {
             "symbol": str,
-            "signal": float,          # 目标仓位 [0, 1]
-            "price": float,           # 当前价格
-            "timestamp": str,         # 最新 K 线时间
+            "signal": float,          # 目標倉位 [0, 1]
+            "price": float,           # 當前價格
+            "timestamp": str,         # 最新 K 線時間
             "strategy": str,
-            "indicators": dict,       # 关键指标值（调试用）
+            "indicators": dict,       # 關鍵指標值（除錯用）
         }
     """
-    # 获取数据
+    # 獲取數據
     if df is None:
         df = fetch_recent_klines(symbol, interval, bars)
 
     if len(df) < 50:
-        logger.warning(f"⚠️  {symbol}: 数据不足 ({len(df)} bars)")
+        logger.warning(f"⚠️  {symbol}: 數據不足 ({len(df)} bars)")
         return {
             "symbol": symbol,
             "signal": 0.0,
@@ -119,23 +119,23 @@ def generate_signal(
             "indicators": {},
         }
 
-    # 运行策略
+    # 運行策略
     ctx = StrategyContext(symbol=symbol, interval=interval)
     strategy_func = get_strategy(strategy_name)
     positions = strategy_func(df, ctx, params)
 
-    # 取最后一根 K 线的信号
+    # 取最後一根 K 線的信號
     latest_signal = float(positions.iloc[-1])
     latest_price = float(df["close"].iloc[-1])
     latest_time = str(df.index[-1])
 
-    # 收集关键指标（调试用）
+    # 收集關鍵指標（除錯用）
     indicators = {
         "close": latest_price,
         "bars": len(df),
     }
 
-    # 尝试计算常用指标
+    # 嘗試計算常用指標
     try:
         from ..indicators import calculate_rsi, calculate_adx, calculate_atr
         rsi_period = int(params.get("rsi_period", 14))
@@ -152,7 +152,7 @@ def generate_signal(
         atr = calculate_atr(df, atr_period)
         indicators["atr"] = round(float(atr.iloc[-1]), 2)
     except Exception:
-        pass  # 指标计算失败不影响信号
+        pass  # 指標計算失敗不影響信號
 
     result = {
         "symbol": symbol,
@@ -169,4 +169,3 @@ def generate_signal(
     )
 
     return result
-

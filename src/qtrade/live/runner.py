@@ -1,29 +1,38 @@
 """
-Live Runner — 即时交易主循环
+Live Runner — 即時交易主循環
 
 功能：
-    - 每根 K 线收盘后运行策略
-    - 对比信号与当前仓位，决定交易
-    - 支持 Paper Trading / Real Trading 模式切换
+    - 每根 K 線收盤後運行策略
+    - 對比信號與當前倉位，決定交易
+    - 支援 Paper Trading / Real Trading 模式切換
     - Telegram 通知（交易 + 定期摘要）
-    - 日志记录 + 状态报告
+    - 日誌記錄 + 狀態報告
+    - 支援動態倉位計算（Kelly / 波動率）
 """
 from __future__ import annotations
 import time
 from datetime import datetime, timezone
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, Optional
 
 from ..config import AppConfig
 from ..utils.log import get_logger
 from ..monitor.notifier import TelegramNotifier
+from ..risk.position_sizing import (
+    PositionSizer,
+    FixedPositionSizer,
+    KellyPositionSizer,
+    VolatilityPositionSizer,
+)
 from .signal_generator import generate_signal
 from .paper_broker import PaperBroker
+from .trading_state import TradingStateManager
 
 logger = get_logger("live_runner")
 
 
 class BrokerProtocol(Protocol):
-    """Broker 通用接口，Paper 和 Real broker 都实现此接口"""
+    """Broker 通用介面，Paper 和 Real broker 都實現此介面"""
     def execute_target_position(
         self, symbol: str, target_pct: float, current_price: float, reason: str = ""
     ) -> object | None: ...
@@ -33,11 +42,11 @@ class BrokerProtocol(Protocol):
 
 class LiveRunner:
     """
-    即时交易主循环
+    即時交易主循環
 
     Usage:
         runner = LiveRunner(cfg, broker, mode="paper")
-        runner.run()  # 阻塞运行，每根 K 线触发一次
+        runner.run()  # 阻塞運行，每根 K 線觸發一次
     """
 
     def __init__(
@@ -46,6 +55,7 @@ class LiveRunner:
         broker: BrokerProtocol,
         mode: str = "paper",
         notifier: TelegramNotifier | None = None,
+        state_path: Optional[Path] = None,
     ):
         self.cfg = cfg
         self.broker = broker
@@ -56,40 +66,181 @@ class LiveRunner:
         self.interval = cfg.market.interval
         self.is_running = False
 
-        # 多币种仓位分配权重
+        # 多幣種倉位分配權重
         self._weights: dict[str, float] = {}
         n = len(self.symbols)
         for sym in self.symbols:
             self._weights[sym] = cfg.portfolio.get_weight(sym, n)
 
-        # Drawdown 熔断
+        # Drawdown 熔斷
         self.max_drawdown_pct = cfg.risk.max_drawdown_pct if cfg.risk else None
         self._circuit_breaker_triggered = False
 
-        # 运行统计
+        # 運行統計
         self.tick_count = 0
         self.trade_count = 0
         self.start_time: float | None = None
+        
+        # 狀態管理器（用於 Real Trading 持久化）
+        self.state_manager: Optional[TradingStateManager] = None
+        if state_path or mode == "real":
+            default_state_path = Path(f"reports/live/{self.strategy_name}/{mode}_state.json")
+            self.state_manager = TradingStateManager(
+                state_path=state_path or default_state_path,
+                strategy_name=self.strategy_name,
+                symbols=self.symbols,
+                interval=self.interval,
+                mode=mode,
+                encrypt=(mode == "real"),
+            )
+        
+        # 倉位計算器
+        self.position_sizer: Optional[PositionSizer] = None
+        self._init_position_sizer()
+
+    def _init_position_sizer(self) -> None:
+        """
+        根據配置初始化倉位計算器
+        
+        支援三種方法：
+        - fixed: 固定倉位比例
+        - kelly: 根據歷史交易統計動態調整
+        - volatility: 根據波動率調整
+        """
+        ps_cfg = self.cfg.position_sizing
+        
+        if ps_cfg.method == "kelly":
+            # 從歷史交易計算統計數據
+            stats = self._get_trade_stats()
+            
+            # 檢查是否有足夠的交易數據
+            total_trades = stats.get("total_trades", 0)
+            if total_trades < ps_cfg.min_trades_for_kelly:
+                logger.info(
+                    f"📊 倉位計算: 交易數 ({total_trades}) < 最小要求 ({ps_cfg.min_trades_for_kelly})，"
+                    f"暫用固定倉位"
+                )
+                self.position_sizer = FixedPositionSizer(ps_cfg.position_pct)
+            else:
+                win_rate = ps_cfg.win_rate or stats.get("win_rate", 0.5)
+                avg_win = ps_cfg.avg_win or stats.get("avg_win", 1.0)
+                avg_loss = ps_cfg.avg_loss or stats.get("avg_loss", 1.0)
+                
+                try:
+                    self.position_sizer = KellyPositionSizer(
+                        win_rate=win_rate,
+                        avg_win=avg_win,
+                        avg_loss=avg_loss,
+                        kelly_fraction=ps_cfg.kelly_fraction,
+                    )
+                    logger.info(
+                        f"📊 倉位計算: Kelly (fraction={ps_cfg.kelly_fraction}, "
+                        f"win_rate={win_rate:.1%}, kelly_pct={self.position_sizer.kelly_pct:.1%})"
+                    )
+                except ValueError as e:
+                    logger.warning(f"⚠️  Kelly 參數無效: {e}，改用固定倉位")
+                    self.position_sizer = FixedPositionSizer(ps_cfg.position_pct)
+                    
+        elif ps_cfg.method == "volatility":
+            self.position_sizer = VolatilityPositionSizer(
+                base_position_pct=ps_cfg.position_pct,
+                target_volatility=ps_cfg.target_volatility,
+                lookback=ps_cfg.vol_lookback,
+            )
+            logger.info(
+                f"📊 倉位計算: 波動率目標 ({ps_cfg.target_volatility:.1%})"
+            )
+        else:
+            # 預設固定倉位
+            self.position_sizer = FixedPositionSizer(ps_cfg.position_pct)
+            logger.info(f"📊 倉位計算: 固定 ({ps_cfg.position_pct:.0%})")
+    
+    def _get_trade_stats(self) -> dict:
+        """
+        從狀態管理器或 Paper Broker 獲取交易統計
+        
+        Returns:
+            {"win_rate": float, "avg_win": float, "avg_loss": float, "total_trades": int}
+        """
+        # 優先從狀態管理器獲取
+        if self.state_manager:
+            stats = self.state_manager.get_trade_stats()
+            stats["total_trades"] = self.state_manager.state.total_trades
+            return stats
+        
+        # Paper Broker
+        if isinstance(self.broker, PaperBroker):
+            trades = self.broker.account.trades
+            if not trades:
+                return {"win_rate": 0.5, "avg_win": 1.0, "avg_loss": 1.0, "total_trades": 0}
+            
+            wins = [t for t in trades if t.pnl and t.pnl > 0]
+            losses = [t for t in trades if t.pnl and t.pnl < 0]
+            total = len(wins) + len(losses)
+            
+            return {
+                "win_rate": len(wins) / total if total > 0 else 0.5,
+                "avg_win": sum(t.pnl for t in wins) / len(wins) if wins else 1.0,
+                "avg_loss": abs(sum(t.pnl for t in losses) / len(losses)) if losses else 1.0,
+                "total_trades": len(trades),
+            }
+        
+        return {"win_rate": 0.5, "avg_win": 1.0, "avg_loss": 1.0, "total_trades": 0}
+    
+    def _apply_position_sizing(self, raw_signal: float, price: float, symbol: str) -> float:
+        """
+        應用倉位計算器調整信號
+        
+        Args:
+            raw_signal: 原始信號 [0, 1]
+            price: 當前價格
+            symbol: 交易對
+            
+        Returns:
+            調整後的信號 [0, 1]
+        """
+        if self.position_sizer is None:
+            return raw_signal
+        
+        # 獲取當前權益
+        if isinstance(self.broker, PaperBroker):
+            equity = self.broker.get_equity({symbol: price})
+        else:
+            equity = getattr(self.broker, "get_equity", lambda _: 10000)([symbol])
+        
+        # 計算倉位大小
+        position_size = self.position_sizer.calculate_size(
+            signal=raw_signal,
+            equity=equity,
+            price=price,
+        )
+        
+        # 轉換為倉位比例
+        position_value = position_size * price
+        adjusted_signal = position_value / equity if equity > 0 else raw_signal
+        
+        # 限制在 [0, 1]
+        return max(0.0, min(1.0, adjusted_signal))
 
     def _check_circuit_breaker(self) -> bool:
         """
-        Drawdown 熔断检查
+        Drawdown 熔斷檢查
 
-        如果当前权益低于 (1 - max_drawdown_pct) × 初始资金，
-        平掉所有仓位并停止交易。
+        如果當前權益低於 (1 - max_drawdown_pct) × 初始資金，
+        平掉所有倉位並停止交易。
 
         Returns:
-            True = 触发熔断，False = 正常
+            True = 觸發熔斷，False = 正常
         """
         if self._circuit_breaker_triggered:
             return True
         if not self.max_drawdown_pct:
             return False
-        # 熔断只支持 Paper 模式（Real 模式靠手动管理）
+        # 熔斷只支援 Paper 模式（Real 模式靠手動管理）
         if not isinstance(self.broker, PaperBroker):
             return False
 
-        # 获取当前价格
+        # 獲取當前價格
         prices: dict[str, float] = {}
         open_positions = []
         for sym in self.symbols:
@@ -101,14 +252,14 @@ class LiveRunner:
                     df = fetch_recent_klines(sym, self.interval, 5)
                     prices[sym] = float(df["close"].iloc[-1])
                 except Exception as e:
-                    logger.warning(f"⚠️  获取 {sym} 价格失败: {e}")
+                    logger.warning(f"⚠️  獲取 {sym} 價格失敗: {e}")
 
-        # 如果有持仓但抓不到价格，跳过熔断检查（避免假性触发）
+        # 如果有持倉但抓不到價格，跳過熔斷檢查（避免假性觸發）
         if open_positions and len(prices) < len(open_positions):
             missing = set(open_positions) - set(prices.keys())
             logger.warning(
-                f"⚠️  熔断检查跳过：无法获取 {missing} 的价格，"
-                f"无法准确计算权益"
+                f"⚠️  熔斷檢查跳過：無法獲取 {missing} 的價格，"
+                f"無法準確計算權益"
             )
             return False
 
@@ -119,12 +270,12 @@ class LiveRunner:
         if drawdown >= self.max_drawdown_pct:
             self._circuit_breaker_triggered = True
             logger.warning(
-                f"🚨🚨🚨 CIRCUIT BREAKER 触发！"
+                f"🚨🚨🚨 CIRCUIT BREAKER 觸發！"
                 f"Drawdown={drawdown:.1%} >= {self.max_drawdown_pct:.0%} "
-                f"(权益 ${equity:,.2f} / 初始 ${initial:,.2f})"
+                f"(權益 ${equity:,.2f} / 初始 ${initial:,.2f})"
             )
 
-            # 平掉所有仓位
+            # 平掉所有倉位
             for sym, price in prices.items():
                 pos = self.broker.get_position(sym)
                 if pos.is_open:
@@ -133,47 +284,51 @@ class LiveRunner:
                         reason="CIRCUIT_BREAKER"
                     )
                     if trade:
-                        logger.warning(f"  🔴 强制平仓 {sym}: {trade.qty:.6f} @ {trade.price:.2f}")
+                        logger.warning(f"  🔴 強制平倉 {sym}: {trade.qty:.6f} @ {trade.price:.2f}")
 
             # Telegram 告警
             self.notifier.send_error(
-                f"🚨 <b>CIRCUIT BREAKER 熔断触发!</b>\n\n"
-                f"  Drawdown: <b>{drawdown:.1%}</b> (阈值 {self.max_drawdown_pct:.0%})\n"
-                f"  权益: ${equity:,.2f} → 初始: ${initial:,.2f}\n"
-                f"  ⚠️ 已强制平仓所有持仓，交易停止\n\n"
-                f"  请检查策略后手动重启"
+                f"🚨 <b>CIRCUIT BREAKER 熔斷觸發!</b>\n\n"
+                f"  Drawdown: <b>{drawdown:.1%}</b> (閾值 {self.max_drawdown_pct:.0%})\n"
+                f"  權益: ${equity:,.2f} → 初始: ${initial:,.2f}\n"
+                f"  ⚠️ 已強制平倉所有持倉，交易停止\n\n"
+                f"  請檢查策略後手動重啟"
             )
             return True
 
-        # 接近熔断线时预警（达到 80% 阈值）
+        # 接近熔斷線時預警（達到 80% 閾值）
         if drawdown >= self.max_drawdown_pct * 0.8:
             logger.warning(
-                f"⚠️  Drawdown 预警: {drawdown:.1%} "
-                f"(熔断线 {self.max_drawdown_pct:.0%})"
+                f"⚠️  Drawdown 預警: {drawdown:.1%} "
+                f"(熔斷線 {self.max_drawdown_pct:.0%})"
             )
 
         return False
 
     def run_once(self) -> list[dict]:
         """
-        执行一次信号检查 + 下单
+        執行一次信號檢查 + 下單
 
         Returns:
-            signals: 所有币种的信号列表
+            signals: 所有幣種的信號列表
         """
-        # 熔断检查
+        # 熔斷檢查
         if self._check_circuit_breaker():
-            logger.warning("⛔ 熔断已触发，跳过本次交易")
+            logger.warning("⛔ 熔斷已觸發，跳過本次交易")
             return []
 
         self.tick_count += 1
         signals = []
         has_trade = False
+        
+        # 更新狀態管理器
+        if self.state_manager:
+            self.state_manager.increment_tick()
 
         for symbol in self.symbols:
             params = self.cfg.strategy.get_params(symbol)
 
-            # 生成信号
+            # 生成信號
             try:
                 sig = generate_signal(
                     symbol=symbol,
@@ -182,34 +337,71 @@ class LiveRunner:
                     interval=self.interval,
                 )
             except Exception as e:
-                logger.error(f"❌ {symbol} 信号生成失败: {e}")
-                self.notifier.send_error(f"{symbol} 信号生成失败: {e}")
+                logger.error(f"❌ {symbol} 信號生成失敗: {e}")
+                self.notifier.send_error(f"{symbol} 信號生成失敗: {e}")
+                if self.state_manager:
+                    self.state_manager.log_error(f"{symbol} 信號生成失敗: {e}")
                 continue
 
             signals.append(sig)
 
-            # 执行交易（信号 × 分配权重）
+            # 執行交易（信號 × 分配權重 × 倉位調整）
             raw_signal = sig["signal"]
             weight = self._weights.get(symbol, 1.0 / max(len(self.symbols), 1))
-            target_pct = raw_signal * weight
             price = sig["price"]
             if price <= 0:
                 continue
+            
+            # 應用倉位計算器（如果啟用）
+            adjusted_signal = self._apply_position_sizing(raw_signal, price, symbol)
+            target_pct = adjusted_signal * weight
 
             current_pct = self.broker.get_position_pct(symbol, price)
             diff = abs(target_pct - current_pct)
 
             if diff >= 0.02:
+                ps_method = self.cfg.position_sizing.method
                 reason = f"signal={raw_signal:.0%}×{weight:.0%}"
+                if ps_method != "fixed":
+                    reason += f" [{ps_method}→{adjusted_signal:.0%}]"
+                
+                # v2.0: 計算硬止損價格（如果是買入且策略有 stop_loss_atr）
+                stop_loss_price = None
+                if target_pct > current_pct:  # 買入
+                    stop_loss_atr = params.get("stop_loss_atr")
+                    atr_value = sig.get("indicators", {}).get("atr")
+                    if stop_loss_atr and atr_value:
+                        stop_loss_price = price - float(stop_loss_atr) * float(atr_value)
+                        logger.info(f"🛡️  {symbol} 計算止損: ${stop_loss_price:,.2f} (ATR={atr_value:.2f})")
+                    
                 trade = self.broker.execute_target_position(
                     symbol=symbol,
                     target_pct=target_pct,
                     current_price=price,
                     reason=reason,
+                    stop_loss_price=stop_loss_price,
                 )
                 if trade:
                     self.trade_count += 1
                     has_trade = True
+                    
+                    # 記錄到狀態管理器
+                    if self.state_manager:
+                        self.state_manager.log_trade(
+                            symbol=symbol,
+                            side=trade.side,
+                            qty=trade.qty,
+                            price=trade.price,
+                            fee=getattr(trade, "fee", 0.0),
+                            pnl=trade.pnl,
+                            reason=reason,
+                            order_id=getattr(trade, "order_id", ""),
+                        )
+                        # 更新持倉
+                        if isinstance(self.broker, PaperBroker):
+                            pos = self.broker.get_position(symbol)
+                            self.state_manager.update_position(symbol, pos.qty, pos.avg_entry)
+                    
                     # Telegram 通知交易
                     self.notifier.send_trade(
                         symbol=symbol,
@@ -221,23 +413,27 @@ class LiveRunner:
                         weight=weight,
                     )
             else:
-                logger.debug(f"  {symbol}: 仓位不变 (target={target_pct:.0%}, current={current_pct:.0%})")
+                logger.debug(f"  {symbol}: 倉位不變 (target={target_pct:.0%}, current={current_pct:.0%})")
 
-        # 每个 tick 发送信号摘要（仅当有交易或每 6 tick）
+        # 每個 tick 發送信號摘要（僅當有交易或每 6 tick）
         if has_trade or self.tick_count % 6 == 0:
             self.notifier.send_signal_summary(signals, mode=self.mode.upper())
+        
+        # 定期重新計算 Kelly（每 24 tick = 24 小時）
+        if self.cfg.position_sizing.method == "kelly" and self.tick_count % 24 == 0:
+            self._init_position_sizer()
 
         return signals
 
     def run(self, max_ticks: int | None = None) -> None:
         """
-        阻塞运行主循环
+        阻塞運行主循環
 
-        每根 K 线收盘后触发一次 run_once()。
-        通过 Ctrl+C 停止。
+        每根 K 線收盤後觸發一次 run_once()。
+        通過 Ctrl+C 停止。
 
         Args:
-            max_ticks: 最大运行次数（None = 无限）
+            max_ticks: 最大運行次數（None = 無限）
         """
         self.is_running = True
         self.start_time = time.time()
@@ -245,18 +441,18 @@ class LiveRunner:
 
         alloc_str = ", ".join(f"{s}={w:.0%}" for s, w in self._weights.items())
         logger.info("=" * 60)
-        logger.info(f"🚀 Live Trading 启动 [{self.mode.upper()}]")
+        logger.info(f"🚀 Live Trading 啟動 [{self.mode.upper()}]")
         logger.info(f"   策略: {self.strategy_name}")
-        logger.info(f"   交易对: {', '.join(self.symbols)}")
-        logger.info(f"   仓位分配: {alloc_str}")
-        logger.info(f"   K线周期: {self.interval} ({interval_seconds}s)")
+        logger.info(f"   交易對: {', '.join(self.symbols)}")
+        logger.info(f"   倉位分配: {alloc_str}")
+        logger.info(f"   K線週期: {self.interval} ({interval_seconds}s)")
         logger.info(f"   模式: {'📝 Paper Trading' if self.mode == 'paper' else '💰 Real Trading'}")
         if self.max_drawdown_pct:
-            logger.info(f"   熔断线: 回撤 ≥ {self.max_drawdown_pct:.0%} → 自动平仓停止")
-        logger.info(f"   Telegram: {'✅ 已启用' if self.notifier.enabled else '❌ 未启用'}")
+            logger.info(f"   熔斷線: 回撤 ≥ {self.max_drawdown_pct:.0%} → 自動平倉停止")
+        logger.info(f"   Telegram: {'✅ 已啟用' if self.notifier.enabled else '❌ 未啟用'}")
         logger.info("=" * 60)
 
-        # 启动通知
+        # 啟動通知
         self.notifier.send_startup(
             strategy=self.strategy_name,
             symbols=self.symbols,
@@ -267,11 +463,11 @@ class LiveRunner:
 
         try:
             while self.is_running:
-                # 计算到下一根 K 线收盘的等待时间
+                # 計算到下一根 K 線收盤的等待時間
                 wait = self._seconds_until_next_close(interval_seconds)
                 if wait > 5:
-                    logger.info(f"⏳ 等待下一根 K 线收盘... ({wait:.0f}s)")
-                    # 分段 sleep，支持 Ctrl+C
+                    logger.info(f"⏳ 等待下一根 K 線收盤... ({wait:.0f}s)")
+                    # 分段 sleep，支援 Ctrl+C
                     while wait > 0 and self.is_running:
                         time.sleep(min(wait, 10))
                         wait -= 10
@@ -281,45 +477,45 @@ class LiveRunner:
                 if not self.is_running:
                     break
 
-                # 等几秒确保 K 线数据已入库
+                # 等幾秒確保 K 線數據已入庫
                 time.sleep(3)
 
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
                 logger.info(f"\n{'─'*50}")
                 logger.info(f"📍 Tick #{self.tick_count + 1} @ {now}")
 
-                # 执行信号检查
+                # 執行信號檢查
                 self.run_once()
 
-                # 熔断触发 → 停止循环
+                # 熔斷觸發 → 停止循環
                 if self._circuit_breaker_triggered:
-                    logger.warning("🚨 熔断触发，主循环终止")
+                    logger.warning("🚨 熔斷觸發，主循環終止")
                     break
 
-                # 定期打印 + 推送账户摘要（每 6 tick = 6 小时）
+                # 定期列印 + 推送帳戶摘要（每 6 tick = 6 小時）
                 if self.tick_count % 6 == 0:
                     self._send_periodic_summary()
 
                 if max_ticks and self.tick_count >= max_ticks:
-                    logger.info(f"🏁 达到最大运行次数 ({max_ticks})，停止")
+                    logger.info(f"🏁 達到最大運行次數 ({max_ticks})，停止")
                     break
 
         except KeyboardInterrupt:
-            logger.info("\n⛔ 收到停止信号 (Ctrl+C)")
+            logger.info("\n⛔ 收到停止信號 (Ctrl+C)")
         finally:
             self.is_running = False
             elapsed = time.time() - (self.start_time or time.time())
-            logger.info(f"📊 运行统计: {self.tick_count} ticks, "
+            logger.info(f"📊 運行統計: {self.tick_count} ticks, "
                         f"{self.trade_count} trades, {elapsed/3600:.1f}h")
             # 停止通知
             self.notifier.send_shutdown(self.tick_count, self.trade_count, elapsed / 3600)
 
     def _send_periodic_summary(self) -> None:
-        """定期推送账户摘要（支持 Paper + Real 模式）"""
+        """定期推送帳戶摘要（支援 Paper + Real 模式）"""
         from .signal_generator import fetch_recent_klines
 
         if isinstance(self.broker, PaperBroker):
-            # Paper 模式：从 K 线获取价格计算权益
+            # Paper 模式：從 K 線獲取價格計算權益
             prices = {}
             for sym in self.symbols:
                 pos = self.broker.get_position(sym)
@@ -363,15 +559,15 @@ class LiveRunner:
 
                 logger.info(
                     f"\n{'='*50}\n"
-                    f"  Real Trading 账户摘要\n"
+                    f"  Real Trading 帳戶摘要\n"
                     f"{'='*50}\n"
                     f"  USDT: ${usdt:,.2f}\n"
-                    f"  总权益: ${total_value:,.2f}\n"
+                    f"  總權益: ${total_value:,.2f}\n"
                     f"{'='*50}"
                 )
 
                 self.notifier.send_account_summary(
-                    initial_cash=0,  # Real 模式没有 initial_cash 概念
+                    initial_cash=0,  # Real 模式沒有 initial_cash 概念
                     equity=total_value,
                     cash=usdt,
                     positions=positions_info,
@@ -379,7 +575,7 @@ class LiveRunner:
                     mode=self.mode.upper(),
                 )
             except Exception as e:
-                logger.warning(f"⚠️  获取 Real 账户摘要失败: {e}")
+                logger.warning(f"⚠️  獲取 Real 帳戶摘要失敗: {e}")
 
     def stop(self) -> None:
         self.is_running = False
@@ -396,6 +592,6 @@ class LiveRunner:
     @staticmethod
     def _seconds_until_next_close(interval_seconds: int) -> float:
         now = time.time()
-        # 下一个整周期时间
+        # 下一個整週期時間
         next_close = (int(now / interval_seconds) + 1) * interval_seconds
         return max(next_close - now, 0)

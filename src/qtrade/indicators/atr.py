@@ -1,10 +1,10 @@
 """
-ATR (Average True Range) 指标
+ATR (Average True Range) 指標
 
-ATR 衡量价格波动幅度，常用于：
-- 设定止损距离（例如 2x ATR）
-- 仓位管理（波动越大仓位越小）
-- 判断市场波动率
+ATR 衡量價格波動幅度，常用於：
+- 設定止損距離（例如 2x ATR）
+- 倉位管理（波動越大倉位越小）
+- 判斷市場波動率
 """
 from __future__ import annotations
 import pandas as pd
@@ -13,7 +13,7 @@ import numpy as np
 
 def calculate_true_range(df: pd.DataFrame) -> pd.Series:
     """
-    计算 True Range
+    計算 True Range
 
     TR = max(
         High - Low,
@@ -40,40 +40,39 @@ def calculate_true_range(df: pd.DataFrame) -> pd.Series:
 
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
-    计算 ATR (Average True Range)
+    計算 ATR (Average True Range)
 
     Args:
         df: 包含 high, low, close 列的 DataFrame
-        period: ATR 周期，默认 14
+        period: ATR 週期，預設 14
 
     Returns:
         ATR 值序列
 
     Example:
         >>> atr = calculate_atr(df, period=14)
-        >>> # 2x ATR 止损
+        >>> # 2x ATR 止損
         >>> stop_loss = df["close"] - 2 * atr
-        >>> # 基于波动率的仓位：波动越大仓位越小
+        >>> # 基於波動率的倉位：波動越大倉位越小
         >>> position_size = target_risk / atr
     """
     tr = calculate_true_range(df)
-    # 使用 RMA (Wilder's smoothing) 与传统 ATR 一致
+    # 使用 RMA (Wilder's smoothing) 與傳統 ATR 一致
     return tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
 
 
 def calculate_atr_percent(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
-    计算 ATR 百分比（ATR / Close * 100）
+    計算 ATR 百分比（ATR / Close * 100）
 
-    便于跨不同价位的标的比较波动率。
+    便於跨不同價位的標的比較波動率。
 
     Args:
-        df: K线数据
-        period: ATR 周期
+        df: K線數據
+        period: ATR 週期
 
     Returns:
         ATR% 序列
     """
     atr = calculate_atr(df, period)
     return (atr / df["close"]) * 100
-

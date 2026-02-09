@@ -1,30 +1,30 @@
 """
-即时交易启动脚本
+即時交易啟動腳本
 
 使用方法:
-    # Paper Trading（默认，不需要 API Key）
+    # Paper Trading（預設，不需要 API Key）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper
 
     # Paper Trading - 只交易 BTCUSDT
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --symbol BTCUSDT
 
-    # Paper Trading - 立即执行一次（不等待 K 线收盘）
+    # Paper Trading - 立即執行一次（不等待 K 線收盤）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once
 
-    # Real Trading — dry-run 模式（不下单，只看信号和模拟结果）
+    # Real Trading — dry-run 模式（不下單，只看信號和模擬結果）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --real --dry-run --once
 
     # Real Trading（需要 BINANCE_API_KEY + BINANCE_API_SECRET）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --real --once
 
-    # 检查 Binance API 连接
+    # 檢查 Binance API 連線
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --check
 
-    # 查看 Paper Trading 账户状态
+    # 查看 Paper Trading 帳戶狀態
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --status
 
 Telegram 通知:
-    在 .env 中设置以下变量即可自动启用:
+    在 .env 中設定以下變數即可自動啟用:
         TELEGRAM_BOT_TOKEN=123456:ABC-DEF
         TELEGRAM_CHAT_ID=987654321
 """
@@ -41,15 +41,15 @@ from qtrade.live.signal_generator import generate_signal
 from qtrade.monitor.notifier import TelegramNotifier
 
 
-# ── Heartbeat（心跳监控）──────────────────────
-# 每 HEARTBEAT_INTERVAL_HOURS 小时发送一次 Telegram 心跳
-# 用于确认 cron / VM 仍在正常运行
+# ── Heartbeat（心跳監控）──────────────────────
+# 每 HEARTBEAT_INTERVAL_HOURS 小時發送一次 Telegram 心跳
+# 用於確認 cron / VM 仍在正常運行
 HEARTBEAT_INTERVAL_HOURS = 6
 HEARTBEAT_FILE = Path.home() / ".trading_heartbeat"
 
 
 def _maybe_send_heartbeat(notifier: TelegramNotifier, mode: str) -> None:
-    """如果距离上次心跳已超过 N 小时，发送一次心跳通知"""
+    """如果距離上次心跳已超過 N 小時，發送一次心跳通知"""
     if not notifier.enabled:
         return
 
@@ -69,7 +69,7 @@ def _maybe_send_heartbeat(notifier: TelegramNotifier, mode: str) -> None:
         notifier.send(
             f"💚 <b>心跳正常</b> [{mode.upper()}]\n"
             f"  🕐 {ts}\n"
-            f"  ✅ Cron 执行正常，Bot 运行中"
+            f"  ✅ Cron 執行正常，Bot 運行中"
         )
         try:
             HEARTBEAT_FILE.write_text(str(now))
@@ -78,11 +78,11 @@ def _maybe_send_heartbeat(notifier: TelegramNotifier, mode: str) -> None:
 
 
 def cmd_run(args, cfg) -> None:
-    """运行即时交易"""
+    """運行即時交易"""
     strategy_name = args.strategy or cfg.strategy.name
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
 
-    # 覆盖 config 中的 symbols
+    # 覆蓋 config 中的 symbols
     if args.symbol:
         cfg = cfg.__class__(
             market=cfg.market.__class__(
@@ -112,7 +112,7 @@ def cmd_run(args, cfg) -> None:
         runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
 
         if dry_run:
-            print("🧪 DRY-RUN 模式：所有下单指令只会记录，不会真的执行")
+            print("🧪 DRY-RUN 模式：所有下單指令只會記錄，不會真的執行")
             print()
 
         if args.once:
@@ -124,27 +124,27 @@ def cmd_run(args, cfg) -> None:
                       f"price={sig['price']:.2f}, "
                       f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
 
-            # 打印账户余额
+            # 列印帳戶餘額
             print(f"\n{'='*50}")
-            print(f"  Real Trading 账户 {'[DRY-RUN]' if dry_run else ''}")
+            print(f"  Real Trading 帳戶 {'[DRY-RUN]' if dry_run else ''}")
             print(f"{'='*50}")
             usdt = broker.get_balance("USDT")
-            print(f"  USDT 余额: ${usdt:,.2f}")
+            print(f"  USDT 餘額: ${usdt:,.2f}")
             for sym in symbols:
                 qty = broker.get_position(sym)
                 price = broker.get_price(sym)
                 if qty > 0:
                     print(f"  {sym}: {qty:.6f} ≈ ${qty * price:,.2f}")
             equity = broker.get_equity(symbols)
-            print(f"  总权益: ${equity:,.2f}")
+            print(f"  總權益: ${equity:,.2f}")
             print(f"{'='*50}")
 
-            # 心跳监控
+            # 心跳監控
             _maybe_send_heartbeat(notifier, mode)
         else:
             if not dry_run:
-                print("⚠️  即将以真实交易模式持续运行！")
-                print("    按 Ctrl+C 可随时停止")
+                print("⚠️  即將以真實交易模式持續運行！")
+                print("    按 Ctrl+C 可隨時停止")
                 print()
             runner.run(max_ticks=args.max_ticks)
     else:
@@ -172,22 +172,22 @@ def cmd_run(args, cfg) -> None:
                       f"price={sig['price']:.2f}, "
                       f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
 
-            # 打印账户状态
+            # 列印帳戶狀態
             prices = {s["symbol"]: s["price"] for s in signals if s["price"] > 0}
             print(f"\n{broker.summary(prices)}")
 
-            # 心跳监控
+            # 心跳監控
             _maybe_send_heartbeat(notifier, mode)
         else:
             runner.run(max_ticks=args.max_ticks)
 
 
 def cmd_check(args, cfg) -> None:
-    """检查 Binance API 连接"""
+    """檢查 Binance API 連線"""
     from qtrade.live.binance_spot_broker import BinanceSpotBroker
 
     print("=" * 50)
-    print("  🔍 Binance API 连接检查")
+    print("  🔍 Binance API 連線檢查")
     print("=" * 50)
 
     try:
@@ -200,16 +200,16 @@ def cmd_check(args, cfg) -> None:
 
     print()
     if "server_time" in result:
-        print(f"  ✅ 服务器时间: {result['server_time']}")
+        print(f"  ✅ 伺服器時間: {result['server_time']}")
     else:
-        print(f"  ❌ 服务器连接失败: {result.get('server_time_error', '未知错误')}")
+        print(f"  ❌ 伺服器連線失敗: {result.get('server_time_error', '未知錯誤')}")
 
     if "account_error" in result:
-        print(f"  ❌ 账户连接失败: {result['account_error']}")
+        print(f"  ❌ 帳戶連線失敗: {result['account_error']}")
     else:
-        print(f"  ✅ 账户类型: {result.get('account_type', '?')}")
+        print(f"  ✅ 帳戶類型: {result.get('account_type', '?')}")
         print(f"  ✅ 可交易: {result.get('can_trade', '?')}")
-        print(f"  💰 USDT 余额: ${result.get('usdt_balance', 0):,.2f}")
+        print(f"  💰 USDT 餘額: ${result.get('usdt_balance', 0):,.2f}")
 
         balances = result.get("balances", {})
         for asset, val in balances.items():
@@ -225,7 +225,7 @@ def cmd_check(args, cfg) -> None:
     filters = result.get("filters", {})
     if filters:
         print()
-        print("  📋 交易规则:")
+        print("  📋 交易規則:")
         for sym, f in filters.items():
             print(f"    {sym}: minQty={f['min_qty']}, "
                   f"stepSize={f['step_size']}, "
@@ -233,41 +233,41 @@ def cmd_check(args, cfg) -> None:
 
     print()
     print("=" * 50)
-    print("  ✅ 连接检查完成")
+    print("  ✅ 連線檢查完成")
     print()
     print("  下一步:")
-    print("    # dry-run 测试（不下单）")
+    print("    # dry-run 測試（不下單）")
     print(f"    python scripts/run_live.py -c {args.config} --real --dry-run --once")
     print()
-    print("    # 真实交易（真金白银！）")
+    print("    # 真實交易（真金白銀！）")
     print(f"    python scripts/run_live.py -c {args.config} --real --once")
     print("=" * 50)
 
 
 def cmd_status(args, cfg) -> None:
-    """查看 Paper Trading 账户状态"""
+    """查看 Paper Trading 帳戶狀態"""
     strategy_name = args.strategy or cfg.strategy.name
     state_path = Path(cfg.output.report_dir) / "live" / strategy_name / "paper_state.json"
 
     if not state_path.exists():
-        print(f"❌ 找不到状态文件: {state_path}")
-        print(f"   请先运行: python scripts/run_live.py -c {args.config} --paper --once")
+        print(f"❌ 找不到狀態檔案: {state_path}")
+        print(f"   請先運行: python scripts/run_live.py -c {args.config} --paper --once")
         return
 
     with open(state_path) as f:
         state = json.load(f)
 
     print("=" * 50)
-    print(f"  Paper Trading 状态 [{strategy_name}]")
+    print(f"  Paper Trading 狀態 [{strategy_name}]")
     print("=" * 50)
-    print(f"  初始资金:  ${state['initial_cash']:,.2f}")
-    print(f"  当前现金:  ${state['cash']:,.2f}")
-    print(f"  持仓:")
+    print(f"  初始資金:  ${state['initial_cash']:,.2f}")
+    print(f"  當前現金:  ${state['cash']:,.2f}")
+    print(f"  持倉:")
     for sym, pos in state.get("positions", {}).items():
         print(f"    {sym}: {pos['qty']:.6f} @ {pos['avg_entry']:.2f}")
-    print(f"  交易笔数:  {len(state.get('trades', []))}")
+    print(f"  交易筆數:  {len(state.get('trades', []))}")
 
-    # 最近 5 笔交易
+    # 最近 5 筆交易
     trades = state.get("trades", [])
     if trades:
         print(f"\n  最近交易:")
@@ -282,35 +282,35 @@ def cmd_status(args, cfg) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="即时交易",
+        description="即時交易",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument("-c", "--config", type=str, default="config/rsi_adx_atr.yaml",
-                        help="配置文件路径")
+                        help="配置檔路徑")
     parser.add_argument("-s", "--strategy", type=str, default=None,
-                        help="策略名称")
+                        help="策略名稱")
     parser.add_argument("--symbol", type=str, default=None,
-                        help="只交易指定交易对")
+                        help="只交易指定交易對")
 
-    # 模式选择
+    # 模式選擇
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--paper", action="store_true", default=True,
-                            help="Paper Trading 模式（默认）")
+                            help="Paper Trading 模式（預設）")
     mode_group.add_argument("--real", action="store_true",
-                            help="真实交易模式（需要 API Key）")
+                            help="真實交易模式（需要 API Key）")
     mode_group.add_argument("--status", action="store_true",
-                            help="查看 Paper Trading 账户状态")
+                            help="查看 Paper Trading 帳戶狀態")
     mode_group.add_argument("--check", action="store_true",
-                            help="检查 Binance API 连接")
+                            help="檢查 Binance API 連線")
 
-    # 运行选项
+    # 運行選項
     parser.add_argument("--once", action="store_true",
-                        help="只执行一次（不等待 K 线收盘）")
+                        help="只執行一次（不等待 K 線收盤）")
     parser.add_argument("--dry-run", action="store_true", dest="dry_run",
-                        help="Real 模式下不实际下单（测试用）")
+                        help="Real 模式下不實際下單（測試用）")
     parser.add_argument("--max-ticks", type=int, default=None,
-                        help="最大运行次数")
+                        help="最大運行次數")
 
     args = parser.parse_args()
 
