@@ -7,7 +7,7 @@ market:
 
 backtest:
   initial_cash: 10000
-  fee_bps: 6
+  fee_bps: 8           # Binance 0.075% (BNB 抵扣)
   slippage_bps: 5
   trade_on: "next_open"
 

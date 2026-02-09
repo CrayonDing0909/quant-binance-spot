@@ -471,17 +471,38 @@ python scripts/optimize_params.py --strategy my_rsi_strategy --metric "Total Ret
 
 在實盤前，必須驗證策略是否過擬合。
 
-### 5.1 執行驗證腳本
+### 5.1 統一驗證入口
+
+所有驗證功能已整合到 `validate.py`：
 
 ```bash
-python scripts/validate_strategy.py
+# 執行標準驗證套件（Walk-Forward + Monte Carlo + Cross-Asset + Kelly）
+python scripts/validate.py -c config/rsi_adx_atr.yaml
+
+# 快速驗證（跳過耗時測試）
+python scripts/validate.py -c config/rsi_adx_atr.yaml --quick
+
+# 完整驗證（包括一致性檢查）
+python scripts/validate.py -c config/rsi_adx_atr.yaml --full
+
+# 只執行特定驗證
+python scripts/validate.py -c config/rsi_adx_atr.yaml --only walk_forward
+python scripts/validate.py -c config/rsi_adx_atr.yaml --only walk_forward,monte_carlo
 ```
 
-這會進行兩種驗證：
+**可用的驗證類型**：
+- `walk_forward` - 滾動視窗驗證
+- `monte_carlo` - Monte Carlo 風險分析
+- `loao` - Leave-One-Asset-Out 穩健性測試
+- `regime` - 市場狀態驗證
+- `dsr` - Deflated Sharpe Ratio（校正 Sharpe）
+- `pbo` - Probability of Backtest Overfitting
+- `kelly` - Kelly 公式驗證
+- `consistency` - Live/Backtest 一致性驗證
 
-#### 1. 滾動視窗驗證 (Walk-Forward Analysis)
+### 5.2 Walk-Forward Analysis
 
-將資料分成多個訓練/測試視窗：
+滾動視窗驗證會自動執行，將資料分成多個訓練/測試視窗：
 - 在訓練集上優化參數
 - 在測試集上驗證表現
 
@@ -489,28 +510,13 @@ python scripts/validate_strategy.py
 - ✅ 測試集表現接近訓練集 → 策略穩定
 - ❌ 測試集表現遠差於訓練集 → 可能過擬合
 
-#### 2. 參數敏感性分析
-
-測試參數微小變化對結果的影響：
-- ✅ 參數變化時表現穩定 → 策略穩健
-- ❌ 參數微小變化導致結果大幅波動 → 策略不穩定
-
-### 5.2 Kelly 公式驗證 ⭐ NEW
+### 5.3 Kelly 公式驗證
 
 驗證策略是否適合使用 Kelly 倉位管理：
 
 ```bash
-# 快速檢查
-python scripts/validate_kelly.py
-
-# 詳細分析（比較不同 Kelly fraction）
-python scripts/validate_kelly.py --detailed
-
-# 指定交易對
-python scripts/validate_kelly.py --symbols BTCUSDT ETHUSDT
-
-# 輸出 JSON 格式
-python scripts/validate_kelly.py --json
+# 只執行 Kelly 驗證
+python scripts/validate.py -c config/rsi_adx_atr.yaml --only kelly
 ```
 
 **驗證內容**：
@@ -520,73 +526,90 @@ python scripts/validate_kelly.py --json
 
 **範例輸出**：
 ```
-📊 Kelly 公式驗證
-============================================================
-  配置: config/rsi_adx_atr.yaml
-  策略: rsi_adx_atr
-  交易對: BTCUSDT, ETHUSDT
-============================================================
+======================================================================
+  💰 Kelly Formula Validation
+======================================================================
 
-📈 分析 BTCUSDT...
-  勝率: 55.2%
-  盈虧比: 1.45
-  Full Kelly: 12.3%
-  
-  ✅ 適合使用 Kelly
-  建議: Quarter Kelly = 3.1%
+  BTCUSDT:
+    勝率: 55.2% (120/217)
+    盈虧比: 1.45
+    Full Kelly: 12.3%
+    穩定性 (CV): 0.35
+    推薦倉位: 25% Kelly
+    原因: Calmar ratio 最優 (2.15)
+    ✅ 推薦使用 25% Kelly = 3.1% 倉位
 ```
 
-### 5.3 Live/Backtest 一致性驗證 ⭐ NEW
+### 5.4 Live/Backtest 一致性驗證
 
 驗證即時交易訊號與回測是否一致（檢測 look-ahead bias）：
 
 ```bash
-# 驗證過去 7 天
-python scripts/run_consistency_check.py
+# 執行一致性驗證（需要先運行 Paper Trading 一段時間）
+python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency
 
-# 驗證過去 14 天
-python scripts/run_consistency_check.py --days 14
-
-# 指定設定檔
-python scripts/run_consistency_check.py --config config/rsi_adx_atr.yaml
-
-# 只驗證特定交易對
-python scripts/run_consistency_check.py --symbols BTCUSDT ETHUSDT
-
-# 驗證指定期間
-python scripts/run_consistency_check.py --start 2026-01-01 --end 2026-02-01
-
-# 驗證後發送 Telegram 通知
-python scripts/run_consistency_check.py --notify
+# 完整驗證（包含一致性）
+python scripts/validate.py -c config/rsi_adx_atr.yaml --full
 ```
 
 **建議排程（cron）**：
 ```bash
-# 每週日 00:00 執行驗證
-0 0 * * 0 cd /path/to/quant-binance-spot && python scripts/run_consistency_check.py --notify
+# 每週日 00:00 執行一致性驗證
+0 0 * * 0 cd /path/to/quant-binance-spot && python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency
 ```
 
-### 5.4 理解驗證結果
+### 5.5 理解驗證結果
 
-查看驗證報告：
+驗證完成後會生成摘要報告（`reports/{strategy}/validation_{timestamp}/validation_summary.yaml`）：
 
 ```
-平均訓練集收益率: 15.00%
-平均測試集收益率: 12.00%
-✓ 測試集表現穩定，收益率下降 20.0%
+======================================================================
+  📋 Validation Summary
+======================================================================
+  Walk-Forward: ✅ PASS (平均衰退 15.2%)
+  Monte Carlo: ✅ PASS (平均 VaR 95%: 0.58%)
+  Cross-Asset: ✅ PASS (moderate)
+  DSR: ✅ PASS (校正 SR: 1.2500)
+  PBO: ✅ PASS (12.5%)
+  Kelly: ✅ PASS (適合: 4/4)
+----------------------------------------------------------------------
+  Overall: ✅ 策略驗證通過
+======================================================================
 ```
 
 **好的結果**：
-- 測試集收益率下降 < 30%
-- 測試集夏普比率 > 0
-- 參數敏感性低
+- Walk-Forward 衰退 < 30%
+- PBO < 50%
+- DSR p-value < 0.05
+- Kelly 適合使用
 - 一致性驗證 > 95%
 
 **不好的結果**：
-- 測試集收益率下降 > 50%
-- 測試集夏普比率 < 0
-- 參數敏感性高
+- Walk-Forward 衰退 > 50%
+- PBO > 50%（可能過擬合）
+- DSR 不顯著
+- Kelly 不適合（統計不穩定）
 - 一致性驗證 < 90%（可能有 look-ahead bias）
+
+**PBO (Probability of Backtest Overfitting) 解釋**：
+
+PBO 衡量「訓練表現最好的策略在測試時表現差」的機率：
+- 收集所有 Walk-Forward 的 Train/Test Sharpe
+- 找出 Train Sharpe 最高的那個 Split
+- 看它的 Test Sharpe 在所有 Test 中排第幾
+
+```
+例如：如果 Train 最佳的 Split，
+      其 Test Sharpe 排在 18/20（倒數第二）
+      → PBO = 18/20 = 90%
+      → 訓練表現好 ≠ 測試表現好
+      → 可能過擬合
+```
+
+**PBO 高但策略仍可用的情況**：
+- 所有 Test Sharpe 都 > 0（仍然盈利）
+- Walk-Forward 衰退 < 30%
+- Paper Trading 表現與回測一致
 
 如果驗證結果不好，需要：
 1. 簡化策略
@@ -821,7 +844,7 @@ crontab -e
 
 # === 驗證 ===
 # 每週日 00:00 執行一致性驗證
-0 0 * * 0 cd /opt/qtrade && python scripts/run_consistency_check.py --notify >> logs/consistency.log 2>&1
+0 0 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency >> logs/consistency.log 2>&1
 ```
 
 ---
@@ -940,11 +963,11 @@ python scripts/optimize_params.py --strategy my_rsi_strategy --metric "Sharpe Ra
 ### 步驟 8：驗證策略
 
 ```bash
-# 基本驗證
-python scripts/validate_strategy.py
+# 標準驗證套件
+python scripts/validate.py -c config/rsi_adx_atr.yaml
 
-# Kelly 驗證
-python scripts/validate_kelly.py --detailed
+# 只執行 Kelly 驗證
+python scripts/validate.py -c config/rsi_adx_atr.yaml --only kelly
 ```
 
 ### 步驟 9：Paper Trading
@@ -1014,7 +1037,7 @@ python scripts/run_live.py -c config/base.yaml --status
 **解決方法**：
 ```bash
 # 執行一致性驗證找出問題
-python scripts/run_consistency_check.py --verbose
+python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency
 ```
 
 ### Q6: Kelly 建議不使用怎麼辦？ ⭐ NEW

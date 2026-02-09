@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qtrade.backtest.cross_asset_validation import (
+from qtrade.validation import (
     # 配置類
     CrossAssetValidationConfig,
     CorrelationStratifiedConfig,

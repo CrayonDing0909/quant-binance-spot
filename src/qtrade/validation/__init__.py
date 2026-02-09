@@ -1,20 +1,128 @@
 """
-驗證模組
+統一驗證模組
 
-提供策略和交易的各種驗證功能：
-- Live/Backtest 一致性驗證
-- 信號品質檢查
+整合所有策略驗證功能：
+- Walk-Forward Analysis
+- Parameter Sensitivity Analysis
+- Monte Carlo Simulation
+- Cross-Asset Validation (LOAO, Correlation, Market Regime)
+- Advanced Methods (DSR, PBO, CPCV)
+- Live/Backtest Consistency Validation
+
+使用範例:
+    from qtrade.validation import (
+        # Walk-Forward
+        walk_forward_analysis,
+        
+        # Sensitivity
+        parameter_sensitivity_analysis,
+        detect_overfitting,
+        
+        # Cross-Asset
+        leave_one_asset_out,
+        correlation_stratified_validation,
+        market_regime_validation,
+        
+        # Advanced (Prado methods)
+        deflated_sharpe_ratio,
+        probability_of_backtest_overfitting,
+        combinatorial_purged_cv,
+        
+        # Consistency
+        ConsistencyValidator,
+        run_consistency_check,
+    )
 """
-from .consistency_validator import (
+from __future__ import annotations
+
+# Walk-Forward Analysis
+from .walk_forward import (
+    walk_forward_analysis,
+    parameter_sensitivity_analysis,
+    detect_overfitting,
+)
+
+# Cross-Asset Validation
+from .cross_asset import (
+    # Config
+    CrossAssetValidationConfig,
+    CorrelationStratifiedConfig,
+    MarketRegimeConfig,
+    # Results
+    AssetValidationResult,
+    CrossAssetValidationResult,
+    CorrelationGroupResult,
+    MarketRegimeResult,
+    # Enums
+    ValidationMethod,
+    MarketRegimeIndicator,
+    RobustnessLevel,
+    # Validators
+    LeaveOneAssetOutValidator,
+    CorrelationStratifiedValidator,
+    MarketRegimeValidator,
+    ValidationResultAnalyzer,
+    # Convenience functions
+    leave_one_asset_out,
+    correlation_stratified_validation,
+    market_regime_validation,
+)
+
+# Advanced Methods (López de Prado)
+from .prado_methods import (
+    deflated_sharpe_ratio,
+    probability_of_backtest_overfitting,
+    combinatorial_purged_cv,
+    DeflatedSharpeResult,
+    PBOResult,
+    CPCVResult,
+    run_all_advanced_validation,
+)
+
+# Live/Backtest Consistency
+from .consistency import (
     ConsistencyValidator,
     ConsistencyReport,
-    SignalComparison,
     run_consistency_check,
 )
 
 __all__ = [
+    # Walk-Forward
+    "walk_forward_analysis",
+    "parameter_sensitivity_analysis",
+    "detect_overfitting",
+    # Cross-Asset - Config
+    "CrossAssetValidationConfig",
+    "CorrelationStratifiedConfig",
+    "MarketRegimeConfig",
+    # Cross-Asset - Results
+    "AssetValidationResult",
+    "CrossAssetValidationResult",
+    "CorrelationGroupResult",
+    "MarketRegimeResult",
+    # Cross-Asset - Enums
+    "ValidationMethod",
+    "MarketRegimeIndicator",
+    "RobustnessLevel",
+    # Cross-Asset - Validators
+    "LeaveOneAssetOutValidator",
+    "CorrelationStratifiedValidator",
+    "MarketRegimeValidator",
+    "ValidationResultAnalyzer",
+    # Cross-Asset - Convenience
+    "leave_one_asset_out",
+    "correlation_stratified_validation",
+    "market_regime_validation",
+    # Advanced (Prado Methods)
+    "deflated_sharpe_ratio",
+    "probability_of_backtest_overfitting",
+    "combinatorial_purged_cv",
+    "DeflatedSharpeResult",
+    "PBOResult",
+    "CPCVResult",
+    "run_all_advanced_validation",
+    # Consistency
     "ConsistencyValidator",
-    "ConsistencyReport", 
-    "SignalComparison",
+    "ConsistencyReport",
     "run_consistency_check",
 ]

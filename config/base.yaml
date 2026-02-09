@@ -6,7 +6,7 @@ market:
 
 backtest:
   initial_cash: 10000
-  fee_bps: 6          # 0.06% example (maker/taker differs; start simple)
+  fee_bps: 8          # Binance 0.075% (BNB 抵扣) ≈ 7.5 bps，保守用 8
   slippage_bps: 5     # fixed bps model for now
   trade_on: "next_open"  # signal at close, execute next open
   validate_data: true  # 是否验证数据质量

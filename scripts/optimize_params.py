@@ -170,7 +170,7 @@ def main() -> None:
         "--metric",
         type=str,
         default="Total Return [%]",
-        help="優化目標指標（Total Return [%], Sharpe Ratio, 等）"
+        help="優化目標指標（Total Return [%%], Sharpe Ratio, 等）"
     )
     parser.add_argument(
         "--config",

@@ -1,0 +1,37 @@
+overall_passed: false
+tests:
+  cross_asset:
+    passed: true
+    robustness: robust
+  dsr:
+    deflated_sharpe: '3.6026'
+    passed: &id001 !!python/object/apply:numpy.core.multiarray.scalar
+    - !!python/object/apply:numpy.dtype
+      args:
+      - b1
+      - false
+      - true
+      state: !!python/tuple
+      - 3
+      - '|'
+      - null
+      - null
+      - null
+      - -1
+      - -1
+      - 0
+    - !!binary |
+      AQ==
+  kelly:
+    passed: true
+    suitable_assets: 4/4
+  monte_carlo:
+    avg_var_95: 0.59%
+    passed: *id001
+  pbo:
+    passed: false
+    pbo: 90.00%
+  walk_forward:
+    avg_degradation: 15.0%
+    passed: *id001
+timestamp: '2026-02-09T19:29:59.454257'

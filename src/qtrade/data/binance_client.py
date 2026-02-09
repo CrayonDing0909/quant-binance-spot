@@ -211,3 +211,26 @@ class BinanceHTTP:
                 raise
 
         raise last_exc or RuntimeError("Unexpected retry exhaustion")
+
+    def signed_delete(self, path: str, params: dict) -> dict:
+        """簽名 DELETE 請求（用於取消訂單）"""
+        last_exc: Exception | None = None
+
+        for attempt in range(MAX_RETRIES + 1):
+            signed = self._sign_params(params)
+            url = f"{self.base_url}{path}"
+            try:
+                r = requests.delete(url, params=signed, headers=self._headers(), timeout=30)
+                r.raise_for_status()
+                return r.json()
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                    requests.exceptions.HTTPError) as e:
+                if self._should_retry(e) and attempt < MAX_RETRIES:
+                    delay = RETRY_DELAYS[attempt]
+                    logger.warning(f"⚠️  signed_delete 重試 {attempt + 1}/{MAX_RETRIES}（等待 {delay}s）")
+                    time.sleep(delay)
+                    last_exc = e
+                    continue
+                raise
+
+        raise last_exc or RuntimeError("Unexpected retry exhaustion")

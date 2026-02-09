@@ -1,0 +1,116 @@
+# 統一驗證配置
+# 所有驗證設定集中在這裡
+#
+# 使用方式:
+#   python scripts/validate.py -c config/rsi_adx_atr.yaml -v config/validation.yaml
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Walk-Forward Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+walk_forward:
+  enabled: true
+  n_splits: 5  # 分割數量
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Monte Carlo Simulation
+# ══════════════════════════════════════════════════════════════════════════════
+monte_carlo:
+  enabled: true
+  n_simulations: 10000
+  confidence_levels: [0.95, 0.99]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Cross-Asset Validation
+# ══════════════════════════════════════════════════════════════════════════════
+cross_asset:
+  run_loao: true                    # Leave-One-Asset-Out
+  run_correlation_stratified: true  # 相關性分層
+  run_regime_validation: true       # 市場狀態
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Prado Methods (Advanced)
+# ══════════════════════════════════════════════════════════════════════════════
+prado_methods:
+  deflated_sharpe:
+    enabled: true
+    n_trials: 729  # Grid search 組合數（參數敏感性測試）
+  
+  pbo:
+    enabled: true
+    threshold: 0.5  # PBO 閾值，超過此值視為過擬合
+  
+  cpcv:
+    enabled: false  # 預設關閉（非常耗時）
+    n_splits: 6
+    n_test_splits: 2
+    purge_pct: 0.01
+    embargo_pct: 0.01
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Consistency Check
+# ══════════════════════════════════════════════════════════════════════════════
+consistency:
+  enabled: false  # 預設關閉（需要 live 交易紀錄）
+  days: 7         # 回看天數
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Market Regime Periods (供參考)
+# ══════════════════════════════════════════════════════════════════════════════
+market_regimes:
+  - name: "crypto_winter_2022"
+    start: "2022-01-01"
+    end: "2023-01-01"
+    description: "2022 加密貨幣熊市"
+  
+  - name: "bull_market_2021"
+    start: "2021-01-01"
+    end: "2022-01-01"
+    description: "2021 牛市"
+  
+  - name: "covid_crash_2020"
+    start: "2020-03-01"
+    end: "2020-04-01"
+    description: "2020 COVID 崩盤"
+  
+  - name: "post_halving_2024"
+    start: "2024-04-01"
+    end: "2025-01-01"
+    description: "2024 減半後行情"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Out-of-Sample Testing (供參考)
+# ══════════════════════════════════════════════════════════════════════════════
+oos_testing:
+  periods:
+    - name: "full_history"
+      train_start: "2017-08-17"  # BTC 上線
+      train_end: "2023-12-31"
+      test_start: "2024-01-01"
+    
+    - name: "recent"
+      train_start: "2022-01-01"
+      train_end: "2024-12-31"
+      test_start: "2025-01-01"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Thresholds (驗證閾值)
+# ══════════════════════════════════════════════════════════════════════════════
+thresholds:
+  # Walk-Forward
+  max_sharpe_degradation: 0.5      # 最大 Sharpe 衰退
+  
+  # Monte Carlo
+  max_var_95: -0.30                # 最大 VaR 95%
+  max_cvar_95: -0.40               # 最大 CVaR 95%
+  
+  # Cross-Asset
+  min_robustness_level: "moderate"  # robust, moderate, weak, overfitted
+  
+  # DSR
+  min_deflated_sharpe: 0.0         # 最小校正 Sharpe
+  
+  # PBO
+  max_pbo: 0.5                     # 最大 PBO
+  
+  # Consistency
+  min_consistency_rate: 0.95       # 最小一致性

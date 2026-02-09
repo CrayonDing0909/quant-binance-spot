@@ -7,11 +7,18 @@ Binance Spot Broker — 真實下單引擎
     BINANCE_API_SECRET
 
 功能：
-    - 市價買入/賣出
-    - 硬止損（STOP_LOSS_MARKET 預掛單）- v2.0 新增
+    - 市價買入/賣出 (market_buy, market_sell)
+    - 限價買入/賣出 (limit_buy, limit_sell)
+    - 市價止損 (place_stop_loss) - 推薦，確保出場
+    - 限價止盈 (place_take_profit) - 設定目標價
+    - 訂單管理（查詢/取消訂單）
     - 自動處理 LOT_SIZE (stepSize / minQty) 和 MIN_NOTIONAL
     - 多幣種權益計算
     - dry-run 模式（只記錄不下單）
+
+止損止盈策略建議：
+    - 止損用市價：確保一定出場，寧願滑點也不要虧更多
+    - 止盈用限價：不急著賣，可以設定想要的價格
 """
 from __future__ import annotations
 import math
@@ -22,6 +29,11 @@ from ..data.binance_client import BinanceHTTP
 from ..utils.log import get_logger
 
 logger = get_logger("binance_broker")
+
+# Binance 手續費率（用於估算，實際以交易所為準）
+# VIP 0 + BNB 抵扣 = 0.075%
+# 不使用 BNB 抵扣 = 0.1%
+FEE_RATE = 0.00075  # 0.075%
 
 
 @dataclass
@@ -77,7 +89,12 @@ class BinanceSpotBroker:
     """
     Binance Spot 真實下單引擎
 
-    僅支援市價單（MARKET），適合非高頻策略。
+    支援市價單和限價單，適合低頻策略。
+    
+    訂單類型：
+        - market_buy / market_sell: 市價單（立即成交）
+        - limit_buy / limit_sell: 限價單（可設定價格）
+        - place_stop_loss: 止損單（價格觸發後執行）
 
     Args:
         dry_run: True = 只記錄不下單（用於測試）
@@ -252,7 +269,7 @@ class BinanceSpotBroker:
             price = self.get_price(symbol)
             est_qty = quote_qty / price if price > 0 else 0
             est_qty = sf.round_qty(est_qty)
-            est_fee = quote_qty * 0.001  # 估算 0.1% 手續費
+            est_fee = quote_qty * FEE_RATE
             logger.info(
                 f"🧪 [DRY-RUN] BUY  {symbol}: ~{est_qty:.6f} @ ~${price:,.2f} "
                 f"(${quote_qty:.2f}, reason={reason})"
@@ -281,7 +298,7 @@ class BinanceSpotBroker:
             exec_qty = float(result.get("executedQty", 0))
             cum_quote = float(result.get("cummulativeQuoteQty", 0))
             avg_price = cum_quote / max(exec_qty, 1e-10)
-            est_fee = cum_quote * 0.001  # VIP 0 = 0.1%
+            est_fee = cum_quote * FEE_RATE
 
             # 追蹤買入均價
             self._avg_entries[symbol] = avg_price
@@ -341,7 +358,7 @@ class BinanceSpotBroker:
         est_pnl = (price - avg_entry) * qty if avg_entry > 0 else None
 
         if self.dry_run:
-            est_fee = qty * price * 0.001
+            est_fee = qty * price * FEE_RATE
             logger.info(
                 f"🧪 [DRY-RUN] SELL {symbol}: {qty:.6f} @ ~${price:,.2f} "
                 f"(reason={reason})"
@@ -370,7 +387,7 @@ class BinanceSpotBroker:
             exec_qty = float(result.get("executedQty", 0))
             cum_quote = float(result.get("cummulativeQuoteQty", 0))
             avg_price = cum_quote / max(exec_qty, 1e-10)
-            est_fee = cum_quote * 0.001
+            est_fee = cum_quote * FEE_RATE
 
             # 計算 PnL
             pnl = (avg_price - avg_entry) * exec_qty if avg_entry > 0 else None
@@ -398,7 +415,317 @@ class BinanceSpotBroker:
             logger.error(f"❌ 賣出失敗 {symbol}: {e}")
             return None
 
-    # ── 硬止損（預掛單）────────────────────────────────────
+    # ── 限價單 ──────────────────────────────────────────────
+
+    def limit_buy(
+        self,
+        symbol: str,
+        qty: float,
+        price: float,
+        reason: str = "",
+        time_in_force: str = "GTC",
+    ) -> OrderResult | None:
+        """
+        限價買入
+        
+        優點：
+        - 可以設定期望的買入價格，避免滑點
+        - 適合在支撐位掛單等待成交
+        
+        Args:
+            symbol: 交易對, e.g. "BTCUSDT"
+            qty: 買入數量 (base asset)
+            price: 限價價格
+            reason: 下單原因
+            time_in_force: 有效期
+                - "GTC" (Good Till Cancel): 一直有效直到成交或取消
+                - "IOC" (Immediate Or Cancel): 立即成交，未成交部分取消
+                - "FOK" (Fill Or Kill): 全部成交或全部取消
+                
+        Returns:
+            OrderResult 或 None
+        """
+        sf = self._get_filter(symbol)
+        qty = sf.round_qty(qty)
+        
+        # 檢查數量
+        ok, msg = sf.validate_qty(qty)
+        if not ok:
+            logger.warning(f"⚠️  {symbol} 限價買入數量不合規: {msg}")
+            return None
+        
+        # 檢查最小金額
+        ok, msg = sf.validate_notional(qty, price)
+        if not ok:
+            logger.warning(f"⚠️  {symbol} 限價買入金額不足: {msg}")
+            return None
+        
+        # 價格精度處理
+        if sf.tick_size > 0:
+            precision = max(0, -int(math.log10(sf.tick_size)))
+            price = round(price, precision)
+        
+        if self.dry_run:
+            est_fee = qty * price * FEE_RATE
+            logger.info(
+                f"🧪 [DRY-RUN] LIMIT BUY {symbol}: {qty:.6f} @ ${price:,.2f} "
+                f"(reason={reason})"
+            )
+            return OrderResult(
+                order_id="DRY-RUN-LIMIT",
+                symbol=symbol,
+                side="BUY",
+                qty=qty,
+                price=price,
+                fee=est_fee,
+                value=qty * price,
+                pnl=None,
+                status="DRY_RUN",
+                reason=reason,
+            )
+        
+        try:
+            result = self.http.signed_post("/api/v3/order", {
+                "symbol": symbol,
+                "side": "BUY",
+                "type": "LIMIT",
+                "timeInForce": time_in_force,
+                "quantity": f"{qty:.8f}",
+                "price": f"{price:.8f}",
+            })
+            
+            exec_qty = float(result.get("executedQty", 0))
+            order_price = float(result.get("price", price))
+            status = result.get("status", "NEW")
+            est_fee = exec_qty * order_price * FEE_RATE if exec_qty > 0 else 0
+            
+            # 如果立即成交，追蹤買入均價
+            if exec_qty > 0:
+                self._avg_entries[symbol] = order_price
+            
+            order = OrderResult(
+                order_id=str(result["orderId"]),
+                symbol=symbol,
+                side="BUY",
+                qty=qty,  # 下單數量
+                price=order_price,
+                fee=est_fee,
+                value=qty * order_price,
+                pnl=None,
+                status=status,
+                reason=reason,
+                raw=result,
+            )
+            
+            status_emoji = "✅" if status == "FILLED" else "📋"
+            logger.info(
+                f"{status_emoji} LIMIT BUY {symbol}: {qty:.6f} @ ${price:,.2f} "
+                f"(status={status}, orderId={order.order_id})"
+            )
+            return order
+            
+        except Exception as e:
+            logger.error(f"❌ 限價買入失敗 {symbol}: {e}")
+            return None
+
+    def limit_sell(
+        self,
+        symbol: str,
+        qty: float,
+        price: float,
+        reason: str = "",
+        time_in_force: str = "GTC",
+    ) -> OrderResult | None:
+        """
+        限價賣出
+        
+        優點：
+        - 可以設定期望的賣出價格，避免滑點
+        - 適合在阻力位掛單止盈
+        
+        Args:
+            symbol: 交易對
+            qty: 賣出數量 (base asset)
+            price: 限價價格
+            reason: 下單原因
+            time_in_force: 有效期 ("GTC", "IOC", "FOK")
+                
+        Returns:
+            OrderResult 或 None
+        """
+        sf = self._get_filter(symbol)
+        qty = sf.round_qty(qty)
+        
+        # 檢查數量
+        ok, msg = sf.validate_qty(qty)
+        if not ok:
+            logger.warning(f"⚠️  {symbol} 限價賣出數量不合規: {msg}")
+            return None
+        
+        # 檢查最小金額
+        ok, msg = sf.validate_notional(qty, price)
+        if not ok:
+            logger.warning(f"⚠️  {symbol} 限價賣出金額不足: {msg}")
+            return None
+        
+        # 價格精度處理
+        if sf.tick_size > 0:
+            precision = max(0, -int(math.log10(sf.tick_size)))
+            price = round(price, precision)
+        
+        # 估算 PnL
+        avg_entry = self._avg_entries.get(symbol, 0)
+        est_pnl = (price - avg_entry) * qty if avg_entry > 0 else None
+        
+        if self.dry_run:
+            est_fee = qty * price * FEE_RATE
+            logger.info(
+                f"🧪 [DRY-RUN] LIMIT SELL {symbol}: {qty:.6f} @ ${price:,.2f} "
+                f"(reason={reason})"
+            )
+            return OrderResult(
+                order_id="DRY-RUN-LIMIT",
+                symbol=symbol,
+                side="SELL",
+                qty=qty,
+                price=price,
+                fee=est_fee,
+                value=qty * price,
+                pnl=est_pnl,
+                status="DRY_RUN",
+                reason=reason,
+            )
+        
+        try:
+            result = self.http.signed_post("/api/v3/order", {
+                "symbol": symbol,
+                "side": "SELL",
+                "type": "LIMIT",
+                "timeInForce": time_in_force,
+                "quantity": f"{qty:.8f}",
+                "price": f"{price:.8f}",
+            })
+            
+            exec_qty = float(result.get("executedQty", 0))
+            order_price = float(result.get("price", price))
+            status = result.get("status", "NEW")
+            est_fee = exec_qty * order_price * FEE_RATE if exec_qty > 0 else 0
+            
+            # 計算實際 PnL（如果成交）
+            pnl = (order_price - avg_entry) * exec_qty if avg_entry > 0 and exec_qty > 0 else None
+            
+            order = OrderResult(
+                order_id=str(result["orderId"]),
+                symbol=symbol,
+                side="SELL",
+                qty=qty,
+                price=order_price,
+                fee=est_fee,
+                value=qty * order_price,
+                pnl=pnl,
+                status=status,
+                reason=reason,
+                raw=result,
+            )
+            
+            status_emoji = "✅" if status == "FILLED" else "📋"
+            logger.info(
+                f"{status_emoji} LIMIT SELL {symbol}: {qty:.6f} @ ${price:,.2f} "
+                f"(status={status}, orderId={order.order_id})"
+            )
+            return order
+            
+        except Exception as e:
+            logger.error(f"❌ 限價賣出失敗 {symbol}: {e}")
+            return None
+
+    def get_open_orders(self, symbol: str | None = None) -> list[dict]:
+        """
+        查詢未成交訂單
+        
+        Args:
+            symbol: 交易對，None = 查詢所有
+            
+        Returns:
+            訂單列表
+        """
+        try:
+            params = {}
+            if symbol:
+                params["symbol"] = symbol
+            
+            result = self.http.signed_get("/api/v3/openOrders", params)
+            return result if isinstance(result, list) else []
+        except Exception as e:
+            logger.error(f"❌ 查詢未成交訂單失敗: {e}")
+            return []
+
+    def cancel_order(self, symbol: str, order_id: str) -> bool:
+        """
+        取消訂單
+        
+        Args:
+            symbol: 交易對
+            order_id: 訂單 ID
+            
+        Returns:
+            是否成功
+        """
+        if self.dry_run:
+            logger.info(f"🧪 [DRY-RUN] 取消訂單 {symbol} orderId={order_id}")
+            return True
+        
+        try:
+            self.http.signed_delete("/api/v3/order", {
+                "symbol": symbol,
+                "orderId": order_id,
+            })
+            logger.info(f"🗑️  訂單已取消 {symbol} orderId={order_id}")
+            return True
+        except Exception as e:
+            if "Unknown order" in str(e) or "UNKNOWN_ORDER" in str(e):
+                return True  # 訂單已不存在
+            logger.warning(f"⚠️  取消訂單失敗 {symbol}: {e}")
+            return False
+
+    def cancel_all_orders(self, symbol: str) -> int:
+        """
+        取消某交易對的所有未成交訂單
+        
+        Returns:
+            取消的訂單數量
+        """
+        open_orders = self.get_open_orders(symbol)
+        cancelled = 0
+        
+        for order in open_orders:
+            order_id = str(order.get("orderId", ""))
+            if order_id and self.cancel_order(symbol, order_id):
+                cancelled += 1
+        
+        if cancelled > 0:
+            logger.info(f"🗑️  已取消 {symbol} 的 {cancelled} 筆訂單")
+        
+        return cancelled
+
+    def get_order_status(self, symbol: str, order_id: str) -> dict | None:
+        """
+        查詢訂單狀態
+        
+        Returns:
+            訂單資訊或 None
+        """
+        try:
+            result = self.http.signed_get("/api/v3/order", {
+                "symbol": symbol,
+                "orderId": order_id,
+            })
+            return result
+        except Exception as e:
+            logger.warning(f"⚠️  查詢訂單失敗 {symbol}: {e}")
+            return None
+
+    # ── 止損 / 止盈（預掛單）────────────────────────────────
 
     def place_stop_loss(
         self,
@@ -406,11 +733,12 @@ class BinanceSpotBroker:
         qty: float,
         stop_price: float,
         reason: str = "stop_loss",
+        use_market: bool = True,
     ) -> OrderResult | None:
         """
-        預掛止損單（STOP_LOSS_MARKET）
+        預掛止損單
         
-        當價格跌破 stop_price 時，交易所自動執行市價賣出。
+        當價格跌破 stop_price 時，交易所自動執行賣出。
         即使程式斷線、API 故障，止損單依然有效。
         
         Args:
@@ -418,9 +746,15 @@ class BinanceSpotBroker:
             qty: 止損數量
             stop_price: 觸發價格
             reason: 原因
+            use_market: True = 市價止損（推薦），False = 限價止損
             
         Returns:
             OrderResult 或 None
+            
+        Note:
+            - 市價止損：觸發後以市價成交，確保出場但有滑點
+            - 限價止損：觸發後掛限價單，可能不成交
+            - 小額交易推薦用市價止損
         """
         sf = self._get_filter(symbol)
         qty = sf.round_qty(qty)
@@ -436,9 +770,12 @@ class BinanceSpotBroker:
             precision = max(0, -int(math.log10(sf.tick_size)))
             stop_price = round(stop_price, precision)
         
+        order_type = "STOP_LOSS" if use_market else "STOP_LOSS_LIMIT"
+        type_label = "市價止損" if use_market else "限價止損"
+        
         if self.dry_run:
             logger.info(
-                f"🧪 [DRY-RUN] STOP_LOSS {symbol}: {qty:.6f} @ ${stop_price:,.2f} "
+                f"🧪 [DRY-RUN] {type_label} {symbol}: {qty:.6f} @ ${stop_price:,.2f} "
                 f"(reason={reason})"
             )
             return OrderResult(
@@ -458,15 +795,26 @@ class BinanceSpotBroker:
             # 先取消舊的止損單（如果有）
             self.cancel_stop_loss(symbol)
             
-            result = self.http.signed_post("/api/v3/order", {
-                "symbol": symbol,
-                "side": "SELL",
-                "type": "STOP_LOSS_LIMIT",  # Binance Spot 需要用 STOP_LOSS_LIMIT
-                "timeInForce": "GTC",
-                "quantity": f"{qty:.8f}",
-                "stopPrice": f"{stop_price:.8f}",
-                "price": f"{stop_price * 0.995:.8f}",  # 限價略低於觸發價，確保成交
-            })
+            if use_market:
+                # 市價止損：觸發後以市價成交
+                result = self.http.signed_post("/api/v3/order", {
+                    "symbol": symbol,
+                    "side": "SELL",
+                    "type": "STOP_LOSS",
+                    "quantity": f"{qty:.8f}",
+                    "stopPrice": f"{stop_price:.8f}",
+                })
+            else:
+                # 限價止損：觸發後掛限價單
+                result = self.http.signed_post("/api/v3/order", {
+                    "symbol": symbol,
+                    "side": "SELL",
+                    "type": "STOP_LOSS_LIMIT",
+                    "timeInForce": "GTC",
+                    "quantity": f"{qty:.8f}",
+                    "stopPrice": f"{stop_price:.8f}",
+                    "price": f"{stop_price * 0.995:.8f}",  # 限價略低於觸發價
+                })
             
             order_id = str(result["orderId"])
             self._active_stop_orders[symbol] = order_id
@@ -486,13 +834,109 @@ class BinanceSpotBroker:
             )
             
             logger.info(
-                f"🛡️  STOP_LOSS 已掛 {symbol}: {qty:.6f} @ ${stop_price:,.2f} "
+                f"🛡️  {type_label}已掛 {symbol}: {qty:.6f} @ ${stop_price:,.2f} "
                 f"(orderId={order_id})"
             )
             return order
             
         except Exception as e:
             logger.error(f"❌ 掛止損單失敗 {symbol}: {e}")
+            return None
+
+    def place_take_profit(
+        self,
+        symbol: str,
+        qty: float,
+        target_price: float,
+        reason: str = "take_profit",
+    ) -> OrderResult | None:
+        """
+        預掛止盈單（限價賣出）
+        
+        當價格漲到 target_price 時，以限價單賣出。
+        適合設定目標價位，不急於立刻成交。
+        
+        Args:
+            symbol: 交易對
+            qty: 止盈數量
+            target_price: 目標價格
+            reason: 原因
+            
+        Returns:
+            OrderResult 或 None
+            
+        Note:
+            止盈用限價單，因為是獲利情況，不急著賣。
+            可以設定想要的價格慢慢等。
+        """
+        sf = self._get_filter(symbol)
+        qty = sf.round_qty(qty)
+        
+        # 檢查數量
+        ok, msg = sf.validate_qty(qty)
+        if not ok:
+            logger.warning(f"⚠️  {symbol} 止盈數量不合規: {msg}")
+            return None
+        
+        # 價格精度處理
+        if sf.tick_size > 0:
+            precision = max(0, -int(math.log10(sf.tick_size)))
+            target_price = round(target_price, precision)
+        
+        if self.dry_run:
+            logger.info(
+                f"🧪 [DRY-RUN] 止盈 {symbol}: {qty:.6f} @ ${target_price:,.2f} "
+                f"(reason={reason})"
+            )
+            return OrderResult(
+                order_id="DRY-RUN-TP",
+                symbol=symbol,
+                side="SELL",
+                qty=qty,
+                price=target_price,
+                fee=0,
+                value=qty * target_price,
+                pnl=None,
+                status="DRY_RUN",
+                reason=reason,
+            )
+        
+        try:
+            # 使用 TAKE_PROFIT_LIMIT（限價止盈）
+            result = self.http.signed_post("/api/v3/order", {
+                "symbol": symbol,
+                "side": "SELL",
+                "type": "TAKE_PROFIT_LIMIT",
+                "timeInForce": "GTC",
+                "quantity": f"{qty:.8f}",
+                "stopPrice": f"{target_price:.8f}",  # 觸發價
+                "price": f"{target_price:.8f}",       # 限價 = 觸發價
+            })
+            
+            order_id = str(result["orderId"])
+            
+            order = OrderResult(
+                order_id=order_id,
+                symbol=symbol,
+                side="SELL",
+                qty=qty,
+                price=target_price,
+                fee=0,
+                value=qty * target_price,
+                pnl=None,
+                status=result.get("status", "NEW"),
+                reason=reason,
+                raw=result,
+            )
+            
+            logger.info(
+                f"🎯 止盈已掛 {symbol}: {qty:.6f} @ ${target_price:,.2f} "
+                f"(orderId={order_id})"
+            )
+            return order
+            
+        except Exception as e:
+            logger.error(f"❌ 掛止盈單失敗 {symbol}: {e}")
             return None
     
     def cancel_stop_loss(self, symbol: str) -> bool:

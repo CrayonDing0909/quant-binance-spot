@@ -1,9 +1,18 @@
+"""
+Walk-Forward Analysis & Parameter Sensitivity
+
+提供：
+- Expanding-window Walk-Forward 驗證
+- 參數敏感性分析
+- 過擬合檢測
+"""
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Dict, List, Tuple
-import pandas as pd
+from typing import Dict, List
+
 import numpy as np
-from .run_backtest import run_symbol_backtest
+import pandas as pd
 
 
 def walk_forward_analysis(
@@ -23,8 +32,18 @@ def walk_forward_analysis(
 
     訓練集持續擴大，測試集始終是「未見過」的下一段數據。
     這比固定比例更貼近實際：你用歷史數據訓練，然後在新數據上驗證。
+    
+    Args:
+        symbol: 交易對符號
+        data_path: 數據文件路徑
+        cfg: 回測配置字典
+        n_splits: 分割數量
+        
+    Returns:
+        包含每個 split 結果的 DataFrame
     """
     from ..data.storage import load_klines
+    from ..backtest.run_backtest import run_symbol_backtest
 
     df = load_klines(data_path)
     total_len = len(df)
@@ -114,8 +133,21 @@ def parameter_sensitivity_analysis(
 ) -> pd.DataFrame:
     """
     參數敏感性分析 - 檢測過擬合
+    
+    測試不同參數組合的表現，檢查策略對參數變化的敏感度。
+    高敏感度可能表示過擬合。
+    
+    Args:
+        symbol: 交易對符號
+        data_path: 數據文件路徑
+        base_cfg: 基礎配置
+        param_grid: 參數網格 {參數名: [值列表]}
+        
+    Returns:
+        包含所有參數組合結果的 DataFrame
     """
     import itertools
+    from ..backtest.run_backtest import run_symbol_backtest
 
     param_names = list(param_grid.keys())
     param_values = list(param_grid.values())
@@ -157,7 +189,19 @@ def detect_overfitting(
     test_metrics: pd.Series,
     threshold: float = 0.3,
 ) -> Dict[str, bool]:
-    """檢測過擬合指標"""
+    """
+    檢測過擬合指標
+    
+    比較訓練集和測試集的績效指標，檢測是否存在過擬合。
+    
+    Args:
+        train_metrics: 訓練集績效指標
+        test_metrics: 測試集績效指標
+        threshold: 衰退閾值（超過此比例視為過擬合）
+        
+    Returns:
+        包含各項過擬合檢測結果的字典
+    """
     warnings = {}
 
     train_return = train_metrics.get("Total Return [%]", 0)

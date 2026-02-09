@@ -189,7 +189,7 @@ class CorrelationGroupResult:
 @dataclass(frozen=True)
 class MarketRegimeResult:
     """市場狀態驗證結果"""
-    symbol: str  # 改為 symbol 以保持一致
+    symbol: str
     regime: str
     n_bars: int
     sharpe: float
@@ -953,7 +953,7 @@ def leave_one_asset_out(
         print(result.robustness_level)
     """
     if backtest_func is None:
-        from .run_backtest import run_symbol_backtest
+        from ..backtest.run_backtest import run_symbol_backtest
         backtest_func = run_symbol_backtest
     
     if data_loader is None:
@@ -989,7 +989,7 @@ def correlation_stratified_validation(
         CrossAssetValidationResult
     """
     if backtest_func is None:
-        from .run_backtest import run_symbol_backtest
+        from ..backtest.run_backtest import run_symbol_backtest
         backtest_func = run_symbol_backtest
     
     if data_loader is None:
@@ -1029,7 +1029,7 @@ def market_regime_validation(
         (MarketRegimeResult 列表, 摘要 DataFrame)
     """
     if backtest_func is None:
-        from .run_backtest import run_symbol_backtest
+        from ..backtest.run_backtest import run_symbol_backtest
         backtest_func = run_symbol_backtest
     
     if data_loader is None:

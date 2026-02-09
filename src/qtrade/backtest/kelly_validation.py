@@ -350,6 +350,7 @@ def kelly_backtest_comparison(
     Returns:
         KellyValidationReport
     """
+    import vectorbt as vbt
     from .run_backtest import run_symbol_backtest
     from ..data.storage import load_klines
     
@@ -360,9 +361,18 @@ def kelly_backtest_comparison(
     period_start = df.index[0].strftime("%Y-%m-%d")
     period_end = df.index[-1].strftime("%Y-%m-%d")
     
-    # 先跑一次基礎回測，獲取交易紀錄
+    # 先跑一次基礎回測，獲取交易紀錄和 position 訊號
     base_result = run_symbol_backtest(symbol, data_path, cfg, strategy_name)
-    base_trades = base_result.get("trades", [])
+    
+    # 從 Portfolio 物件提取交易紀錄
+    pf = base_result.get("pf")
+    if pf is not None:
+        base_trades = extract_trades_from_portfolio(pf)
+    else:
+        base_trades = base_result.get("trades", [])
+    
+    # 獲取基礎 position 訊號（用於後續縮放）
+    base_pos = base_result.get("pos")
     
     # 計算 Kelly 統計
     kelly_stats = calculate_kelly_stats(base_trades)
@@ -375,19 +385,46 @@ def kelly_backtest_comparison(
     # 對每個 fraction 執行回測
     backtest_results = []
     
+    # 準備回測參數
+    close = df["close"]
+    open_ = df["open"]
+    fee = cfg.get("fee_bps", 10) / 10_000.0
+    slippage = cfg.get("slippage_bps", 5) / 10_000.0
+    initial_cash = cfg.get("initial_cash", 10000)
+    
     for fraction in kelly_fractions:
         effective_kelly = kelly_stats.kelly_pct * fraction
         
-        # 修改配置中的倉位比例
-        test_cfg = cfg.copy()
-        test_cfg['position_sizing'] = {
-            'method': 'fixed',
-            'position_pct': min(effective_kelly, 1.0),  # 限制最大 100%
-        }
+        # 計算實際倉位比例（Kelly pct * fraction，但至少要有一個最小值來產生訊號）
+        # 當 fraction=0 時，倉位為 0（不交易）
+        # 當 fraction=1 時，倉位為策略原始訊號 * Kelly pct
+        if base_pos is not None and fraction > 0:
+            # 縮放 position: 原始訊號 * effective_kelly
+            # 例如原始訊號是 1（全倉），effective_kelly 是 0.25，則實際倉位是 0.25
+            position_scale = min(effective_kelly, 1.0) if effective_kelly > 0 else 0.01
+            scaled_pos = base_pos * position_scale
+        else:
+            # fraction = 0 或沒有 position 訊號，使用極小值
+            scaled_pos = base_pos * 0.001 if base_pos is not None else None
         
         try:
-            result = run_symbol_backtest(symbol, data_path, test_cfg, strategy_name)
-            stats = result.get("stats", {})
+            if scaled_pos is not None:
+                # 使用縮放後的倉位執行回測
+                test_pf = vbt.Portfolio.from_orders(
+                    close=close,
+                    size=scaled_pos,
+                    size_type="targetpercent",
+                    price=open_,
+                    fees=fee,
+                    slippage=slippage,
+                    init_cash=initial_cash,
+                    freq="1h",
+                    direction="longonly",
+                )
+                stats = test_pf.stats()
+            else:
+                # 沒有 position 訊號，使用基礎回測結果
+                stats = base_result.get("stats", {})
             
             # 計算 Calmar ratio
             total_return = stats.get("Total Return [%]", 0)
@@ -526,7 +563,13 @@ def quick_kelly_check(symbol: str, data_path: Path, cfg: dict) -> str:
     from .run_backtest import run_symbol_backtest
     
     result = run_symbol_backtest(symbol, data_path, cfg)
-    trades = result.get("trades", [])
+    
+    # 從 Portfolio 物件提取交易紀錄
+    pf = result.get("pf")
+    if pf is not None:
+        trades = extract_trades_from_portfolio(pf)
+    else:
+        trades = result.get("trades", [])
     
     suitable, reason = is_strategy_suitable_for_kelly(trades)
     

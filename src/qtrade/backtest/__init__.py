@@ -6,6 +6,9 @@
 - 回測指標計算
 - 策略驗證（Walk-Forward, 參數敏感性）
 - Cross-Asset 驗證
+
+注意: 驗證功能已移至 qtrade.validation 模組
+此處的 import 保留向後相容性
 """
 from __future__ import annotations
 
@@ -18,31 +21,33 @@ from .metrics import (
     trade_summary,
 )
 from .plotting import plot_equity_curve
-from .validation import (
+
+# 向後相容: 從新的 validation 模組導入
+# 建議直接使用 from qtrade.validation import ...
+from ..validation import (
+    # Walk-Forward
     walk_forward_analysis,
     parameter_sensitivity_analysis,
     detect_overfitting,
-)
-from .cross_asset_validation import (
-    # 配置類
+    # Cross-Asset Validation - Config
     CrossAssetValidationConfig,
     CorrelationStratifiedConfig,
     MarketRegimeConfig,
-    # 結果類
+    # Cross-Asset Validation - Results
     AssetValidationResult,
     CrossAssetValidationResult,
     CorrelationGroupResult,
     MarketRegimeResult,
-    # 列舉
+    # Cross-Asset Validation - Enums
     ValidationMethod,
     MarketRegimeIndicator,
     RobustnessLevel,
-    # 驗證器
+    # Cross-Asset Validation - Validators
     LeaveOneAssetOutValidator,
     CorrelationStratifiedValidator,
     MarketRegimeValidator,
     ValidationResultAnalyzer,
-    # 便捷函數
+    # Cross-Asset Validation - Convenience
     leave_one_asset_out,
     correlation_stratified_validation,
     market_regime_validation,
@@ -59,7 +64,7 @@ __all__ = [
     "trade_summary",
     # Plotting
     "plot_equity_curve",
-    # Validation
+    # Validation (backwards compatible, prefer qtrade.validation)
     "walk_forward_analysis",
     "parameter_sensitivity_analysis",
     "detect_overfitting",

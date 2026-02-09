@@ -18,9 +18,13 @@
 
     # 指定交易對（只回測指定交易對）
     python scripts/run_backtest.py --symbol BTCUSDT
+
+    # 加上時間戳（不覆蓋舊報告）
+    python scripts/run_backtest.py --timestamp
 """
 from __future__ import annotations
 import argparse
+from datetime import datetime
 from pathlib import Path
 from qtrade.config import load_config
 from qtrade.backtest.run_backtest import run_symbol_backtest
@@ -58,6 +62,11 @@ def main() -> None:
         default=None,
         help="輸出目錄（預設: reports/{strategy_name}）"
     )
+    parser.add_argument(
+        "--timestamp", "-t",
+        action="store_true",
+        help="在輸出目錄加上時間戳，避免覆蓋舊報告"
+    )
 
     args = parser.parse_args()
 
@@ -72,16 +81,37 @@ def main() -> None:
         return
 
     # 確定輸出目錄
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.output_dir:
         report_dir = Path(args.output_dir)
+        if args.timestamp:
+            report_dir = report_dir / timestamp_str
     else:
         base_report_dir = Path(cfg.output.report_dir)
-        report_dir = base_report_dir / strategy_name
+        if args.timestamp:
+            report_dir = base_report_dir / strategy_name / timestamp_str
+        else:
+            report_dir = base_report_dir / strategy_name
 
     report_dir.mkdir(parents=True, exist_ok=True)
 
+    # 保存運行資訊
+    run_info = {
+        "timestamp": timestamp_str,
+        "strategy": strategy_name,
+        "config": args.config,
+        "data_start": cfg.market.start,
+        "data_end": cfg.market.end or "now",
+        "symbols": cfg.market.symbols,
+    }
+    run_info_path = report_dir / "run_info.json"
+    import json
+    with open(run_info_path, "w") as f:
+        json.dump(run_info, f, indent=2, ensure_ascii=False)
+
     print(f"📊 策略: {strategy_name}")
     print(f"📁 輸出目錄: {report_dir}")
+    print(f"🕐 運行時間: {timestamp_str}")
 
     # 確定交易對
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
