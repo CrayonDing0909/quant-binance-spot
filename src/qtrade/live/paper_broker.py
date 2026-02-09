@@ -244,6 +244,10 @@ class PaperBroker:
 
     # ── 狀態持久化 ────────────────────────────────────────
 
+    def touch_state(self) -> None:
+        """更新狀態檔的修改時間（即使沒有交易也寫入），供健康檢查判斷 cron 存活"""
+        self._save_state()
+
     def _save_state(self) -> None:
         if not self.state_path:
             return

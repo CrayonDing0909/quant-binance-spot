@@ -156,8 +156,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # 3. 健康檢查 - 每 30 分鐘
 */30 * * * * cd $PROJECT_ROOT && ${activate_cmd}python scripts/health_check.py -c $CONFIG_FILE --notify >> $LOG_DIR/health.log 2>&1
 
-# 4. 一致性驗證 - 每週日 UTC 01:00
-0 1 * * 0 cd $PROJECT_ROOT && ${activate_cmd}python scripts/run_consistency_check.py -c $CONFIG_FILE --days 7 >> $LOG_DIR/consistency.log 2>&1
+# 4. 策略驗證 - 每週日 UTC 01:00
+0 1 * * 0 cd $PROJECT_ROOT && ${activate_cmd}python scripts/validate.py -c $CONFIG_FILE --quick >> $LOG_DIR/validation.log 2>&1
 
 # 5. Log 清理 - 每週一 04:00（保留 7 天）
 0 4 * * 1 find $LOG_DIR -name "*.log" -mtime +7 -delete

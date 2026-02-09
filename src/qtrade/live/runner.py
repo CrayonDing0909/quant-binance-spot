@@ -419,6 +419,10 @@ class LiveRunner:
         if has_trade or self.tick_count % 6 == 0:
             self.notifier.send_signal_summary(signals, mode=self.mode.upper())
         
+        # 每次 tick 都更新狀態檔時間戳（即使沒交易），讓健康檢查能偵測 cron 存活
+        if isinstance(self.broker, PaperBroker):
+            self.broker.touch_state()
+
         # 定期重新計算 Kelly（每 24 tick = 24 小時）
         if self.cfg.position_sizing.method == "kelly" and self.tick_count % 24 == 0:
             self._init_position_sizer()
