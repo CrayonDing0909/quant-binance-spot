@@ -415,8 +415,10 @@ class LiveRunner:
             else:
                 logger.debug(f"  {symbol}: 倉位不變 (target={target_pct:.0%}, current={current_pct:.0%})")
 
-        # 每個 tick 發送信號摘要（僅當有交易或每 6 tick）
-        if has_trade or self.tick_count % 6 == 0:
+        # 發送信號摘要到 Telegram
+        # --once 模式（cron）：每次都發，讓每小時都能看到信號狀態
+        # 持續運行模式：有交易或每 6 tick 發送一次
+        if has_trade or self.tick_count <= 1 or self.tick_count % 6 == 0:
             self.notifier.send_signal_summary(signals, mode=self.mode.upper())
         
         # 每次 tick 都更新狀態檔時間戳（即使沒交易），讓健康檢查能偵測 cron 存活
