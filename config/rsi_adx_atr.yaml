@@ -1,18 +1,18 @@
 # ============================================================
-# RSI + ADX + ATR 策略 — 优化后参数 (2026-02-07)
-# Grid Search 729 组合 → Walk-Forward 5-fold 验证通过
+# RSI + ADX + ATR 策略 — 優化後參數 (2026-02-07)
+# Grid Search 729 組合 → Walk-Forward 5-fold 驗證通過
 # ============================================================
 #
-# BTCUSDT 最佳: Sharpe 3.71 → WF测试 Sharpe 3.84 (5/5 正收益)
-# ETHUSDT 最佳: Sharpe 4.12 → WF测试 Sharpe 3.83 (5/5 正收益)
+# BTCUSDT 最佳: Sharpe 3.71 → WF測試 Sharpe 3.84 (5/5 正收益)
+# ETHUSDT 最佳: Sharpe 4.12 → WF測試 Sharpe 3.83 (5/5 正收益)
 #
-# 核心逻辑:
+# 核心邏輯:
 #   RSI < oversold 且 ADX > min_adx → 做多
-#   止损 = entry - 1.5×ATR, 止盈 = entry + 4.0×ATR (RR 1:2.67)
+#   止損 = entry - 1.5×ATR, 止盈 = entry + 4.0×ATR (RR 1:2.67)
 # ============================================================
 
 market:
-  symbols: ["BTCUSDT", "ETHUSDT"]
+  symbols: ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -27,7 +27,7 @@ backtest:
 
 strategy:
   name: "rsi_adx_atr"
-  # ── 基础参数（所有币种共用）──
+  # ── 基礎參數（所有幣種共用）──
   params:
     rsi_period: 10
     overbought: 65
@@ -38,32 +38,53 @@ strategy:
     trailing_stop_atr: null
     atr_period: 14
     cooldown_bars: 1
-    # ── 多时间框架趋势过滤（可选）──
-    # 4h EMA20>EMA50 = 上升趋势才允许 1h 做多
-    # 回测显示：现有 ADX filter 已足够，HTF 过滤器过度保守
-    # 设为 null = 不启用（推荐），设为 "4h" = 启用
+    # ── 多時間框架趨勢過濾（可選）──
+    # 4h EMA20>EMA50 = 上升趨勢才允許 1h 做多
+    # 回測顯示：現有 ADX filter 已足夠，HTF 過濾器過度保守
+    # 設為 null = 不啟用（推薦），設為 "4h" = 啟用
     htf_interval: null
     htf_ema_fast: 20
     htf_ema_slow: 50
-  # ── 币种专属参数覆写（合并到 params）──
+  # ── 幣種專屬參數覆寫（合併到 params）──
+  # 波動率過濾器測試結論：原始設定最佳，低波動整體 Sharpe=1.30 仍為正
   symbol_overrides:
     BTCUSDT:
       oversold: 30        # Sharpe 3.71, WF-test 3.84
     ETHUSDT:
       oversold: 35        # Sharpe 4.12, WF-test 3.83
+    BNBUSDT:
+      oversold: 30
+    SOLUSDT:
+      oversold: 30
 
-# ── 风控 ──
-# max_drawdown_pct: 最大回撤比例，超过则触发熔断
-#   设置原则：历史最大回撤 × 1.5~2 倍
-#   本策略 BTC MDD=17%, ETH MDD=13.5% → 熔断线设 30%
-#   null = 不启用熔断
+# ── 風控 ──
+# max_drawdown_pct: 最大回撤比例，超過則觸發熔斷
+#   設置原則：歷史最大回撤 × 1.5~2 倍
+#   本策略 BTC MDD=17%, ETH MDD=13.5% → 熔斷線設 30%
+#   null = 不啟用熔斷
 risk:
   max_drawdown_pct: 0.30
 
-# ── 多币种仓位分配 ──
-# 总和 <= 1.0，剩余为现金储备
-# 不设置则按币种数量等权分配（各 50%）
-# BTC+ETH 相关性 ~0.85+，降低总曝险到 70%，留 30% 现金缓冲
+# ── 倉位計算 ──
+# method: 倉位計算方法
+#   - "fixed": 固定倉位（預設）
+#   - "kelly": 根據歷史交易統計動態調整
+#   - "volatility": 根據波動率調整
+# 
+# Kelly 參數說明:
+#   - kelly_fraction: 比例因子，1.0=Full Kelly（風險高），0.25=Quarter Kelly（推薦）
+#   - min_trades_for_kelly: 啟用 Kelly 前需要的最小交易數，不足時用固定倉位
+#   - win_rate/avg_win/avg_loss: 手動設置，null 則自動從歷史交易計算
+position_sizing:
+  method: "fixed"  # 預設固定倉位，有足夠交易數據後可改為 "kelly"
+  position_pct: 1.0
+  kelly_fraction: 0.25
+  min_trades_for_kelly: 20
+
+# ── 多幣種倉位分配 ──
+# 總和 <= 1.0，剩餘為現金儲備
+# 不設置則按幣種數量等權分配（各 50%）
+# BTC+ETH 相關性 ~0.85+，降低總曝險到 70%，留 30% 現金緩衝
 portfolio:
   allocation:
     BTCUSDT: 0.35
@@ -71,4 +92,3 @@ portfolio:
 
 output:
   report_dir: "./reports"
-
