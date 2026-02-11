@@ -110,6 +110,7 @@ class FuturesPosition:
     leverage: int
     margin_type: str    # ISOLATED / CROSSED
     liquidation_price: float = 0.0
+    mark_price: float = 0.0  # 標記價格（用於計算未實現盈虧）
 
     @property
     def is_open(self) -> bool:
@@ -322,6 +323,7 @@ class BinanceFuturesBroker:
                         leverage=int(pos.get("leverage", self.default_leverage)),
                         margin_type=pos.get("marginType", "isolated").upper(),
                         liquidation_price=float(pos.get("liquidationPrice", 0)),
+                        mark_price=float(pos.get("markPrice", 0)),
                     ))
             return positions
         except Exception as e:
