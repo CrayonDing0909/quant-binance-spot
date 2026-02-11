@@ -4,6 +4,111 @@
 這是一個 Binance 量化交易系統，支援現貨 (Spot) 和合約 (Futures) 交易。
 包含策略開發、回測、驗證、模擬交易、實盤交易的完整流程。
 
+---
+
+## 資料流 (Data Flow)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           開發流程                                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. 數據下載          2. 回測              3. 驗證              4. 實盤   │
+│  ┌──────────┐       ┌──────────┐        ┌──────────┐        ┌────────┐ │
+│  │Binance   │──────▶│ vectorbt │───────▶│Walk-Fwd  │───────▶│Paper   │ │
+│  │API       │       │ backtest │        │Monte-Car │        │Trading │ │
+│  └──────────┘       └──────────┘        │PBO/DSR   │        └────────┘ │
+│       │                  │              └──────────┘             │      │
+│       ▼                  ▼                   │                   ▼      │
+│  data/binance/      reports/             reports/           實盤交易    │
+│  {spot|futures}/    {strategy}/          validation/                   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         模組依賴關係                                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│                         config.py (中心配置)                              │
+│                              │                                          │
+│              ┌───────────────┼───────────────┐                          │
+│              ▼               ▼               ▼                          │
+│          strategy/       data/           live/                         │
+│              │               │               │                          │
+│              └───────┬───────┘               │                          │
+│                      ▼                       │                          │
+│                 backtest/ ◀──────────────────┘                          │
+│                      │                                                  │
+│                      ▼                                                  │
+│                validation/                                              │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 依賴管理
+
+### 新增 Python 套件
+```bash
+# 1. 加入 requirements.txt
+echo "new-package>=1.0.0" >> requirements.txt
+
+# 2. 安裝
+pip install -r requirements.txt
+# 或
+pip install new-package
+```
+
+### 主要依賴
+| 套件 | 用途 | 位置 |
+|------|------|------|
+| `vectorbt` | 回測引擎 | `backtest/` |
+| `pandas` | 數據處理 | 全域 |
+| `numpy` | 數值計算 | 全域 |
+| `ta` | 技術指標 | `indicators/` |
+| `httpx` | API 請求 | `data/binance_client.py` |
+| `pyyaml` | 配置解析 | `config.py` |
+| `python-telegram-bot` | 通知 | `monitor/notifier.py` |
+
+---
+
+## 實際執行指南
+
+### 完整開發流程
+```bash
+# Step 1: 下載數據
+python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
+
+# Step 2: 回測
+python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml
+
+# Step 3: 驗證 (確認沒有過擬合)
+python scripts/validate.py -c config/futures_rsi_adx_atr.yaml --quick
+
+# Step 4: 參數優化 (可選)
+python scripts/optimize_params.py -c config/futures_rsi_adx_atr.yaml
+
+# Step 5: 模擬交易 (至少跑 1-2 週)
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
+
+# Step 6: 實盤 (確認模擬穩定後)
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml
+```
+
+### 腳本對應表
+| 我想要... | 執行腳本 | 關鍵參數 |
+|-----------|----------|----------|
+| 下載 K 線 | `download_data.py` | `-c config.yaml` |
+| 跑回測 | `run_backtest.py` | `-c`, `--symbol`, `--direction` |
+| 驗證策略 | `validate.py` | `--quick`, `--full`, `--only` |
+| 優化參數 | `optimize_params.py` | `--symbol`, `--metric` |
+| 模擬交易 | `run_live.py` | `--paper` |
+| 實盤交易 | `run_live.py` | (無 --paper) |
+| 設定 Cron | `setup_cron.sh` | `-c`, `--mode` |
+
+---
+
 ## 目錄結構
 
 ```
@@ -114,17 +219,111 @@ notification:  # Telegram
 - 中文註解，英文變數/函數名
 - Type hints 必須
 - docstring 用中文說明
+- 單一職責：一個函數做一件事
 
-### 新增策略
-1. 在 `src/qtrade/strategy/` 建立 `{name}_strategy.py`
-2. 使用 `@register_strategy("name")` 註冊
-3. 函數簽名：`def generate_positions(df, ctx, params) -> pd.Series`
-4. 回傳值：Spot `[0,1]`, Futures `[-1,1]`
+### 可擴展性原則
 
-### 新增 Broker
-1. 實作 `BrokerProtocol` 介面
-2. 必須方法：`get_balance()`, `get_position()`, `place_order()`
-3. 支援 `market_type` 參數
+#### 新增策略
+```python
+# src/qtrade/strategy/my_strategy.py
+from .base import StrategyContext
+from . import register_strategy
+
+@register_strategy("my_strategy")  # 1. 註冊名稱
+def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.Series:
+    """
+    我的策略
+    
+    Args:
+        df: K線數據 (OHLCV)
+        ctx: 策略上下文 (symbol, interval, market_type, direction)
+        params: 策略參數 (從 YAML 讀取)
+    
+    Returns:
+        持倉信號 Series，Spot [0,1]，Futures [-1,1]
+    """
+    # 2. 計算指標
+    # 3. 生成信號
+    # 4. 套用 filters (可選)
+    # 5. 套用 exit_rules (可選)
+    
+    if ctx.supports_short:
+        return pos.clip(-1.0, 1.0)
+    return pos.clip(0.0, 1.0)
+```
+
+#### 新增 Broker
+```python
+# src/qtrade/live/my_broker.py
+from .broker_interface import BrokerProtocol
+
+class MyBroker(BrokerProtocol):
+    """實作 BrokerProtocol 介面"""
+    
+    def get_balance(self, asset: str = "USDT") -> float:
+        """取得餘額"""
+        ...
+    
+    def get_position(self, symbol: str) -> dict:
+        """取得持倉"""
+        ...
+    
+    def place_order(self, symbol: str, side: str, quantity: float, ...) -> dict:
+        """下單"""
+        ...
+```
+
+#### 新增指標
+```python
+# src/qtrade/indicators/my_indicator.py
+import pandas as pd
+
+def calculate_my_indicator(series: pd.Series, period: int = 14) -> pd.Series:
+    """
+    計算自訂指標
+    
+    Returns:
+        指標值 Series，index 與輸入對齊
+    """
+    ...
+
+# 在 __init__.py 匯出
+# from .my_indicator import calculate_my_indicator
+```
+
+#### 新增驗證方法
+```python
+# src/qtrade/validation/my_validation.py
+# 參考 walk_forward.py 或 prado_methods.py 的模式
+```
+
+### 可維護性原則
+
+1. **配置與邏輯分離**
+   - 所有可調參數放 YAML
+   - 程式碼不 hardcode 數值
+
+2. **模組獨立性**
+   - `strategy/` 不依賴 `live/`
+   - `backtest/` 不依賴 `validation/`
+   - 透過 `config.py` 傳遞資訊
+
+3. **錯誤處理**
+   - API 呼叫要 try-catch
+   - 使用 logging 而非 print
+   - 失敗要有 fallback
+
+4. **測試友善**
+   - 函數接受參數，不讀全域
+   - 可注入 mock 物件
+
+### 命名規範
+| 類型 | 規範 | 範例 |
+|------|------|------|
+| 策略檔案 | `{name}_strategy.py` | `rsi_adx_atr_strategy.py` |
+| 配置檔案 | `{name}.yaml` | `futures_rsi_adx_atr.yaml` |
+| 指標函數 | `calculate_{name}` | `calculate_rsi()` |
+| Broker 類別 | `{Exchange}{Market}Broker` | `BinanceFuturesBroker` |
 
 ## 常用指令
 
