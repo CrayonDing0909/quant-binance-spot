@@ -456,7 +456,16 @@ class BinanceFuturesBroker:
             return order
 
         except Exception as e:
-            logger.error(f"❌ 做多失敗 {symbol}: {e}")
+            # 嘗試解析 Binance 錯誤詳情
+            error_msg = str(e)
+            try:
+                import json
+                if hasattr(e, 'response') and e.response is not None:
+                    error_detail = e.response.json()
+                    error_msg = f"{e} | Binance: {error_detail}"
+            except Exception:
+                pass
+            logger.error(f"❌ 做多失敗 {symbol}: {error_msg}")
             return None
 
     def market_short(
