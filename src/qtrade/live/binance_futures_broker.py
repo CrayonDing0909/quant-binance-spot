@@ -330,6 +330,91 @@ class BinanceFuturesBroker:
             logger.error(f"查詢持倉失敗: {e}")
             return []
 
+    def get_trade_history(
+        self, 
+        symbol: str | None = None, 
+        limit: int = 50,
+        start_time: int | None = None,
+    ) -> list[dict]:
+        """
+        查詢交易歷史
+        
+        Args:
+            symbol: 交易對（None = 查詢所有）
+            limit: 返回數量上限（最多 1000）
+            start_time: 開始時間（毫秒時間戳）
+            
+        Returns:
+            交易紀錄列表，每筆包含：
+            - symbol, side, qty, price, realizedPnl, time, positionSide
+        """
+        try:
+            params = {"limit": min(limit, 1000)}
+            if symbol:
+                params["symbol"] = symbol
+            if start_time:
+                params["startTime"] = start_time
+            
+            data = self.http.signed_get("/fapi/v1/userTrades", params)
+            
+            trades = []
+            for t in data:
+                trades.append({
+                    "symbol": t["symbol"],
+                    "side": t["side"],
+                    "position_side": t.get("positionSide", "BOTH"),
+                    "qty": float(t["qty"]),
+                    "price": float(t["price"]),
+                    "realized_pnl": float(t.get("realizedPnl", 0)),
+                    "commission": float(t.get("commission", 0)),
+                    "time": t["time"],  # 毫秒時間戳
+                    "order_id": t.get("orderId", ""),
+                })
+            
+            # 按時間倒序排列（最新的在前）
+            trades.sort(key=lambda x: x["time"], reverse=True)
+            return trades
+            
+        except Exception as e:
+            logger.error(f"查詢交易歷史失敗: {e}")
+            return []
+
+    def get_income_history(
+        self,
+        income_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """
+        查詢收益歷史（包含已實現盈虧、手續費、資金費率等）
+        
+        Args:
+            income_type: 類型過濾（REALIZED_PNL, COMMISSION, FUNDING_FEE 等）
+            limit: 返回數量上限
+            
+        Returns:
+            收益紀錄列表
+        """
+        try:
+            params = {"limit": min(limit, 1000)}
+            if income_type:
+                params["incomeType"] = income_type
+            
+            data = self.http.signed_get("/fapi/v1/income", params)
+            
+            return [
+                {
+                    "symbol": item.get("symbol", ""),
+                    "income_type": item["incomeType"],
+                    "income": float(item["income"]),
+                    "time": item["time"],
+                    "info": item.get("info", ""),
+                }
+                for item in data
+            ]
+        except Exception as e:
+            logger.error(f"查詢收益歷史失敗: {e}")
+            return []
+
     def get_position_pct(self, symbol: str, current_price: float) -> float:
         """
         獲取持倉佔權益比例 [-1, 1]

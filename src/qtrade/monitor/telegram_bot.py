@@ -479,50 +479,84 @@ class TelegramCommandBot:
                     for t in self.broker.account.trades[-limit:]
                 ]
         else:
-            # 獨立模式：嘗試讀取 real_state.json
-            trades = self._load_trades_from_state_file(limit)
+            # 獨立模式：優先從 Binance API 獲取
+            trades = self._load_trades_from_binance(limit)
+            
+            # 如果 API 失敗，fallback 到 state 文件
+            if not trades:
+                trades = self._load_trades_from_state_file(limit)
         
         if not trades:
             lines.append("暫無交易紀錄")
             return "\n".join(lines)
         
-        for t in reversed(trades):  # 最新的在前
+        for t in trades[:limit]:  # 已經是最新的在前
             symbol = t.get("symbol", "?")
             side = t.get("side", "?")
+            position_side = t.get("position_side", "")
             qty = t.get("qty", 0)
             price = t.get("price", 0)
-            pnl = t.get("pnl")
-            timestamp = t.get("timestamp", "")
+            pnl = t.get("pnl") or t.get("realized_pnl")
+            timestamp = t.get("timestamp") or t.get("time")
             
             # 格式化時間
             time_str = ""
             if timestamp:
                 try:
-                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    if isinstance(timestamp, (int, float)):
+                        # 毫秒時間戳
+                        dt = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+                    else:
+                        dt = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
                     time_str = dt.strftime("%m-%d %H:%M") + " "
                 except Exception:
                     pass
             
-            side_emoji = "🟢" if "BUY" in side.upper() or "LONG" in side.upper() else "🔴"
+            # 判斷方向
+            if position_side:
+                side_label = f"{side}/{position_side}"
+            else:
+                side_label = side
+            
+            side_emoji = "🟢" if "BUY" in side.upper() else "🔴"
             pnl_str = ""
-            if pnl is not None:
+            if pnl is not None and pnl != 0:
                 pnl_emoji = "📈" if pnl > 0 else "📉"
                 pnl_str = f" {pnl_emoji} ${pnl:+.2f}"
             
-            lines.append(f"{side_emoji} {time_str}{symbol} {side}\n   {qty:.4f} @ ${price:,.2f}{pnl_str}")
+            lines.append(f"{side_emoji} {time_str}{symbol} {side_label}\n   {qty:.4f} @ ${price:,.2f}{pnl_str}")
         
         return "\n".join(lines)
+    
+    def _load_trades_from_binance(self, limit: int = 10) -> list[dict]:
+        """從 Binance API 獲取交易歷史"""
+        broker = self._get_futures_broker()
+        if not broker or not hasattr(broker, "get_trade_history"):
+            return []
+        
+        try:
+            # 獲取所有交易對的歷史
+            trades = broker.get_trade_history(symbol=None, limit=limit * 2)
+            return trades[:limit]
+        except Exception as e:
+            logger.warning(f"從 Binance 獲取交易歷史失敗: {e}")
+            return []
     
     def _load_trades_from_state_file(self, limit: int = 10) -> list[dict]:
         """從 state 文件讀取交易紀錄"""
         import json
         from pathlib import Path
         
+        # 獲取專案根目錄（支援絕對路徑）
+        project_root = Path(__file__).parent.parent.parent.parent  # src/qtrade/monitor -> project root
+        
         # 嘗試多個可能的 state 文件路徑
         possible_paths = [
+            project_root / "reports/live/rsi_adx_atr/real_state.json",
+            project_root / "reports/live/rsi_adx_atr_enhanced/real_state.json",
+            project_root / "reports/live/futures_rsi_adx_atr/real_state.json",
+            # 也嘗試相對路徑（以防工作目錄正確）
             Path("reports/live/rsi_adx_atr/real_state.json"),
-            Path("reports/live/rsi_adx_atr_enhanced/real_state.json"),
-            Path("reports/live/futures_rsi_adx_atr/real_state.json"),
         ]
         
         for path in possible_paths:
@@ -530,7 +564,10 @@ class TelegramCommandBot:
                 try:
                     with open(path, encoding="utf-8") as f:
                         data = json.load(f)
-                    return data.get("trades", [])[-limit:]
+                    trades = data.get("trades", [])[-limit:]
+                    if trades:
+                        logger.info(f"從 {path} 讀取到 {len(trades)} 筆交易")
+                    return trades
                 except Exception as e:
                     logger.warning(f"讀取 {path} 失敗: {e}")
         
@@ -634,31 +671,93 @@ class TelegramCommandBot:
             lines.append(f"📈 平均獲利: ${stats.get('avg_win', 0):,.2f}")
             lines.append(f"📉 平均虧損: ${stats.get('avg_loss', 0):,.2f}")
         else:
-            # 獨立模式：從 state 文件讀取
-            stats = self._load_stats_from_state_file()
+            # 獨立模式：優先從 Binance API 計算
+            stats = self._calculate_stats_from_binance()
+            
+            # Fallback 到 state 文件
+            if not stats:
+                stats = self._load_stats_from_state_file()
+            
             if stats:
                 lines.append(f"📝 總交易: {stats.get('total_trades', 0)} 筆")
-                lines.append(f"✅ 獲勝: {stats.get('winning_trades', 0)} 筆")
-                lines.append(f"❌ 虧損: {stats.get('losing_trades', 0)} 筆")
+                if stats.get('winning_trades') is not None:
+                    lines.append(f"✅ 獲勝: {stats.get('winning_trades', 0)} 筆")
+                    lines.append(f"❌ 虧損: {stats.get('losing_trades', 0)} 筆")
                 win_rate = stats.get('win_rate', 0)
-                lines.append(f"🎯 勝率: {win_rate:.1%}")
+                if win_rate > 0:
+                    lines.append(f"🎯 勝率: {win_rate:.1%}")
                 lines.append(f"💰 累積 PnL: ${stats.get('cumulative_pnl', 0):,.2f}")
-                lines.append(f"📉 最大回撤: {stats.get('max_drawdown_pct', 0):.2f}%")
+                if stats.get('commission'):
+                    lines.append(f"💸 總手續費: ${stats.get('commission', 0):,.2f}")
             else:
                 lines.append("⚠️ 暫無交易統計（尚未有交易紀錄）")
         
         return "\n".join(lines)
+    
+    def _calculate_stats_from_binance(self) -> dict | None:
+        """從 Binance API 計算交易統計"""
+        broker = self._get_futures_broker()
+        if not broker:
+            return None
+        
+        try:
+            # 獲取收益歷史（已實現盈虧）
+            if hasattr(broker, "get_income_history"):
+                income = broker.get_income_history(income_type="REALIZED_PNL", limit=500)
+                commission = broker.get_income_history(income_type="COMMISSION", limit=500)
+                
+                # 計算統計
+                total_pnl = sum(i["income"] for i in income)
+                total_commission = sum(abs(c["income"]) for c in commission)
+                
+                # 計算勝率
+                wins = [i for i in income if i["income"] > 0]
+                losses = [i for i in income if i["income"] < 0]
+                total_trades = len(wins) + len(losses)
+                win_rate = len(wins) / total_trades if total_trades > 0 else 0
+                
+                return {
+                    "total_trades": total_trades,
+                    "winning_trades": len(wins),
+                    "losing_trades": len(losses),
+                    "win_rate": win_rate,
+                    "cumulative_pnl": total_pnl,
+                    "commission": total_commission,
+                }
+            
+            # Fallback: 從交易歷史計算
+            trades = broker.get_trade_history(limit=500)
+            if not trades:
+                return None
+            
+            total_pnl = sum(t.get("realized_pnl", 0) for t in trades)
+            total_commission = sum(t.get("commission", 0) for t in trades)
+            
+            return {
+                "total_trades": len(trades),
+                "cumulative_pnl": total_pnl,
+                "commission": total_commission,
+            }
+            
+        except Exception as e:
+            logger.warning(f"從 Binance 計算統計失敗: {e}")
+            return None
     
     def _load_stats_from_state_file(self) -> dict | None:
         """從 state 文件讀取統計資訊"""
         import json
         from pathlib import Path
         
+        # 獲取專案根目錄（支援絕對路徑）
+        project_root = Path(__file__).parent.parent.parent.parent  # src/qtrade/monitor -> project root
+        
         # 嘗試多個可能的 state 文件路徑
         possible_paths = [
+            project_root / "reports/live/rsi_adx_atr/real_state.json",
+            project_root / "reports/live/rsi_adx_atr_enhanced/real_state.json",
+            project_root / "reports/live/futures_rsi_adx_atr/real_state.json",
+            # 也嘗試相對路徑
             Path("reports/live/rsi_adx_atr/real_state.json"),
-            Path("reports/live/rsi_adx_atr_enhanced/real_state.json"),
-            Path("reports/live/futures_rsi_adx_atr/real_state.json"),
         ]
         
         for path in possible_paths:
@@ -672,6 +771,7 @@ class TelegramCommandBot:
                     winning = data.get("winning_trades", 0)
                     win_rate = winning / total if total > 0 else 0
                     
+                    logger.info(f"從 {path} 讀取統計資訊")
                     return {
                         "total_trades": total,
                         "winning_trades": winning,
