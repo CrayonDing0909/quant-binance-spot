@@ -661,6 +661,134 @@ class BinanceFuturesBroker:
                 results.append(r)
         return results
 
+    # ── 止損單 ──────────────────────────────────────────────
+
+    def place_stop_loss(
+        self,
+        symbol: str,
+        stop_price: float,
+        position_side: str = "LONG",
+        qty: float | None = None,
+        reason: str = "stop_loss",
+    ) -> FuturesOrderResult | None:
+        """
+        預掛止損單（STOP_MARKET）
+
+        當價格觸及 stop_price 時，交易所自動執行平倉。
+        即使程式斷線，止損單依然有效。
+
+        Args:
+            symbol: 交易對
+            stop_price: 止損觸發價格
+            position_side: "LONG" = 平多倉止損, "SHORT" = 平空倉止損
+            qty: 止損數量（None = 全部平倉）
+            reason: 原因
+
+        Returns:
+            FuturesOrderResult 或 None
+        """
+        sf = self._get_filter(symbol)
+        
+        # 止損價格精度處理
+        if sf.tick_size > 0:
+            import math
+            precision = max(0, -int(math.log10(sf.tick_size)))
+            stop_price = round(stop_price, precision)
+
+        # 平多倉 = SELL, 平空倉 = BUY
+        side = "SELL" if position_side == "LONG" else "BUY"
+        
+        if self.dry_run:
+            logger.info(
+                f"🧪 [DRY-RUN] 止損單 {symbol} [{position_side}]: "
+                f"trigger @ ${stop_price:,.2f} (reason={reason})"
+            )
+            return FuturesOrderResult(
+                order_id="DRY-RUN-SL",
+                symbol=symbol,
+                side=side,
+                position_side=position_side,
+                qty=qty or 0,
+                price=stop_price,
+                fee=0,
+                value=0,
+                pnl=None,
+                status="DRY_RUN",
+                reason=reason,
+            )
+
+        try:
+            # 先取消舊的止損單
+            self.cancel_stop_loss(symbol)
+
+            params = {
+                "symbol": symbol,
+                "side": side,
+                "type": "STOP_MARKET",
+                "stopPrice": f"{stop_price}",
+                "closePosition": "true",  # 全部平倉
+            }
+            
+            # 如果指定數量，就不用 closePosition
+            if qty:
+                qty = sf.round_qty(qty)
+                params["quantity"] = f"{qty}"
+                del params["closePosition"]
+
+            result = self.http.signed_post("/fapi/v1/order", params)
+
+            order = FuturesOrderResult(
+                order_id=str(result["orderId"]),
+                symbol=symbol,
+                side=side,
+                position_side=position_side,
+                qty=qty or 0,
+                price=stop_price,
+                fee=0,
+                value=0,
+                pnl=None,
+                status=result.get("status", "NEW"),
+                reason=reason,
+                raw=result,
+            )
+            logger.info(
+                f"🛡️  止損單已掛 {symbol} [{position_side}]: "
+                f"trigger @ ${stop_price:,.2f} (orderId={order.order_id})"
+            )
+            return order
+
+        except Exception as e:
+            logger.error(f"❌ 掛止損單失敗 {symbol}: {e}")
+            return None
+
+    def cancel_stop_loss(self, symbol: str) -> bool:
+        """取消該交易對的止損單（STOP_MARKET 類型）"""
+        if self.dry_run:
+            logger.debug(f"🧪 [DRY-RUN] 取消止損單 {symbol}")
+            return True
+
+        try:
+            orders = self.get_open_orders(symbol)
+            for order in orders:
+                if order.get("type") == "STOP_MARKET":
+                    self.cancel_order(symbol, str(order["orderId"]))
+                    logger.info(f"🗑️  止損單已取消 {symbol} orderId={order['orderId']}")
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️  取消止損單失敗 {symbol}: {e}")
+            return False
+
+    def get_active_stop_order(self, symbol: str) -> dict | None:
+        """查詢該交易對的止損單"""
+        try:
+            orders = self.get_open_orders(symbol)
+            for order in orders:
+                if order.get("type") == "STOP_MARKET":
+                    return order
+            return None
+        except Exception:
+            return None
+
     # ── 目標倉位執行 ────────────────────────────────────────
 
     def execute_target_position(
@@ -669,11 +797,13 @@ class BinanceFuturesBroker:
         target_pct: float,
         current_price: float | None = None,
         reason: str = "signal",
+        stop_loss_price: float | None = None,
     ) -> FuturesOrderResult | None:
         """
         執行目標倉位調整
         
         將持倉調整到 target_pct（佔總權益比例）。
+        開倉後會自動掛止損單（如果提供 stop_loss_price）。
         
         Args:
             symbol: 交易對
@@ -683,6 +813,7 @@ class BinanceFuturesBroker:
                 - 0 = 平倉
             current_price: 當前價格（None 時自動查詢）
             reason: 下單原因
+            stop_loss_price: 止損價格（None = 不掛止損）
             
         Returns:
             FuturesOrderResult 或 None
@@ -720,28 +851,52 @@ class BinanceFuturesBroker:
 
         if target_pct == 0:
             # 目標是空倉 → 全部平倉
+            # 平倉前先取消止損單
+            self.cancel_stop_loss(symbol)
             return self.market_close(symbol, reason=reason)
 
         if diff > 0:
             # 需要增加多頭曝險
             if pos and pos.qty < 0:
                 # 有空倉，先平空
+                self.cancel_stop_loss(symbol)
                 close_qty = min(change_notional / current_price, abs(pos.qty))
                 return self.market_close(symbol, qty=close_qty, reason=f"{reason}_close_short")
             else:
                 # 開多或加多
                 qty = change_notional / current_price
-                return self.market_long(symbol, qty=qty, reason=reason)
+                result = self.market_long(symbol, qty=qty, reason=reason)
+                
+                # 開倉成功後掛止損單
+                if result and stop_loss_price and stop_loss_price > 0:
+                    self.place_stop_loss(
+                        symbol=symbol,
+                        stop_price=stop_loss_price,
+                        position_side="LONG",
+                        reason="auto_stop_loss",
+                    )
+                return result
         else:
             # 需要增加空頭曝險（或減少多頭）
             if pos and pos.qty > 0:
                 # 有多倉，先平多
+                self.cancel_stop_loss(symbol)
                 close_qty = min(change_notional / current_price, pos.qty)
                 return self.market_close(symbol, qty=close_qty, reason=f"{reason}_close_long")
             else:
                 # 開空或加空
                 qty = change_notional / current_price
-                return self.market_short(symbol, qty=qty, reason=reason)
+                result = self.market_short(symbol, qty=qty, reason=reason)
+                
+                # 開空成功後掛止損單（空倉止損價在上方）
+                if result and stop_loss_price and stop_loss_price > 0:
+                    self.place_stop_loss(
+                        symbol=symbol,
+                        stop_price=stop_loss_price,
+                        position_side="SHORT",
+                        reason="auto_stop_loss",
+                    )
+                return result
 
     # ── 訂單管理 ──────────────────────────────────────────
 

@@ -381,14 +381,18 @@ class LiveRunner:
                 if ps_method != "fixed":
                     reason += f" [{ps_method}→{adjusted_signal:.0%}]"
                 
-                # v2.0: 計算硬止損價格（如果是買入且策略有 stop_loss_atr）
+                # v2.1: 計算硬止損價格（支援做多與做空）
                 stop_loss_price = None
-                if target_pct > current_pct:  # 買入
-                    stop_loss_atr = params.get("stop_loss_atr")
-                    atr_value = sig.get("indicators", {}).get("atr")
-                    if stop_loss_atr and atr_value:
+                stop_loss_atr = params.get("stop_loss_atr")
+                atr_value = sig.get("indicators", {}).get("atr")
+                
+                if stop_loss_atr and atr_value:
+                    if target_pct > current_pct and target_pct > 0:  # 開多/加多
                         stop_loss_price = price - float(stop_loss_atr) * float(atr_value)
-                        logger.info(f"🛡️  {symbol} 計算止損: ${stop_loss_price:,.2f} (ATR={atr_value:.2f})")
+                        logger.info(f"🛡️  {symbol} [LONG] 止損: ${stop_loss_price:,.2f} (ATR={atr_value:.2f})")
+                    elif target_pct < current_pct and target_pct < 0:  # 開空/加空
+                        stop_loss_price = price + float(stop_loss_atr) * float(atr_value)
+                        logger.info(f"🛡️  {symbol} [SHORT] 止損: ${stop_loss_price:,.2f} (ATR={atr_value:.2f})")
                     
                 trade = self.broker.execute_target_position(
                     symbol=symbol,
