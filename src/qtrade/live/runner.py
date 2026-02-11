@@ -395,14 +395,18 @@ class LiveRunner:
                         if take_profit_atr:
                             take_profit_price = price + float(take_profit_atr) * float(atr_value)
                         if stop_loss_price or take_profit_price:
-                            logger.info(f"🛡️  {symbol} [LONG] SL=${stop_loss_price:,.2f if stop_loss_price else 'N/A'}, TP=${take_profit_price:,.2f if take_profit_price else 'N/A'}")
+                            sl_str = f"${stop_loss_price:,.2f}" if stop_loss_price else "N/A"
+                            tp_str = f"${take_profit_price:,.2f}" if take_profit_price else "N/A"
+                            logger.info(f"🛡️  {symbol} [LONG] SL={sl_str}, TP={tp_str}")
                     elif target_pct < current_pct and target_pct < 0:  # 開空/加空
                         if stop_loss_atr:
                             stop_loss_price = price + float(stop_loss_atr) * float(atr_value)
                         if take_profit_atr:
                             take_profit_price = price - float(take_profit_atr) * float(atr_value)
                         if stop_loss_price or take_profit_price:
-                            logger.info(f"🛡️  {symbol} [SHORT] SL=${stop_loss_price:,.2f if stop_loss_price else 'N/A'}, TP=${take_profit_price:,.2f if take_profit_price else 'N/A'}")
+                            sl_str = f"${stop_loss_price:,.2f}" if stop_loss_price else "N/A"
+                            tp_str = f"${take_profit_price:,.2f}" if take_profit_price else "N/A"
+                            logger.info(f"🛡️  {symbol} [SHORT] SL={sl_str}, TP={tp_str}")
                     
                 trade = self.broker.execute_target_position(
                     symbol=symbol,
