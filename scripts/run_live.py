@@ -11,6 +11,9 @@
     # Paper Trading - 立即執行一次（不等待 K 線收盤）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once
 
+    # Paper Trading - 啟用 Telegram 命令互動
+    python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --telegram-commands
+
     # Real Trading — dry-run 模式（不下單，只看信號和模擬結果）
     python scripts/run_live.py -c config/rsi_adx_atr.yaml --real --dry-run --once
 
@@ -27,6 +30,15 @@ Telegram 通知:
     在 .env 中設定以下變數即可自動啟用:
         TELEGRAM_BOT_TOKEN=123456:ABC-DEF
         TELEGRAM_CHAT_ID=987654321
+        TELEGRAM_ADMIN_IDS=123456789  # 可選，限制哪些用戶可執行命令
+
+Telegram 命令:
+    啟用 --telegram-commands 後，可在 Telegram 中發送命令：
+        /status  - 查看當前持倉
+        /balance - 查看帳戶餘額
+        /trades  - 查看最近交易
+        /signals - 查看最新信號
+        /stop    - 停止交易 Bot
 """
 from __future__ import annotations
 import argparse
@@ -75,6 +87,32 @@ def _maybe_send_heartbeat(notifier: TelegramNotifier, mode: str) -> None:
             HEARTBEAT_FILE.write_text(str(now))
         except OSError:
             pass
+
+
+def _start_telegram_command_bot(runner, broker):
+    """啟動 Telegram 命令 Bot（背景執行）"""
+    try:
+        from qtrade.monitor.telegram_bot import TelegramCommandBot
+        
+        telegram_bot = TelegramCommandBot(
+            live_runner=runner,
+            broker=broker,
+            state_manager=runner.state_manager,
+        )
+        telegram_bot.start_background()
+        
+        print("🤖 Telegram 命令 Bot 已在背景啟動")
+        print("   在 Telegram 中發送 /help 查看可用命令")
+        print()
+        
+        return telegram_bot
+    except ImportError as e:
+        print(f"⚠️  無法啟動 Telegram 命令 Bot: {e}")
+        print("   安裝: pip install python-telegram-bot")
+        return None
+    except Exception as e:
+        print(f"⚠️  Telegram 命令 Bot 啟動失敗: {e}")
+        return None
 
 
 def cmd_run(args, cfg) -> None:
@@ -129,6 +167,11 @@ def cmd_run(args, cfg) -> None:
         
         runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
 
+        # Telegram 命令 Bot（可選）
+        telegram_cmd_bot = None
+        if getattr(args, "telegram_commands", False):
+            telegram_cmd_bot = _start_telegram_command_bot(runner, broker)
+
         if dry_run:
             print("🧪 DRY-RUN 模式：所有下單指令只會記錄，不會真的執行")
             print()
@@ -172,12 +215,20 @@ def cmd_run(args, cfg) -> None:
 
             # 心跳監控
             _maybe_send_heartbeat(notifier, mode)
+            
+            # 停止 Telegram 命令 Bot
+            if telegram_cmd_bot:
+                telegram_cmd_bot.stop()
         else:
             if not dry_run:
                 print("⚠️  即將以真實交易模式持續運行！")
                 print("    按 Ctrl+C 可隨時停止")
                 print()
-            runner.run(max_ticks=args.max_ticks)
+            try:
+                runner.run(max_ticks=args.max_ticks)
+            finally:
+                if telegram_cmd_bot:
+                    telegram_cmd_bot.stop()
     else:
         # ── Paper Trading 模式 ──
         mode = "paper"
@@ -200,6 +251,11 @@ def cmd_run(args, cfg) -> None:
         )
 
         runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
+
+        # Telegram 命令 Bot（可選）
+        telegram_cmd_bot = None
+        if getattr(args, "telegram_commands", False):
+            telegram_cmd_bot = _start_telegram_command_bot(runner, broker)
 
         if args.once:
             signals = runner.run_once()
@@ -224,8 +280,16 @@ def cmd_run(args, cfg) -> None:
 
             # 心跳監控
             _maybe_send_heartbeat(notifier, mode)
+            
+            # 停止 Telegram 命令 Bot
+            if telegram_cmd_bot:
+                telegram_cmd_bot.stop()
         else:
-            runner.run(max_ticks=args.max_ticks)
+            try:
+                runner.run(max_ticks=args.max_ticks)
+            finally:
+                if telegram_cmd_bot:
+                    telegram_cmd_bot.stop()
 
 
 def cmd_check(args, cfg) -> None:
@@ -412,6 +476,8 @@ def main() -> None:
                         help="Real 模式下不實際下單（測試用）")
     parser.add_argument("--max-ticks", type=int, default=None,
                         help="最大運行次數")
+    parser.add_argument("--telegram-commands", action="store_true", dest="telegram_commands",
+                        help="啟用 Telegram 命令互動（/status, /balance 等）")
 
     args = parser.parse_args()
 

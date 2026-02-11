@@ -36,5 +36,8 @@ yfinance>=0.2.30
 # CCXT - 多交易所統一 API (Kraken 2013, Bitstamp 2011 等)
 ccxt>=4.0.0
 
+# Telegram Bot（雙向互動 - 接收命令 + 發送通知）
+python-telegram-bot>=21.0
+
 # 可選：安全存儲
 # keyring>=24.0
