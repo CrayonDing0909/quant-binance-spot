@@ -40,14 +40,14 @@ def apply_exit_rules(
     cooldown_bars: int = 0,
 ) -> pd.Series:
     """
-    對原始持倉信號疊加出場規則
+    對原始持倉信號疊加出場規則（支援做空）
 
     優先級：ATR-based > 固定百分比
     如果 stop_loss_atr 和 stop_loss_pct 都提供，使用 ATR 版本。
 
     Args:
         df:               K線數據（需要 high, low, close 列）
-        raw_pos:          原始持倉信號 [0, 1]，已經 shift(1) 過
+        raw_pos:          原始持倉信號 [-1, 1]，已經 shift(1) 過
         stop_loss_atr:    止損距離（ATR 倍數），None = 不用
         take_profit_atr:  止盈距離（ATR 倍數），None = 不用
         trailing_stop_atr: 移動止損（ATR 倍數），None = 不用
@@ -57,11 +57,11 @@ def apply_exit_rules(
         cooldown_bars:    出場後冷卻期（bar 數）
 
     Returns:
-        調整後的持倉序列 [0, 1]
+        調整後的持倉序列 [-1, 1]
     """
     close = df["close"].values
     high = df["high"].values
-    low = df["low"].values  # 用於更真實的止損檢查
+    low = df["low"].values
     n = len(df)
 
     # 預計算 ATR
@@ -71,11 +71,12 @@ def apply_exit_rules(
     result = np.zeros(n, dtype=float)
 
     # 狀態變數
-    in_position = False
+    # position_state: 0 = flat, 1 = long, -1 = short
+    position_state = 0
     entry_price = 0.0
     sl_price = 0.0
     tp_price = 0.0
-    highest_since_entry = 0.0
+    extreme_since_entry = 0.0  # 多倉追蹤最高價，空倉追蹤最低價
     cooldown_remaining = 0
 
     for i in range(n):
@@ -90,46 +91,114 @@ def apply_exit_rules(
             result[i] = 0.0
             continue
 
-        # ── 持倉中：檢查 SL / TP / Trailing ──
-        if in_position:
+        # ── 持有多倉 ──
+        if position_state == 1:
             triggered_exit = False
 
-            # 更新移動止損的最高價
-            if current_high > highest_since_entry:
-                highest_since_entry = current_high
-                # 更新移動止損價
+            # 更新最高價（用於移動止損）
+            if current_high > extreme_since_entry:
+                extreme_since_entry = current_high
                 if trailing_stop_atr is not None and current_atr > 0:
-                    sl_price = max(sl_price, highest_since_entry - trailing_stop_atr * current_atr)
+                    sl_price = max(sl_price, extreme_since_entry - trailing_stop_atr * current_atr)
 
-            # 檢查止損（用 low 價，更貼近硬止損行為）
-            # 如果 K 棒最低價觸及止損線，視為止損觸發
+            # 檢查止損（用 low 價）
             if sl_price > 0 and current_low <= sl_price:
                 triggered_exit = True
 
-            # 檢查止盈（用 high 價，更貼近實際行為）
-            # 如果 K 棒最高價觸及止盈線，視為止盈觸發
+            # 檢查止盈（用 high 價）
             if tp_price > 0 and current_high >= tp_price:
                 triggered_exit = True
 
-            # 策略本身發出平倉信號
+            # 策略發出平倉或反向信號
             if raw[i] <= 0:
                 triggered_exit = True
 
             if triggered_exit:
-                result[i] = 0.0
-                in_position = False
-                cooldown_remaining = cooldown_bars
+                # 平倉後是否反手做空
+                if raw[i] < 0:
+                    # 反手做空
+                    position_state = -1
+                    entry_price = current_close
+                    extreme_since_entry = current_low
+                    if stop_loss_atr is not None and current_atr > 0:
+                        sl_price = entry_price + stop_loss_atr * current_atr
+                    elif stop_loss_pct is not None:
+                        sl_price = entry_price * (1 + stop_loss_pct)
+                    else:
+                        sl_price = 0.0
+                    if take_profit_atr is not None and current_atr > 0:
+                        tp_price = entry_price - take_profit_atr * current_atr
+                    elif take_profit_pct is not None:
+                        tp_price = entry_price * (1 - take_profit_pct)
+                    else:
+                        tp_price = 0.0
+                    result[i] = -1.0
+                else:
+                    # 純平倉
+                    position_state = 0
+                    result[i] = 0.0
+                    cooldown_remaining = cooldown_bars
             else:
                 result[i] = 1.0
+
+        # ── 持有空倉 ──
+        elif position_state == -1:
+            triggered_exit = False
+
+            # 更新最低價（用於移動止損）
+            if current_low < extreme_since_entry:
+                extreme_since_entry = current_low
+                if trailing_stop_atr is not None and current_atr > 0:
+                    sl_price = min(sl_price, extreme_since_entry + trailing_stop_atr * current_atr)
+
+            # 檢查止損（用 high 價，空倉止損在上方）
+            if sl_price > 0 and current_high >= sl_price:
+                triggered_exit = True
+
+            # 檢查止盈（用 low 價，空倉止盈在下方）
+            if tp_price > 0 and current_low <= tp_price:
+                triggered_exit = True
+
+            # 策略發出平倉或反向信號
+            if raw[i] >= 0:
+                triggered_exit = True
+
+            if triggered_exit:
+                # 平倉後是否反手做多
+                if raw[i] > 0:
+                    # 反手做多
+                    position_state = 1
+                    entry_price = current_close
+                    extreme_since_entry = current_high
+                    if stop_loss_atr is not None and current_atr > 0:
+                        sl_price = entry_price - stop_loss_atr * current_atr
+                    elif stop_loss_pct is not None:
+                        sl_price = entry_price * (1 - stop_loss_pct)
+                    else:
+                        sl_price = 0.0
+                    if take_profit_atr is not None and current_atr > 0:
+                        tp_price = entry_price + take_profit_atr * current_atr
+                    elif take_profit_pct is not None:
+                        tp_price = entry_price * (1 + take_profit_pct)
+                    else:
+                        tp_price = 0.0
+                    result[i] = 1.0
+                else:
+                    # 純平倉
+                    position_state = 0
+                    result[i] = 0.0
+                    cooldown_remaining = cooldown_bars
+            else:
+                result[i] = -1.0
 
         # ── 空倉中：檢查是否該進場 ──
         else:
             if raw[i] > 0:
-                in_position = True
+                # 開多
+                position_state = 1
                 entry_price = current_close
-                highest_since_entry = current_high
+                extreme_since_entry = current_high
 
-                # 設定止損價
                 if stop_loss_atr is not None and current_atr > 0:
                     sl_price = entry_price - stop_loss_atr * current_atr
                 elif stop_loss_pct is not None:
@@ -137,7 +206,6 @@ def apply_exit_rules(
                 else:
                     sl_price = 0.0
 
-                # 設定止盈價
                 if take_profit_atr is not None and current_atr > 0:
                     tp_price = entry_price + take_profit_atr * current_atr
                 elif take_profit_pct is not None:
@@ -146,6 +214,27 @@ def apply_exit_rules(
                     tp_price = 0.0
 
                 result[i] = 1.0
+            elif raw[i] < 0:
+                # 開空
+                position_state = -1
+                entry_price = current_close
+                extreme_since_entry = current_low
+
+                if stop_loss_atr is not None and current_atr > 0:
+                    sl_price = entry_price + stop_loss_atr * current_atr
+                elif stop_loss_pct is not None:
+                    sl_price = entry_price * (1 + stop_loss_pct)
+                else:
+                    sl_price = 0.0
+
+                if take_profit_atr is not None and current_atr > 0:
+                    tp_price = entry_price - take_profit_atr * current_atr
+                elif take_profit_pct is not None:
+                    tp_price = entry_price * (1 - take_profit_pct)
+                else:
+                    tp_price = 0.0
+
+                result[i] = -1.0
             else:
                 result[i] = 0.0
 

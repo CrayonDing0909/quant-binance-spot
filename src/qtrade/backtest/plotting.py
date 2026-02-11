@@ -56,9 +56,22 @@ def plot_backtest_summary(pf: vbt.Portfolio, df: pd.DataFrame, pos: pd.Series,
 
     # ── 2. 持倉比例 ────────────────────────────────────
     ax = axes[1]
-    ax.fill_between(pos.index, 0, pos.values, alpha=0.4, color="#42a5f5", label="Position")
-    ax.set_ylabel("Position [0-1]")
-    ax.set_ylim(-0.05, 1.15)
+    # 支援 [-1, 1] 的多空倉位顯示
+    pos_long = pos.clip(lower=0)   # 多頭部分
+    pos_short = pos.clip(upper=0)  # 空頭部分
+    ax.fill_between(pos.index, 0, pos_long.values, alpha=0.4, color="#26a69a", label="Long")
+    ax.fill_between(pos.index, 0, pos_short.values, alpha=0.4, color="#ef5350", label="Short")
+    ax.axhline(y=0, color="gray", linestyle="-", alpha=0.3)
+    
+    # 動態 Y 軸範圍
+    pos_min, pos_max = pos.min(), pos.max()
+    if pos_min < 0:  # 有空頭
+        ax.set_ylabel("Position [-1, 1]")
+        ax.set_ylim(min(-1.15, pos_min - 0.1), max(1.15, pos_max + 0.1))
+        ax.legend(loc="upper left", fontsize=8)
+    else:  # 純多頭
+        ax.set_ylabel("Position [0, 1]")
+        ax.set_ylim(-0.05, 1.15)
     ax.grid(True, alpha=0.25)
 
     # ── 3. 資金曲線：策略 vs Buy & Hold ────────────────
