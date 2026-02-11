@@ -19,8 +19,8 @@
     # 指定交易對（只回測指定交易對）
     python scripts/run_backtest.py --symbol BTCUSDT
 
-    # 加上時間戳（不覆蓋舊報告）
-    python scripts/run_backtest.py --timestamp
+    # 預設帶時間戳，使用 --no-timestamp 可關閉
+    python scripts/run_backtest.py --no-timestamp
 
     # 合約回測 - 指定交易方向
     python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --direction both
@@ -70,7 +70,13 @@ def main() -> None:
     parser.add_argument(
         "--timestamp", "-t",
         action="store_true",
-        help="在輸出目錄加上時間戳，避免覆蓋舊報告"
+        default=True,
+        help="在輸出目錄加上時間戳（預設啟用）"
+    )
+    parser.add_argument(
+        "--no-timestamp",
+        action="store_true",
+        help="不加時間戳（會覆蓋舊報告）"
     )
     parser.add_argument(
         "--direction", "-d",
@@ -115,13 +121,15 @@ def main() -> None:
 
     # 確定輸出目錄
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    use_timestamp = not args.no_timestamp  # 預設帶時間戳
+    
     if args.output_dir:
         report_dir = Path(args.output_dir)
-        if args.timestamp:
+        if use_timestamp:
             report_dir = report_dir / timestamp_str
     else:
         base_report_dir = Path(cfg.output.report_dir)
-        if args.timestamp:
+        if use_timestamp:
             report_dir = base_report_dir / strategy_name / timestamp_str
         else:
             report_dir = base_report_dir / strategy_name
