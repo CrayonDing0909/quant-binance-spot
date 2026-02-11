@@ -232,6 +232,9 @@ def extract_trades_from_portfolio(pf) -> List[Dict]:
     """
     從 vectorbt Portfolio 提取交易紀錄
     
+    使用 positions 而不是 trades，獲得完整的 round-trip 交易。
+    trades 會把部分平倉拆成多筆，positions 則是完整的進出場。
+    
     Args:
         pf: vectorbt Portfolio 對象
         
@@ -239,20 +242,20 @@ def extract_trades_from_portfolio(pf) -> List[Dict]:
         交易紀錄列表，每個包含 'pnl'
     """
     try:
-        # vectorbt 的 trades 記錄
-        trades_records = pf.trades.records_readable
+        # 使用 positions 獲得完整的 round-trip 交易
+        positions_records = pf.positions.records_readable
         
-        if trades_records.empty:
+        if positions_records.empty:
             return []
         
         trades = []
-        for _, row in trades_records.iterrows():
+        for _, row in positions_records.iterrows():
             pnl = row.get('PnL', row.get('Return', 0))
             if pd.notna(pnl):
                 trades.append({
                     'pnl': float(pnl),
-                    'entry_price': row.get('Entry Price', 0),
-                    'exit_price': row.get('Exit Price', 0),
+                    'entry_price': row.get('Avg Entry Price', 0),
+                    'exit_price': row.get('Avg Exit Price', 0),
                     'size': row.get('Size', 0),
                 })
         

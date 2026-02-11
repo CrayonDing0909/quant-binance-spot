@@ -130,27 +130,29 @@ def trade_analysis(pf: vbt.Portfolio) -> pd.DataFrame:
             - Duration
     """
     try:
-        trades = pf.trades.records_readable
+        # 使用 positions 而不是 trades，獲得完整的 round-trip 交易
+        # trades 會把部分平倉拆成多筆，positions 則是完整的進出場
+        positions = pf.positions.records_readable
     except Exception:
         return pd.DataFrame()
 
-    if len(trades) == 0:
+    if len(positions) == 0:
         return pd.DataFrame()
 
     result = pd.DataFrame()
-    result["Entry Time"] = trades["Entry Timestamp"]
-    result["Exit Time"] = trades["Exit Timestamp"]
-    result["Entry Price"] = trades["Avg Entry Price"]
-    result["Exit Price"] = trades["Avg Exit Price"]
-    result["PnL"] = trades["PnL"]
-    result["Return [%]"] = trades["Return"].apply(lambda x: round(x * 100, 2))
-    result["Duration"] = trades["Exit Timestamp"] - trades["Entry Timestamp"]
+    result["Entry Time"] = positions["Entry Timestamp"]
+    result["Exit Time"] = positions["Exit Timestamp"]
+    result["Entry Price"] = positions["Avg Entry Price"]
+    result["Exit Price"] = positions["Avg Exit Price"]
+    result["PnL"] = positions["PnL"]
+    result["Return [%]"] = positions["Return"].apply(lambda x: round(x * 100, 2))
+    result["Duration"] = positions["Exit Timestamp"] - positions["Entry Timestamp"]
     # vectorbt 可能返回 int (0=Open,1=Closed) 或字串
     def _parse_status(x):
         if isinstance(x, str):
             return x
         return "Closed" if x == 1 else "Open"
-    result["Status"] = trades["Status"].apply(_parse_status)
+    result["Status"] = positions["Status"].apply(_parse_status)
 
     return result.reset_index(drop=True)
 
