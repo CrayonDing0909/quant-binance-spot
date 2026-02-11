@@ -298,8 +298,21 @@ class TelegramCommandBot:
             await update.message.reply_text("⚠️ Trading Bot 已經停止")
     
     # ══════════════════════════════════════════════════════════════════════════
-    # 資料獲取方法（整合 broker / state_manager）
+    # 資料獲取方法（整合 broker / state_manager / 直接查詢 Binance）
     # ══════════════════════════════════════════════════════════════════════════
+    
+    def _get_futures_broker(self):
+        """獲取或創建 Futures Broker（獨立模式用）"""
+        if self.broker:
+            return self.broker
+        
+        # 獨立模式：嘗試創建 BinanceFuturesBroker
+        try:
+            from ..live.binance_futures_broker import BinanceFuturesBroker
+            return BinanceFuturesBroker(dry_run=True)  # dry_run 只查詢不下單
+        except Exception as e:
+            logger.warning(f"無法創建 Futures Broker: {e}")
+            return None
     
     def _get_status(self) -> str:
         """獲取當前狀態"""
@@ -318,6 +331,11 @@ class TelegramCommandBot:
             lines.append(f"🔄 Ticks: {self.live_runner.tick_count}")
             lines.append(f"📝 交易: {self.live_runner.trade_count} 筆")
             lines.append("")
+        else:
+            # 獨立模式：顯示 Cron 運行狀態
+            lines.append("📊 模式: REAL (FUTURES) via Cron")
+            lines.append("⚡ 狀態: 🟢 Cron 每小時執行")
+            lines.append("")
         
         # 持倉
         positions = self._get_positions()
@@ -326,8 +344,21 @@ class TelegramCommandBot:
             for sym, info in positions.items():
                 qty = info.get("qty", 0)
                 entry = info.get("avg_entry", 0)
-                value = qty * entry
-                lines.append(f"  • {sym}: {qty:.6f} @ ${entry:,.2f} (≈${value:,.2f})")
+                side = info.get("side", "LONG" if qty > 0 else "SHORT")
+                unrealized_pnl = info.get("unrealized_pnl", 0)
+                
+                # 計算市值
+                mark_price = info.get("mark_price", entry)
+                value = abs(qty) * mark_price
+                
+                # PnL emoji
+                pnl_emoji = "📈" if unrealized_pnl > 0 else "📉"
+                
+                lines.append(
+                    f"  • {sym} [{side}]: {abs(qty):.4f}\n"
+                    f"    入場: ${entry:,.2f} | 標記: ${mark_price:,.2f}\n"
+                    f"    {pnl_emoji} 未實現 PnL: ${unrealized_pnl:+,.2f}"
+                )
         else:
             lines.append("📦 持倉：無")
         
@@ -339,9 +370,12 @@ class TelegramCommandBot:
         
         from ..live.paper_broker import PaperBroker
         
-        if isinstance(self.broker, PaperBroker):
+        # 獲取 broker（可能是傳入的或獨立創建的）
+        broker = self.broker or self._get_futures_broker()
+        
+        if isinstance(broker, PaperBroker):
             # Paper 模式
-            account = self.broker.account
+            account = broker.account
             
             # 計算權益需要當前價格
             prices = {}
@@ -355,7 +389,7 @@ class TelegramCommandBot:
                     except Exception:
                         prices[sym] = pos.avg_entry  # fallback
             
-            equity = self.broker.get_equity(prices)
+            equity = broker.get_equity(prices)
             ret = (equity / account.initial_cash - 1) * 100
             ret_emoji = "📈" if ret > 0 else "📉"
             
@@ -364,25 +398,41 @@ class TelegramCommandBot:
             lines.append(f"📊 初始: ${account.initial_cash:,.2f}")
             lines.append(f"{ret_emoji} 報酬: {ret:+.2f}%")
             
-        elif hasattr(self.broker, "get_balance"):
-            # Real 模式
+        elif broker and hasattr(broker, "get_balance"):
+            # Real 模式（Futures）
             try:
-                usdt = self.broker.get_balance("USDT")
-                lines.append(f"💵 USDT: ${usdt:,.2f}")
-                
-                # 計算總權益
-                total = usdt
-                for sym in (self.live_runner.symbols if self.live_runner else []):
-                    qty = self.broker.get_position(sym)
-                    if qty > 0:
-                        price = self.broker.get_price(sym)
-                        total += qty * price
-                
-                lines.append(f"💎 總權益: ${total:,.2f}")
+                # Futures broker 用 get_balance() 不帶參數
+                if hasattr(broker, "get_equity"):
+                    balance = broker.get_balance()
+                    equity = broker.get_equity()
+                    
+                    lines.append(f"💵 可用餘額: ${balance:,.2f}")
+                    lines.append(f"💎 帳戶權益: ${equity:,.2f}")
+                    
+                    # 顯示未實現盈虧
+                    positions = broker.get_positions()
+                    total_pnl = sum(p.unrealized_pnl for p in positions if p and abs(p.qty) > 1e-8)
+                    if total_pnl != 0:
+                        pnl_emoji = "📈" if total_pnl > 0 else "📉"
+                        lines.append(f"{pnl_emoji} 未實現 PnL: ${total_pnl:+,.2f}")
+                else:
+                    # Spot broker
+                    usdt = broker.get_balance("USDT")
+                    lines.append(f"💵 USDT: ${usdt:,.2f}")
+                    
+                    # 計算總權益
+                    total = usdt
+                    for sym in (self.live_runner.symbols if self.live_runner else []):
+                        qty = broker.get_position(sym)
+                        if qty > 0:
+                            price = broker.get_price(sym)
+                            total += qty * price
+                    
+                    lines.append(f"💎 總權益: ${total:,.2f}")
             except Exception as e:
                 lines.append(f"❌ 查詢失敗: {e}")
         else:
-            lines.append("⚠️ 無法獲取餘額資訊")
+            lines.append("⚠️ 無法獲取餘額資訊（請確認 API Key 已設置）")
         
         return "\n".join(lines)
     
@@ -508,25 +558,46 @@ class TelegramCommandBot:
             for sym, pos in self.state_manager.state.positions.items():
                 if pos.get("qty", 0) > 1e-10:
                     positions[sym] = pos
+            return positions
         
-        # 從 PaperBroker 獲取
-        elif self.broker:
-            from ..live.paper_broker import PaperBroker
-            if isinstance(self.broker, PaperBroker):
-                for sym, pos in self.broker.account.positions.items():
-                    if pos.is_open:
-                        positions[sym] = {"qty": pos.qty, "avg_entry": pos.avg_entry}
-            elif hasattr(self.broker, "get_position"):
-                # Real broker
-                symbols = self.live_runner.symbols if self.live_runner else []
-                for sym in symbols:
-                    try:
-                        qty = self.broker.get_position(sym)
-                        if qty > 1e-10:
-                            price = self.broker.get_price(sym)
-                            positions[sym] = {"qty": qty, "avg_entry": price}
-                    except Exception:
-                        pass
+        # 獲取 broker（可能是傳入的或獨立創建的）
+        broker = self.broker or self._get_futures_broker()
+        
+        if not broker:
+            return positions
+        
+        from ..live.paper_broker import PaperBroker
+        
+        if isinstance(broker, PaperBroker):
+            for sym, pos in broker.account.positions.items():
+                if pos.is_open:
+                    positions[sym] = {"qty": pos.qty, "avg_entry": pos.avg_entry}
+        elif hasattr(broker, "get_positions"):
+            # Futures broker - 使用 get_positions() 獲取所有持倉
+            try:
+                all_positions = broker.get_positions()
+                for pos in all_positions:
+                    if pos and abs(pos.qty) > 1e-8:
+                        positions[pos.symbol] = {
+                            "qty": pos.qty,
+                            "avg_entry": pos.entry_price,
+                            "mark_price": pos.mark_price,
+                            "unrealized_pnl": pos.unrealized_pnl,
+                            "side": "LONG" if pos.qty > 0 else "SHORT",
+                        }
+            except Exception as e:
+                logger.warning(f"獲取持倉失敗: {e}")
+        elif hasattr(broker, "get_position"):
+            # Spot broker
+            symbols = self.live_runner.symbols if self.live_runner else []
+            for sym in symbols:
+                try:
+                    qty = broker.get_position(sym)
+                    if qty > 1e-10:
+                        price = broker.get_price(sym)
+                        positions[sym] = {"qty": qty, "avg_entry": price}
+                except Exception:
+                    pass
         
         return positions
     
