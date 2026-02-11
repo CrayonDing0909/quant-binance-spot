@@ -74,3 +74,6 @@ tmp/
 temp/
 
 reports/validation/
+
+# Runtime files
+reports/**/paper_state.json
