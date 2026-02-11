@@ -353,6 +353,93 @@ def calculate_my_indicator(series: pd.Series, period: int = 14) -> pd.Series:
 | 指標函數 | `calculate_{name}` | `calculate_rsi()` |
 | Broker 類別 | `{Exchange}{Market}Broker` | `BinanceFuturesBroker` |
 
+## 專案資源清單
+
+### 執行腳本 (`scripts/`)
+
+| 腳本 | 用途 | 常用參數 |
+|------|------|----------|
+| `download_data.py` | 下載 K 線數據 | `-c config.yaml`, `--symbol`, `--full` |
+| `run_backtest.py` | 執行回測 | `-c`, `--direction`, `--symbol`, `-t` |
+| `validate.py` | 策略驗證 | `-c`, `--quick`, `--full`, `--only` |
+| `run_live.py` | 實盤/模擬交易 | `-c`, `--paper`, `--real`, `--status`, `--check` |
+| `optimize_params.py` | 參數優化 | `--strategy`, `--metric`, `--symbol` |
+| `create_strategy.py` | 建立新策略 | `--name`, `--type` |
+| `daily_report.py` | 每日報告 | `-c` |
+| `health_check.py` | 健康檢查 | `--notify`, `--json` |
+| `setup_cron.sh` | 設置 Cron Jobs | `--install`, `--remove`, `--show` |
+| `setup_secrets.py` | 設置 API 密鑰 | (互動式) |
+
+### 測試腳本 (`scripts/`)
+
+| 腳本 | 用途 |
+|------|------|
+| `test_futures_connection.py` | Futures API 連線測試（不需 API Key） |
+| `test_futures_broker.py` | Futures Broker 完整測試 |
+| `test_futures_risk.py` | 風控模組測試 |
+| `test_futures_manual.py` | 手動測試 |
+
+### 配置檔 (`config/`)
+
+| 檔案 | 用途 |
+|------|------|
+| `base.yaml` | 基礎配置模板 |
+| `rsi_adx_atr.yaml` | RSI+ADX+ATR 現貨策略 |
+| `futures_rsi_adx_atr.yaml` | RSI+ADX+ATR 合約策略 |
+| `validation.yaml` | 驗證配置 |
+| `dev.yaml` | 開發環境配置 |
+
+### 文件 (`docs/`)
+
+| 檔案 | 內容 |
+|------|------|
+| `CLI_REFERENCE.md` | **CLI 指令集快速參考** ⭐ |
+| `QUICK_START_GUIDE.md` | 快速入門指南 |
+| `COMMAND_LINE_USAGE.md` | 命令行使用說明 |
+| `ARCHITECTURE_PROPOSAL.md` | 架構設計文件 |
+| `DATA_QUALITY.md` | 數據品質說明 |
+| `RISK_MANAGEMENT.md` | 風險管理說明 |
+| `STRATEGY_PORTFOLIO.md` | 策略組合說明 |
+| `TRADING_STRATEGIES_REFERENCE.md` | 交易策略參考 |
+| `PROJECT_FEATURES.md` | 專案功能說明 |
+
+### 部署相關
+
+#### Cron 設置 (`scripts/setup_cron.sh`)
+```bash
+# 互動模式
+./scripts/setup_cron.sh
+
+# 直接安裝
+./scripts/setup_cron.sh --install
+
+# 移除
+./scripts/setup_cron.sh --remove
+
+# 查看目前設定
+./scripts/setup_cron.sh --show
+```
+
+#### Oracle Cloud 部署
+```bash
+# SSH 進入
+ssh user@oracle_ip
+
+# 更新程式碼
+cd ~/quant-binance-spot && git pull
+
+# 啟動虛擬環境
+source .venv/bin/activate
+
+# 測試
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper --once
+
+# 設置 cron
+./scripts/setup_cron.sh --install
+```
+
+---
+
 ## 常用指令
 
 ```bash
@@ -370,6 +457,12 @@ python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
 
 # 參數優化
 python scripts/optimize_params.py -c config/rsi_adx_atr.yaml --symbol BTCUSDT
+
+# 查看帳戶狀態
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --status
+
+# API 連線測試
+python scripts/test_futures_connection.py
 ```
 
 ## 待完成功能 (TODO)
