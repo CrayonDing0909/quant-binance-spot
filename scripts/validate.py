@@ -488,13 +488,25 @@ def run_consistency_check(
     cfg,
     days: int,
     report_dir: Path,
+    use_binance_api: bool = True,
 ) -> Dict:
-    """執行一致性檢查"""
+    """
+    執行一致性檢查
+    
+    Args:
+        symbols: 交易對列表
+        cfg: 策略配置
+        days: 回看天數
+        report_dir: 報告目錄
+        use_binance_api: 是否從 Binance API 獲取真實交易（推薦）
+    """
     from qtrade.validation import ConsistencyValidator
     
     print("\n" + "=" * 70)
     print("  🔍 Live/Backtest Consistency Check")
     print("=" * 70)
+    print(f"  期間: 最近 {days} 天")
+    print(f"  數據來源: {'Binance API' if use_binance_api else 'State 文件'}")
     
     results = {}
     
@@ -505,14 +517,41 @@ def run_consistency_check(
     )
     
     for symbol in symbols:
+        # 獲取該 symbol 的特定參數（含覆寫）
+        symbol_params = cfg.strategy.get_params(symbol)
+        validator.params = symbol_params
+        
         print(f"\n  {symbol}:")
         try:
-            report = validator.validate_recent(symbol, days=days)
+            # 找到對應的 state 文件
+            live_state_path = Path(f"reports/live/{cfg.strategy.name}/real_state.json")
+            if not live_state_path.exists():
+                live_state_path = Path(f"reports/live/{cfg.strategy.name}/paper_state.json")
+            
+            report = validator.validate_recent(
+                symbol=symbol,
+                days=days,
+                live_state_path=live_state_path if live_state_path.exists() else None,
+                use_binance_api=use_binance_api,
+            )
             results[symbol] = report
             
-            print(f"    一致性: {report.consistency_rate:.1%}")
+            # 顯示結果
+            print(f"    信號一致性: {report.consistency_rate:.1%}")
+            
+            if report.trade_consistency_rate is not None:
+                print(f"    交易一致性: {report.trade_consistency_rate:.1%}")
+            
+            if report.live_return_pct is not None:
+                print(f"    Live 收益: {report.live_return_pct:+.2f}%")
+                print(f"    Backtest 收益: {report.backtest_return_pct:+.2f}%")
+            
             if not report.is_consistent:
                 print(f"    ⚠️  未通過一致性檢查")
+                for inc in report.inconsistencies:
+                    print(f"       • {inc.description}")
+            else:
+                print(f"    ✅ 通過一致性檢查")
                 
             # 保存報告
             report_path = report_dir / f"consistency_{symbol}.json"
@@ -520,6 +559,8 @@ def run_consistency_check(
             
         except Exception as e:
             print(f"    ❌ 失敗: {e}")
+            import traceback
+            traceback.print_exc()
     
     return results
 

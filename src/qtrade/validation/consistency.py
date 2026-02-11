@@ -329,6 +329,7 @@ class ConsistencyValidator:
         symbol: str,
         days: int = 7,
         live_state_path: Optional[Path] = None,
+        use_binance_api: bool = True,
     ) -> ConsistencyReport:
         """
         驗證最近 N 天的一致性
@@ -339,22 +340,70 @@ class ConsistencyValidator:
             symbol: 交易對
             days: 回看天數
             live_state_path: live 狀態檔路徑（包含交易紀錄）
+            use_binance_api: 是否從 Binance API 獲取真實交易（優先）
         """
         end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000)
         
-        # 載入 live 交易紀錄（如果有）
         live_trades = None
-        if live_state_path and live_state_path.exists():
+        
+        # 1. 優先從 Binance API 獲取
+        if use_binance_api:
+            live_trades = self._fetch_trades_from_binance(symbol, start_ts)
+            if live_trades:
+                logger.info(f"   📡 從 Binance API 獲取 {len(live_trades)} 筆交易")
+        
+        # 2. Fallback 到 state 檔案
+        if not live_trades and live_state_path and live_state_path.exists():
             try:
                 with open(live_state_path) as f:
                     state = json.load(f)
                 live_trades = state.get("trades", [])
-                logger.info(f"   載入 {len(live_trades)} 筆 live 交易紀錄")
+                logger.info(f"   📄 從 state 檔案載入 {len(live_trades)} 筆交易")
             except Exception as e:
                 logger.warning(f"   ⚠️  無法載入 live 狀態檔: {e}")
         
         return self.validate_period(symbol, start_date, end_date, live_trades)
+    
+    def _fetch_trades_from_binance(
+        self, 
+        symbol: str, 
+        start_time: int,
+    ) -> Optional[List[dict]]:
+        """從 Binance API 獲取交易歷史"""
+        try:
+            from ..live.binance_futures_broker import BinanceFuturesBroker
+            
+            broker = BinanceFuturesBroker(dry_run=True)
+            raw_trades = broker.get_trade_history(
+                symbol=symbol, 
+                limit=500,
+                start_time=start_time,
+            )
+            
+            if not raw_trades:
+                return None
+            
+            # 轉換為標準格式
+            trades = []
+            for t in raw_trades:
+                trades.append({
+                    "timestamp": datetime.fromtimestamp(
+                        t["time"] / 1000, tz=timezone.utc
+                    ).isoformat(),
+                    "symbol": t["symbol"],
+                    "side": t["side"],
+                    "qty": t["qty"],
+                    "price": t["price"],
+                    "pnl": t.get("realized_pnl", 0),
+                })
+            
+            return trades
+            
+        except Exception as e:
+            logger.warning(f"   ⚠️  無法從 Binance API 獲取交易: {e}")
+            return None
     
     def validate_multiple(
         self,
