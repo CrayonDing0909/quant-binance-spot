@@ -115,9 +115,18 @@ def cmd_run(args, cfg) -> None:
         mode = "real"
         dry_run = getattr(args, "dry_run", False)
 
-        from qtrade.live.binance_spot_broker import BinanceSpotBroker
-
-        broker = BinanceSpotBroker(dry_run=dry_run)
+        if market_type == "futures":
+            from qtrade.live.binance_futures_broker import BinanceFuturesBroker
+            margin_type = cfg.futures.margin_type if cfg.futures else "ISOLATED"
+            broker = BinanceFuturesBroker(
+                dry_run=dry_run,
+                leverage=leverage,
+                margin_type=margin_type,
+            )
+        else:
+            from qtrade.live.binance_spot_broker import BinanceSpotBroker
+            broker = BinanceSpotBroker(dry_run=dry_run)
+        
         runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
 
         if dry_run:
@@ -135,17 +144,30 @@ def cmd_run(args, cfg) -> None:
 
             # 列印帳戶餘額
             print(f"\n{'='*50}")
-            print(f"  Real Trading 帳戶 {'[DRY-RUN]' if dry_run else ''}")
+            print(f"  {market_emoji} Real Trading [{market_label}] {'[DRY-RUN]' if dry_run else ''}")
             print(f"{'='*50}")
-            usdt = broker.get_balance("USDT")
-            print(f"  USDT 餘額: ${usdt:,.2f}")
-            for sym in symbols:
-                qty = broker.get_position(sym)
-                price = broker.get_price(sym)
-                if qty > 0:
-                    print(f"  {sym}: {qty:.6f} ≈ ${qty * price:,.2f}")
-            equity = broker.get_equity(symbols)
-            print(f"  總權益: ${equity:,.2f}")
+            
+            if market_type == "futures":
+                usdt = broker.get_balance()
+                print(f"  USDT 餘額: ${usdt:,.2f}")
+                for sym in symbols:
+                    pos = broker.get_position(sym)
+                    if pos and abs(pos.qty) > 1e-8:
+                        side = "LONG" if pos.qty > 0 else "SHORT"
+                        print(f"  {sym} [{side}]: {abs(pos.qty):.6f} @ ${pos.entry_price:,.2f}")
+                equity = broker.get_equity()
+                print(f"  總權益: ${equity:,.2f}")
+            else:
+                usdt = broker.get_balance("USDT")
+                print(f"  USDT 餘額: ${usdt:,.2f}")
+                for sym in symbols:
+                    qty = broker.get_position(sym)
+                    price = broker.get_price(sym)
+                    if qty > 0:
+                        print(f"  {sym}: {qty:.6f} ≈ ${qty * price:,.2f}")
+                equity = broker.get_equity(symbols)
+                print(f"  總權益: ${equity:,.2f}")
+            
             print(f"{'='*50}")
 
             # 心跳監控
@@ -208,52 +230,87 @@ def cmd_run(args, cfg) -> None:
 
 def cmd_check(args, cfg) -> None:
     """檢查 Binance API 連線"""
-    from qtrade.live.binance_spot_broker import BinanceSpotBroker
+    market_type = cfg.market.market_type.value  # "spot" or "futures"
+    market_emoji = "🟢" if market_type == "spot" else "🔴"
+    market_label = "SPOT" if market_type == "spot" else "FUTURES"
 
     print("=" * 50)
-    print("  🔍 Binance API 連線檢查")
+    print(f"  🔍 Binance API 連線檢查 {market_emoji} [{market_label}]")
     print("=" * 50)
 
     try:
-        broker = BinanceSpotBroker(dry_run=True)
-    except RuntimeError as e:
-        print(f"\n{e}")
-        return
+        if market_type == "futures":
+            from qtrade.live.binance_futures_broker import BinanceFuturesBroker
+            leverage = cfg.futures.leverage if cfg.futures else 10
+            margin_type = cfg.futures.margin_type if cfg.futures else "ISOLATED"
+            broker = BinanceFuturesBroker(
+                dry_run=True, 
+                leverage=leverage,
+                margin_type=margin_type,
+            )
+            # Futures 使用 check_connection() 方法
+            connected = broker.check_connection()
+            if not connected:
+                print("  ❌ Futures API 連線失敗")
+                return
+            
+            # 獲取帳戶資訊
+            balance = broker.get_balance()
+            equity = broker.get_equity()
+            print()
+            print(f"  ✅ Futures API 連線正常")
+            print(f"  💰 可用餘額: ${balance:,.2f}")
+            print(f"  💰 帳戶權益: ${equity:,.2f}")
+            
+            # 顯示現有持倉
+            print()
+            print("  📊 現有持倉:")
+            has_position = False
+            for sym in cfg.market.symbols:
+                pos = broker.get_position(sym)
+                if pos and abs(pos.qty) > 1e-8:
+                    has_position = True
+                    side = "LONG 🟢" if pos.qty > 0 else "SHORT 🔴"
+                    print(f"    {sym} [{side}]: {abs(pos.qty):.4f} @ ${pos.entry_price:,.2f} (PnL: ${pos.unrealized_pnl:+,.2f})")
+            if not has_position:
+                print("    (無持倉)")
+        else:
+            from qtrade.live.binance_spot_broker import BinanceSpotBroker
+            broker = BinanceSpotBroker(dry_run=True)
+            result = broker.check_connection(symbols=cfg.market.symbols)
 
-    result = broker.check_connection(symbols=cfg.market.symbols)
+            print()
+            if "server_time" in result:
+                print(f"  ✅ 伺服器時間: {result['server_time']}")
+            else:
+                print(f"  ❌ 伺服器連線失敗: {result.get('server_time_error', '未知錯誤')}")
 
-    print()
-    if "server_time" in result:
-        print(f"  ✅ 伺服器時間: {result['server_time']}")
-    else:
-        print(f"  ❌ 伺服器連線失敗: {result.get('server_time_error', '未知錯誤')}")
+            if "account_error" in result:
+                print(f"  ❌ 帳戶連線失敗: {result['account_error']}")
+            else:
+                print(f"  ✅ 帳戶類型: {result.get('account_type', '?')}")
+                print(f"  ✅ 可交易: {result.get('can_trade', '?')}")
+                print(f"  💰 USDT 餘額: ${result.get('usdt_balance', 0):,.2f}")
 
-    if "account_error" in result:
-        print(f"  ❌ 帳戶連線失敗: {result['account_error']}")
-    else:
-        print(f"  ✅ 帳戶類型: {result.get('account_type', '?')}")
-        print(f"  ✅ 可交易: {result.get('can_trade', '?')}")
-        print(f"  💰 USDT 餘額: ${result.get('usdt_balance', 0):,.2f}")
+                balances = result.get("balances", {})
+                for asset, val in balances.items():
+                    if asset != "USDT" and val["free"] > 0:
+                        print(f"  💰 {asset}: {val['free']}")
 
-        balances = result.get("balances", {})
-        for asset, val in balances.items():
-            if asset != "USDT" and val["free"] > 0:
-                print(f"  💰 {asset}: {val['free']}")
+            prices = result.get("prices", {})
+            if prices:
+                print()
+                for sym, price in prices.items():
+                    print(f"  📊 {sym}: ${price:,.2f}")
 
-    prices = result.get("prices", {})
-    if prices:
-        print()
-        for sym, price in prices.items():
-            print(f"  📊 {sym}: ${price:,.2f}")
-
-    filters = result.get("filters", {})
-    if filters:
-        print()
-        print("  📋 交易規則:")
-        for sym, f in filters.items():
-            print(f"    {sym}: minQty={f['min_qty']}, "
-                  f"stepSize={f['step_size']}, "
-                  f"minNotional=${f['min_notional']}")
+            filters = result.get("filters", {})
+            if filters:
+                print()
+                print("  📋 交易規則:")
+                for sym, f in filters.items():
+                    print(f"    {sym}: minQty={f['min_qty']}, "
+                          f"stepSize={f['step_size']}, "
+                          f"minNotional=${f['min_notional']}")
 
     print()
     print("=" * 50)
