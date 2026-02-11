@@ -496,3 +496,117 @@ python scripts/test_futures_connection.py
 - 全持倉風險: `check_all_positions_risk()`
 - 風險報告: `generate_risk_report()`, `print_risk_report()`
 - 風險閾值: `LIQUIDATION_WARNING_PCT`, `MARGIN_RATIO_WARNING`, `FUNDING_RATE_HIGH`
+
+---
+
+## Binance Futures API 注意事項
+
+### Hedge Mode (對沖模式)
+用戶帳戶可能是 **Hedge Mode**（可同時持有多空倉）或 **One-Way Mode**（只能單向）。
+
+**關鍵**：Hedge Mode 下單必須指定 `positionSide`：
+```python
+# 開多
+params = {
+    "symbol": symbol,
+    "side": "BUY",
+    "positionSide": "LONG",  # Hedge Mode 必需！
+    "type": "MARKET",
+    ...
+}
+
+# 開空
+params = {
+    "side": "SELL",
+    "positionSide": "SHORT",  # Hedge Mode 必需！
+    ...
+}
+
+# 平多
+params = {
+    "side": "SELL",
+    "positionSide": "LONG",  # 平倉也要指定！
+    ...
+}
+```
+
+錯誤碼 `-4061: Order's position side does not match user's setting` 表示缺少 `positionSide`。
+
+### 訂單回應類型
+下單時加入 `newOrderRespType=RESULT` 才能立即取得成交資訊：
+```python
+params = {
+    ...
+    "newOrderRespType": "RESULT",  # 返回 executedQty, avgPrice
+}
+```
+預設 `ACK` 模式只返回 orderId，不含成交資訊。
+
+### 止損止盈訂單
+| 類型 | 訂單類型 | 用途 |
+|------|----------|------|
+| 止損 | `STOP_MARKET` | 保護資金，保證成交，可能滑價 |
+| 止盈 | `TAKE_PROFIT_MARKET` | 鎖定利潤，可能滑價 |
+| 止盈(限價) | `TAKE_PROFIT` | 更精確，但可能不成交 |
+
+---
+
+## 回測 vs 實盤差異
+
+### 止損止盈邏輯
+| 項目 | 回測 | 實盤 |
+|------|------|------|
+| **SL/TP 計算** | `entry ± N × ATR` | `entry ± N × ATR` ✅ 一致 |
+| **觸發檢查** | K 線 High/Low | 交易所 Mark Price 實時監控 |
+| **執行時機** | K 線內價格觸及 | 實時觸發 |
+| **執行價格** | 假設精確成交 | 可能有滑價 |
+| **移動止損** | ✅ 支援 `trailing_stop_atr` | ❌ 目前未實作 |
+
+### 移動止損 (Trailing Stop)
+回測支援但實盤未實作。配置方式：
+```yaml
+strategy:
+  params:
+    stop_loss_atr: 1.5       # 初始止損
+    trailing_stop_atr: 2.0   # 移動止損（可選）
+    take_profit_atr: null    # 用移動止損時通常關閉固定止盈
+```
+
+### 回測數字的現實預期
+⚠️ **回測報酬需要打折！**
+
+| 原因 | 影響 |
+|------|------|
+| 滑價低估 | 回測 0.03%, 實際可能 0.1-0.5% |
+| 市場衝擊 | 大單會影響價格 |
+| 流動性 | 不一定能成交 |
+| 資金容量 | $10K → $10M 可行，再大有問題 |
+
+**經驗法則**：
+```
+實際報酬 ≈ 回測報酬 ÷ 3~5
+
+回測年化 400% → 實際預期 80-130%
+回測年化 100% → 實際預期 20-35%
+```
+
+回測的價值在於**比較策略**，而非**預測絕對報酬**。
+
+---
+
+## Cron Job 注意事項
+
+### `--once` 參數
+執行單次後立即退出，適合 cron：
+```bash
+# Cron 用法（每小時執行一次）
+5 * * * * python scripts/run_live.py -c config.yaml --real --once >> log 2>&1
+```
+
+不加 `--once` 會進入 daemon 模式，持續等待 K 線收盤。
+
+### 執行時間
+設在 `XX:05` 而非 `XX:00`：
+- 讓 K 線數據穩定（避免假信號）
+- 避開 API 擁擠時段
+- 對 1h 策略影響很小（5/60 = 8%）
