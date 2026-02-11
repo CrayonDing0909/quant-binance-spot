@@ -1,0 +1,13 @@
+{
+  "timestamp": "20260211_145756",
+  "strategy": "rsi_adx_atr",
+  "config": "config/rsi_adx_atr.yaml",
+  "data_start": "2022-01-01",
+  "data_end": "now",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT"
+  ]
+}

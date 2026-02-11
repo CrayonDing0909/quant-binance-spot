@@ -1,0 +1,10 @@
+{
+  "initial_cash": 10000,
+  "cash": 10000,
+  "fee_bps": 4,
+  "slippage_bps": 3,
+  "market_type": "futures",
+  "leverage": 3,
+  "positions": {},
+  "trades": []
+}

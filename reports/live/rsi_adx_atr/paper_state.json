@@ -3,6 +3,8 @@
   "cash": 10039.519695588218,
   "fee_bps": 6,
   "slippage_bps": 5,
+  "market_type": "spot",
+  "leverage": 1,
   "positions": {},
   "trades": [
     {
