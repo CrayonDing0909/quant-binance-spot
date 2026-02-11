@@ -345,5 +345,33 @@ python scripts/optimize_params.py -c config/rsi_adx_atr.yaml --symbol BTCUSDT
 ```
 
 ## 待完成功能 (TODO)
-- [ ] BinanceFuturesBroker 實作（真實合約交易）
-- [ ] 合約風控（強平價格計算、資金費率追蹤）
+- [x] BinanceFuturesBroker 實作（真實合約交易）✅ 已完成
+- [x] 合約風控（強平價格計算、資金費率追蹤）✅ 已完成
+
+## 已完成的合約交易功能
+
+### BinanceFuturesHTTP (`src/qtrade/data/binance_futures_client.py`)
+- Futures API HTTP 客戶端
+- 自動重試和端點切換
+- 便利方法: `get_klines`, `get_mark_price`, `get_funding_rate`
+
+### BinanceFuturesBroker (`src/qtrade/live/binance_futures_broker.py`)
+- 市價開多/開空: `market_long()`, `market_short()`
+- 市價平倉: `market_close()`
+- 目標倉位執行: `execute_target_position(target_pct)`
+- 槓桿設定: `set_leverage(symbol, leverage)`
+- 保證金類型: `set_margin_type(symbol, "ISOLATED"|"CROSSED")`
+- 訂單管理: `get_open_orders()`, `cancel_order()`, `cancel_all_orders()`
+- 持倉查詢: `get_position()`, `get_positions()`, `get_position_pct()`
+- 帳戶查詢: `get_balance()`, `get_equity()`, `get_account_info()`
+- 連線檢查: `check_connection()`
+- 支援 `dry_run=True` 測試模式
+
+### FuturesRiskManager (`src/qtrade/live/futures_risk.py`)
+- 強平價格計算: `calculate_liquidation_price(symbol)`
+- 資金費率查詢: `get_funding_rate_info(symbol)`
+- 歷史費率: `get_funding_rate_history(symbol, limit)`
+- 風險等級檢查: `check_position_risk(symbol)`
+- 全持倉風險: `check_all_positions_risk()`
+- 風險報告: `generate_risk_report()`, `print_risk_report()`
+- 風險閾值: `LIQUIDATION_WARNING_PCT`, `MARGIN_RATIO_WARNING`, `FUNDING_RATE_HIGH`
