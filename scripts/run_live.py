@@ -312,6 +312,10 @@ def cmd_check(args, cfg) -> None:
                           f"stepSize={f['step_size']}, "
                           f"minNotional=${f['min_notional']}")
 
+    except Exception as e:
+        print(f"\n  ❌ 連線失敗: {e}")
+        return
+
     print()
     print("=" * 50)
     print("  ✅ 連線檢查完成")
