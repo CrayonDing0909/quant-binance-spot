@@ -1,0 +1,77 @@
+# ============================================================
+# RSI + ADX + ATR 策略 — 美股版本
+# 使用 yfinance 數據源，支援完整歷史回測
+# ============================================================
+#
+# 支援的美股代號範例:
+#   科技股: TSLA, AAPL, NVDA, MSFT, GOOGL, META, AMZN
+#   ETF: SPY, QQQ, IWM, DIA
+#   其他: AMD, NFLX, COIN, etc.
+#
+# 數據下載指令:
+#   python scripts/download_data.py -c config/stock_rsi_adx_atr.yaml --source yfinance
+# ============================================================
+
+market:
+  symbols: ["TSLA", "AAPL", "NVDA", "MSFT"]
+  interval: "1d"          # 美股建議用日線（yfinance 1h 只有 730 天）
+  start: "2020-01-01"     # yfinance 美股歷史很長，可追溯更早
+  end: null
+  market_type: spot       # 美股用現貨模式（無做空）
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5              # 美股券商手續費（很多券商 0 手續費，保守估 0.05%）
+  slippage_bps: 5         # 滑點估計
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+strategy:
+  name: "rsi_adx_atr"
+  # ── 基礎參數 ──
+  # 日線參數需要比小時線更平滑
+  params:
+    rsi_period: 14        # 日線用標準 14 週期
+    overbought: 70        # 超買線
+    min_adx: 20           # ADX 趨勢門檻（日線可以稍高）
+    adx_period: 14
+    stop_loss_atr: 2.0    # 日線波動較大，止損放寬
+    take_profit_atr: 4.0  # 止盈 = 2×止損 (RR 1:2)
+    trailing_stop_atr: null
+    atr_period: 14
+    cooldown_bars: 1
+    htf_interval: null    # 日線不需要多時間框架過濾
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+
+  # ── 個股專屬參數覆寫 ──
+  # 科技股波動較大，RSI oversold 可以設低一點
+  symbol_overrides:
+    TSLA:
+      oversold: 25        # TSLA 波動大，等更超賣才進場
+    AAPL:
+      oversold: 30        # AAPL 相對穩定
+    NVDA:
+      oversold: 25        # NVDA 波動大
+    MSFT:
+      oversold: 30        # MSFT 穩定藍籌
+
+# ── 風控 ──
+risk:
+  max_drawdown_pct: 0.25  # 25% 最大回撤熔斷
+
+# ── 倉位計算 ──
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+  kelly_fraction: 0.25
+  min_trades_for_kelly: 20
+
+# ── 多標的倉位分配 ──
+portfolio:
+  cash_reserve: 0.20      # 保留 20% 現金
+  allocation: null        # 自動等權分配
+
+output:
+  report_dir: "./reports/stock"

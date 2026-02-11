@@ -1,5 +1,5 @@
 {
-  "timestamp": "20260211_145403",
+  "timestamp": "20260211_230050",
   "strategy": "rsi_adx_atr",
   "config": "config/futures_rsi_adx_atr.yaml",
   "data_start": "2022-01-01",

@@ -90,8 +90,10 @@ def run_symbol_backtest(
         # Spot 模式或 long_only：將做空信號 clip 到 0
         pos = pos.clip(lower=0.0)
     elif direction == "short_only":
-        # short_only：將做多信號 clip 到 0
-        pos = pos.clip(upper=0.0)
+        # short_only：只保留做空信號，並轉換符號讓 vectorbt 正確解讀
+        # 策略的 pos=-1 表示做空，但 vectorbt shortonly 需要 size>0 才開空
+        # 轉換：-1 → 1 (開空), 1 → -1 → clip → 0 (過濾掉做多)
+        pos = (-pos).clip(lower=0.0)
 
     # 應用風險限制（如果提供）
     if risk_limits is not None:

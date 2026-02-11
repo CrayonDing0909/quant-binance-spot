@@ -1,0 +1,22 @@
+overall_passed: true
+tests:
+  walk_forward:
+    avg_degradation: -1.6%
+    passed: !!python/object/apply:numpy.core.multiarray.scalar
+    - !!python/object/apply:numpy.dtype
+      args:
+      - b1
+      - false
+      - true
+      state: !!python/tuple
+      - 3
+      - '|'
+      - null
+      - null
+      - null
+      - -1
+      - -1
+      - 0
+    - !!binary |
+      AQ==
+timestamp: '2026-02-12T01:01:24.461371'

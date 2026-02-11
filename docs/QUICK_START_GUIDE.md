@@ -16,7 +16,9 @@
 8. [第七步：即時交易](#第七步即時交易)
 9. [第八步：監控與維運](#第八步監控與維運)
 10. [合約交易教學](#合約交易教學) ⭐ NEW
-11. [完整範例：RSI 策略](#完整範例rsi策略)
+11. [多數據源與長期歷史數據](#多數據源與長期歷史數據) ⭐ NEW
+12. [組合回測](#組合回測) ⭐ NEW
+13. [完整範例：RSI 策略](#完整範例rsi策略)
 
 ---
 
@@ -84,6 +86,8 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
 
 2. **資料管理**
    - 自動下載幣安資料（現貨/合約）
+   - **多數據源支援** ⭐ NEW（Yahoo Finance、CCXT、Binance Vision）
+   - **長期歷史數據**（BTC 2014 年起）
    - 資料品質檢查
    - 資料清洗
 
@@ -92,6 +96,7 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - 支援手續費和滑點
    - 自動產生報告和圖表
    - **支援做空模擬（合約）** ⭐ NEW
+   - **組合回測**（多幣種權重配置）⭐ NEW
 
 4. **策略優化**
    - 參數網格搜尋
@@ -1075,6 +1080,122 @@ Binance Futures 有兩種持倉模式：
 - ✅ 驗證策略邏輯是否合理
 - ❌ 直接當作收益預測
 - ❌ 追求最高回測報酬
+
+---
+
+## 多數據源與長期歷史數據 ⭐ NEW
+
+專案支援從多個數據源下載歷史數據，讓你可以回測更長的時間範圍。
+
+### 11.1 可用數據源
+
+| 數據源 | 最早數據 | 支援週期 | 說明 |
+|--------|----------|----------|------|
+| **Binance** | 2017-08 | 1m-1M | 預設，最穩定 |
+| **Yahoo Finance** | 2014-09 | 1d 為主 | BTC/ETH 日線數據 |
+| **CCXT (Bitfinex)** | 2014-01 | 1h-1d | 早期 1h 數據 |
+| **CCXT (Bitstamp)** | 2011-08 | 1d 為主 | BTC 最早數據 |
+| **Binance Vision** | 2017-08 | 全部 | 批量下載，最快 |
+
+### 11.2 下載長期歷史數據
+
+```bash
+# 查看可用數據源
+python scripts/download_data.py --list-sources
+
+# 下載 BTC 日線 (2014 年起，Yahoo Finance)
+python scripts/download_data.py --source yfinance --symbol BTCUSDT --start 2014-09-17 --interval 1d --full
+
+# 下載 BTC 1h (2014 年起，Bitfinex via CCXT)
+python scripts/download_data.py --source ccxt --exchange bitfinex --symbol BTCUSDT --start 2014-01-01 --interval 1h --full
+
+# 下載後會自動合併到本地 Parquet 文件
+```
+
+### 11.3 數據合併邏輯
+
+- 從不同數據源下載的數據會自動合併到同一個 Parquet 文件
+- 合併時以時間戳為主鍵，優先保留較新的數據
+- 例如：Bitfinex (2014-2017) + Binance (2017-now) → 完整 12+ 年數據
+
+### 11.4 數據存儲
+
+```
+data/binance/
+├── spot/
+│   ├── 1h/
+│   │   ├── BTCUSDT.parquet  # 包含所有來源的合併數據
+│   │   └── ETHUSDT.parquet
+│   └── 1d/
+│       └── BTCUSDT.parquet  # 11+ 年日線數據
+└── futures/
+    └── 1h/
+```
+
+**存儲效率**：
+- 11 年日線數據：~227 KB
+- 12 年 1h 數據：~30 MB
+
+---
+
+## 組合回測 ⭐ NEW
+
+支援多幣種組合回測，評估投資組合的整體表現。
+
+### 12.1 基本用法
+
+```bash
+# 等權重組合 (BTC 50% + ETH 50%)
+python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT
+
+# 自訂權重 (BTC 70% + ETH 30%)
+python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT --weights 0.7 0.3
+
+# 三幣種組合
+python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT SOLUSDT --weights 0.5 0.3 0.2
+```
+
+### 12.2 組合回測結果範例
+
+```
+📊 組合配置:
+   BTCUSDT: 50.0%
+   ETHUSDT: 50.0%
+
+📅 共同時間範圍: 2017-08-17 → 2026-02-09
+  BTCUSDT: 回報 41764.97%, MDD -17.56%
+  ETHUSDT: 回報 1065444.70%, MDD -26.80%
+
+======================================================================
+  組合回測結果: BTCUSDT + ETHUSDT
+======================================================================
+
+指標                                           組合策略        組合 Buy&Hold
+----------------------------------------------------------------------
+Total Return [%]                        553604.83            1036.55
+Annualized Return [%]                      176.53              33.22
+Max Drawdown [%]                            22.80              87.47
+Sharpe Ratio                                 4.30               0.76
+```
+
+### 12.3 組合優化建議
+
+| 配置 | 特點 | 適合 |
+|------|------|------|
+| BTC 70% + ETH 30% | Sharpe 最高，回撤最低 | 穩健型 |
+| BTC 50% + ETH 50% | 平衡收益與風險 | 平衡型 |
+| BTC 30% + ETH 70% | 收益最高，風險較大 | 進取型 |
+
+### 12.4 輸出文件
+
+組合回測會生成以下文件：
+
+```
+reports/portfolio/BTCUSDT+ETHUSDT_{timestamp}/
+├── portfolio_equity_curve.png   # 組合資金曲線圖
+├── portfolio_equity.csv         # 組合淨值數據
+└── portfolio_stats.json         # 組合統計指標
+```
 
 ---
 

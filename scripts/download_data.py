@@ -1,3 +1,28 @@
+"""
+多數據源 K 線數據下載工具
+
+支援的數據源:
+1. binance (默認) - Binance API，支援最近的數據
+2. binance_vision - Binance 官方歷史數據，2017-08 開始
+3. yfinance - Yahoo Finance，BTC 數據可追溯到 2014-09
+4. ccxt - 多交易所 API (kraken, coinbasepro, bitstamp 等)
+
+使用範例:
+    # 默認從 Binance 下載
+    python scripts/download_data.py -c config/base.yaml
+    
+    # 從 Yahoo Finance 下載長期歷史 (2015 年開始)
+    python scripts/download_data.py --source yfinance --start 2015-01-01
+    
+    # 從 Kraken 下載 (2013 年開始)
+    python scripts/download_data.py --source ccxt --exchange kraken --start 2013-10-01
+    
+    # 從 Binance Data Vision 批量下載 (更快)
+    python scripts/download_data.py --source binance_vision --start 2017-08-17
+    
+    # 查看可用數據源資訊
+    python scripts/download_data.py --list-sources
+"""
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone, timedelta
@@ -26,6 +51,47 @@ def _interval_to_timedelta(interval: str) -> timedelta:
     return mapping.get(interval, timedelta(hours=1))
 
 
+def fetch_from_source(
+    source: str,
+    symbol: str,
+    interval: str,
+    start: str,
+    end: str | None,
+    market_type: str = "spot",
+    exchange: str | None = None,
+) -> "pd.DataFrame":
+    """
+    從指定數據源獲取 K 線數據
+    
+    Args:
+        source: 數據源名稱
+        symbol: 交易對
+        interval: K 線週期
+        start: 開始日期
+        end: 結束日期
+        market_type: 市場類型
+        exchange: CCXT 交易所名稱
+    """
+    if source == "binance":
+        return fetch_klines(symbol, interval, start, end, market_type=market_type)
+    
+    elif source == "binance_vision":
+        from qtrade.data.binance_vision import download_binance_vision_klines
+        return download_binance_vision_klines(symbol, interval, start, end, market_type=market_type)
+    
+    elif source == "yfinance":
+        from qtrade.data.yfinance_client import fetch_yfinance_klines
+        return fetch_yfinance_klines(symbol, interval, start, end)
+    
+    elif source == "ccxt":
+        from qtrade.data.ccxt_client import fetch_ccxt_klines
+        exchange_id = exchange or "binance"
+        return fetch_ccxt_klines(symbol, interval, start, end, exchange=exchange_id)
+    
+    else:
+        raise ValueError(f"不支援的數據源: {source}")
+
+
 def download_incremental(
     symbol: str,
     interval: str,
@@ -34,6 +100,8 @@ def download_incremental(
     data_path: Path,
     force_full: bool = False,
     market_type: str = "spot",
+    source: str = "binance",
+    exchange: str | None = None,
 ) -> tuple[int, int]:
     """
     增量下載 K 線數據
@@ -46,10 +114,14 @@ def download_incremental(
         data_path: 儲存路徑
         force_full: 是否強制全量下載
         market_type: 市場類型 "spot" 或 "futures"
+        source: 數據源名稱
+        exchange: CCXT 交易所名稱
     
     Returns:
         (下載的新資料筆數, 總資料筆數)
     """
+    import pandas as pd
+    
     # 取得本地數據範圍
     local_start, local_end = get_local_data_range(data_path)
     
@@ -67,10 +139,12 @@ def download_incremental(
     # 判斷是否需要下載
     if force_full or local_start is None:
         # 全量下載
-        print(f"  📥 全量下載 {start_date} → {end_date or '現在'}...")
-        df = fetch_klines(symbol, interval, start_date, end_date, market_type=market_type)
-        save_klines(df, data_path)
-        return len(df), len(df)
+        print(f"  📥 全量下載 {start_date} → {end_date or '現在'} (來源: {source})")
+        df = fetch_from_source(source, symbol, interval, start_date, end_date, market_type, exchange)
+        if not df.empty:
+            save_klines(df, data_path)
+            return len(df), len(df)
+        return 0, 0
     
     # 增量下載策略
     existing_df = load_klines(data_path)
@@ -79,8 +153,8 @@ def download_incremental(
     # 1. 檢查是否需要補齊前面的數據
     if target_start < local_start:
         gap_end = (local_start - interval_delta).strftime("%Y-%m-%d")
-        print(f"  📥 補齊前段: {start_date} → {gap_end}")
-        front_df = fetch_klines(symbol, interval, start_date, gap_end, market_type=market_type)
+        print(f"  📥 補齊前段: {start_date} → {gap_end} (來源: {source})")
+        front_df = fetch_from_source(source, symbol, interval, start_date, gap_end, market_type, exchange)
         if not front_df.empty:
             chunks_to_merge.append(front_df)
             new_rows += len(front_df)
@@ -93,8 +167,8 @@ def download_incremental(
     if target_end > fetch_start:
         fetch_start_str = fetch_start.strftime("%Y-%m-%d")
         fetch_end_str = target_end.strftime("%Y-%m-%d") if end_date else None
-        print(f"  📥 更新後段: {fetch_start_str} → {fetch_end_str or '現在'}")
-        back_df = fetch_klines(symbol, interval, fetch_start_str, fetch_end_str, market_type=market_type)
+        print(f"  📥 更新後段: {fetch_start_str} → {fetch_end_str or '現在'} (來源: {source})")
+        back_df = fetch_from_source(source, symbol, interval, fetch_start_str, fetch_end_str, market_type, exchange)
         if not back_df.empty:
             # 計算真正的新數據（排除重疊部分）
             truly_new = back_df[back_df.index > local_end]
@@ -111,8 +185,113 @@ def download_incremental(
     return 0, len(existing_df)
 
 
+def list_data_sources() -> None:
+    """列出所有可用的數據源及其資訊"""
+    print("\n📊 可用的數據源:")
+    print("=" * 70)
+    
+    # Binance API
+    print("\n1️⃣  binance (默認)")
+    print("   - 來源: Binance REST API")
+    print("   - BTC 起始: 2017-08-17")
+    print("   - 優點: 實時數據、支援 spot/futures")
+    print("   - 用法: --source binance")
+    
+    # Binance Data Vision
+    print("\n2️⃣  binance_vision")
+    print("   - 來源: Binance 官方歷史數據庫")
+    print("   - BTC 起始: 2017-08-17")
+    print("   - 優點: 批量下載、速度快、完整歷史")
+    print("   - 用法: --source binance_vision")
+    
+    # Yahoo Finance
+    print("\n3️⃣  yfinance")
+    print("   - 來源: Yahoo Finance")
+    print("   - BTC 起始: ~2014-09")
+    print("   - 優點: 最長免費歷史、無需 API key")
+    print("   - 缺點: 只支援主流幣、數據可能有延遲")
+    print("   - 用法: --source yfinance --start 2015-01-01")
+    
+    # CCXT
+    print("\n4️⃣  ccxt")
+    print("   - 來源: 多交易所統一 API")
+    print("   - 支援交易所及 BTC 起始時間:")
+    
+    try:
+        from qtrade.data.ccxt_client import EXCHANGE_HISTORY
+        for ex_id, info in EXCHANGE_HISTORY.items():
+            print(f"      • {ex_id}: {info['btc_start']} ({info['note']})")
+    except ImportError:
+        print("      • bitstamp: 2011-08 (最早)")
+        print("      • kraken: 2013-10")
+        print("      • bitfinex: 2013-04")
+        print("      • coinbasepro: 2015-01")
+        print("      • binance: 2017-08")
+    
+    print("   - 用法: --source ccxt --exchange kraken --start 2013-10-01")
+    
+    print("\n" + "=" * 70)
+    print("\n💡 建議:")
+    print("   • 如需 2017 年前的數據: 使用 yfinance 或 ccxt (kraken/bitstamp)")
+    print("   • 如需 2017-現在完整數據: 使用 binance_vision + binance 組合")
+    print("   • 如需實時更新: 使用 binance (默認)")
+
+
+def check_data_availability(symbol: str, source: str, exchange: str | None = None) -> None:
+    """檢查指定數據源的數據可用性"""
+    print(f"\n🔍 檢查 {symbol} 在 {source} 的數據可用性...")
+    
+    if source == "yfinance":
+        try:
+            from qtrade.data.yfinance_client import get_yfinance_data_range
+            earliest, latest = get_yfinance_data_range(symbol)
+            if earliest:
+                print(f"   ✅ {symbol}: {earliest} → {latest}")
+            else:
+                print(f"   ❌ {symbol}: 數據不可用")
+        except ImportError:
+            print("   ❌ yfinance 未安裝")
+    
+    elif source == "ccxt":
+        try:
+            from qtrade.data.ccxt_client import get_earliest_data_timestamp
+            exchange_id = exchange or "binance"
+            earliest = get_earliest_data_timestamp(exchange_id, symbol)
+            if earliest:
+                print(f"   ✅ {symbol} @ {exchange_id}: 從 {earliest} 開始")
+            else:
+                print(f"   ❌ {symbol} @ {exchange_id}: 數據不可用")
+        except ImportError:
+            print("   ❌ ccxt 未安裝")
+    
+    elif source == "binance_vision":
+        try:
+            from qtrade.data.binance_vision import check_data_availability
+            result = check_data_availability(symbol, "1h")
+            print(f"   {result['message']}")
+        except ImportError:
+            print("   ❌ binance_vision 模組錯誤")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="下載 Binance K 線數據")
+    parser = argparse.ArgumentParser(
+        description="多數據源 K 線數據下載工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+範例:
+  # 默認從 Binance 下載
+  python scripts/download_data.py -c config/base.yaml
+  
+  # 從 Yahoo Finance 下載長期歷史
+  python scripts/download_data.py --source yfinance --symbol BTCUSDT --start 2015-01-01
+  
+  # 從 Kraken 下載更早的數據
+  python scripts/download_data.py --source ccxt --exchange kraken --symbol BTCUSDT --start 2013-10-01
+  
+  # 查看可用數據源
+  python scripts/download_data.py --list-sources
+        """
+    )
     parser.add_argument(
         "-c", "--config",
         type=str,
@@ -135,25 +314,93 @@ def main() -> None:
         action="store_true",
         help="只顯示本地數據狀態，不下載"
     )
+    
+    # 多數據源選項
+    parser.add_argument(
+        "--source",
+        type=str,
+        default="binance",
+        choices=["binance", "binance_vision", "yfinance", "ccxt"],
+        help="數據源 (默認: binance)"
+    )
+    parser.add_argument(
+        "--exchange",
+        type=str,
+        default=None,
+        help="CCXT 交易所名稱 (用於 --source ccxt)"
+    )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default=None,
+        help="覆蓋配置檔案中的開始日期 (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--end",
+        type=str,
+        default=None,
+        help="覆蓋配置檔案中的結束日期 (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--interval",
+        type=str,
+        default=None,
+        help="覆蓋配置檔案中的 K 線週期"
+    )
+    
+    # 資訊查詢選項
+    parser.add_argument(
+        "--list-sources",
+        action="store_true",
+        help="列出所有可用的數據源"
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="檢查指定數據源的數據可用性"
+    )
+    
     args = parser.parse_args()
     
+    # 列出數據源
+    if args.list_sources:
+        list_data_sources()
+        return
+    
+    # 載入配置
     cfg = load_config(args.config)
     m = cfg.market
     market_type = m.market_type.value  # "spot" or "futures"
     
+    # 使用命令行參數覆蓋配置
+    start_date = args.start or m.start
+    end_date = args.end or m.end
+    interval = args.interval or m.interval
+    
     # 如果指定了 symbol，只處理該交易對
     symbols = [args.symbol] if args.symbol else m.symbols
+    
+    # 檢查數據可用性
+    if args.check:
+        for sym in symbols:
+            check_data_availability(sym, args.source, args.exchange)
+        return
     
     # 市場類型標籤
     market_emoji = "🟢" if market_type == "spot" else "🔴"
     market_label = "SPOT" if market_type == "spot" else "FUTURES"
+    
+    # 數據源標籤
+    source_label = args.source.upper()
+    if args.source == "ccxt" and args.exchange:
+        source_label = f"CCXT/{args.exchange.upper()}"
     
     # 顯示狀態模式
     if args.status:
         print(f"\n📊 本地數據狀態 {market_emoji} [{market_label}]:")
         print("-" * 60)
         for sym in symbols:
-            data_path = cfg.data_dir / "binance" / market_type / m.interval / f"{sym}.parquet"
+            data_path = cfg.data_dir / "binance" / market_type / interval / f"{sym}.parquet"
             local_start, local_end = get_local_data_range(data_path)
             if local_start:
                 print(f"  {sym}: {local_start.strftime('%Y-%m-%d')} → {local_end.strftime('%Y-%m-%d %H:%M')}")
@@ -163,13 +410,17 @@ def main() -> None:
         return
     
     # 下載模式
-    print(f"\n🚀 開始下載 K 線數據 {market_emoji} [{market_label}]")
+    print(f"\n🚀 開始下載 K 線數據 {market_emoji} [{market_label}] 📡 [{source_label}]")
+    print("-" * 60)
+    print(f"   時間範圍: {start_date} → {end_date or '現在'}")
+    print(f"   K 線週期: {interval}")
+    print(f"   交易對: {', '.join(symbols)}")
     print("-" * 60)
     
     total_new = 0
     for sym in symbols:
         # 根據 market_type 決定存儲路徑
-        data_path = cfg.data_dir / "binance" / market_type / m.interval / f"{sym}.parquet"
+        data_path = cfg.data_dir / "binance" / market_type / interval / f"{sym}.parquet"
         
         # 先顯示本地狀態
         local_start, local_end = get_local_data_range(data_path)
@@ -179,22 +430,28 @@ def main() -> None:
             print(f"\n📁 {sym} 本地: 無數據")
         
         # 下載
-        new_rows, total_rows = download_incremental(
-            symbol=sym,
-            interval=m.interval,
-            start_date=m.start,
-            end_date=m.end,
-            data_path=data_path,
-            force_full=args.full,
-            market_type=market_type,
-        )
-        
-        total_new += new_rows
-        
-        if new_rows > 0:
-            print(f"  ✅ 新增 {new_rows} 筆，共 {total_rows} 筆 → {data_path}")
-        else:
-            print(f"  ✅ 數據已是最新，共 {total_rows} 筆")
+        try:
+            new_rows, total_rows = download_incremental(
+                symbol=sym,
+                interval=interval,
+                start_date=start_date,
+                end_date=end_date,
+                data_path=data_path,
+                force_full=args.full,
+                market_type=market_type,
+                source=args.source,
+                exchange=args.exchange,
+            )
+            
+            total_new += new_rows
+            
+            if new_rows > 0:
+                print(f"  ✅ 新增 {new_rows} 筆，共 {total_rows} 筆 → {data_path}")
+            else:
+                print(f"  ✅ 數據已是最新，共 {total_rows} 筆")
+                
+        except Exception as e:
+            print(f"  ❌ 下載失敗: {e}")
     
     print("-" * 60)
     print(f"🎉 完成！共新增 {total_new} 筆數據")

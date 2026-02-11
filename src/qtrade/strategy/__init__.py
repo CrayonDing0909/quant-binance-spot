@@ -28,3 +28,4 @@ from . import smc_strategy  # noqa: E402
 from . import my_strategy  # noqa: E402
 from . import example_stateful_strategy  # noqa: E402
 from . import rsi_adx_atr_strategy  # noqa: E402
+from . import rsi_adx_atr_enhanced  # noqa: E402

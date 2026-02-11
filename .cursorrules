@@ -20,6 +20,21 @@ source .venv/bin/activate
 which python  # 應該顯示 .venv/bin/python
 ```
 
+### ⚠️ Python 版本注意
+**venv 實際使用 Python 3.11**（symlink 指向 python3.11）。
+
+安裝新套件時，確保安裝到正確的 site-packages：
+```bash
+# 方法 1：使用 pip（activate 後）
+source .venv/bin/activate
+pip install new-package
+
+# 方法 2：明確指定 python3.11
+python3.11 -m pip install new-package
+```
+
+**不要**直接用 `python3.14 -m pip`，會裝到錯誤的目錄！
+
 ### 安裝依賴
 ```bash
 pip install -r requirements.txt
@@ -98,6 +113,8 @@ pip install new-package
 | `httpx` | API 請求 | `data/binance_client.py` |
 | `pyyaml` | 配置解析 | `config.py` |
 | `python-telegram-bot` | 通知 | `monitor/notifier.py` |
+| `yfinance` | Yahoo Finance 數據 | `data/yfinance_client.py` |
+| `ccxt` | 多交易所 API | `data/ccxt_client.py` |
 
 ---
 
@@ -127,8 +144,9 @@ python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml
 ### 腳本對應表
 | 我想要... | 執行腳本 | 關鍵參數 |
 |-----------|----------|----------|
-| 下載 K 線 | `download_data.py` | `-c config.yaml` |
+| 下載 K 線 | `download_data.py` | `-c config.yaml`, `--source`, `--exchange` |
 | 跑回測 | `run_backtest.py` | `-c`, `--symbol`, `--direction` |
+| **組合回測** | `run_portfolio_backtest.py` | `--symbols`, `--weights` |
 | 驗證策略 | `validate.py` | `--quick`, `--full`, `--only` |
 | 優化參數 | `optimize_params.py` | `--symbol`, `--metric` |
 | 模擬交易 | `run_live.py` | `--paper` |
@@ -164,7 +182,10 @@ src/qtrade/
 ├── data/              # 數據管理
 │   ├── binance_client.py # Binance REST API
 │   ├── klines.py         # K線獲取
-│   └── storage.py        # Parquet 儲存
+│   ├── storage.py        # Parquet 儲存
+│   ├── yfinance_client.py # Yahoo Finance (2014年起)
+│   ├── ccxt_client.py     # 多交易所 API (Kraken 2013, Bitstamp 2011)
+│   └── binance_vision.py  # Binance 官方歷史數據批量下載
 ├── monitor/           # 監控通知
 │   └── notifier.py    # Telegram 通知
 ├── risk/              # 風險管理
@@ -172,8 +193,9 @@ src/qtrade/
 └── config.py          # 配置管理 (dataclass + YAML)
 
 scripts/               # 執行腳本
-├── download_data.py   # 下載 K線數據
+├── download_data.py   # 下載 K線數據（支援多數據源）
 ├── run_backtest.py    # 執行回測
+├── run_portfolio_backtest.py  # 組合回測 ⭐ NEW
 ├── run_live.py        # 執行實盤/模擬
 ├── validate.py        # 策略驗證
 └── optimize_params.py # 參數優化
@@ -359,8 +381,9 @@ def calculate_my_indicator(series: pd.Series, period: int = 14) -> pd.Series:
 
 | 腳本 | 用途 | 常用參數 |
 |------|------|----------|
-| `download_data.py` | 下載 K 線數據 | `-c config.yaml`, `--symbol`, `--full` |
+| `download_data.py` | 下載 K 線數據 | `-c`, `--source`, `--exchange`, `--start`, `--full` |
 | `run_backtest.py` | 執行回測 | `-c`, `--direction`, `--symbol`, `-t` |
+| `run_portfolio_backtest.py` | **組合回測** ⭐ | `--symbols`, `--weights` |
 | `validate.py` | 策略驗證 | `-c`, `--quick`, `--full`, `--only` |
 | `run_live.py` | 實盤/模擬交易 | `-c`, `--paper`, `--real`, `--status`, `--check` |
 | `optimize_params.py` | 參數優化 | `--strategy`, `--metric`, `--symbol` |
@@ -443,20 +466,39 @@ python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper --once
 ## 常用指令
 
 ```bash
-# 下載數據
+# ========== 數據下載 ==========
+# 下載數據 (從 Binance)
 python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
 
-# 回測
+# 下載長期歷史數據 (2014 年起，使用 Yahoo Finance)
+python scripts/download_data.py --source yfinance --symbol BTCUSDT --start 2014-09-17 --interval 1d --full
+
+# 下載 1h 長期數據 (2014 年起，使用 Bitfinex via CCXT)
+python scripts/download_data.py --source ccxt --exchange bitfinex --symbol BTCUSDT --start 2014-01-01 --interval 1h --full
+
+# 查看可用數據源
+python scripts/download_data.py --list-sources
+
+# ========== 回測 ==========
+# 單幣種回測
 python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --direction both
 
+# 組合回測 (BTC 50% + ETH 50%) ⭐ NEW
+python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT
+
+# 組合回測 (自訂權重 BTC 70% + ETH 30%)
+python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT --weights 0.7 0.3
+
+# ========== 驗證 & 優化 ==========
 # 驗證
 python scripts/validate.py -c config/futures_rsi_adx_atr.yaml --quick
 
-# 模擬交易
-python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
-
 # 參數優化
 python scripts/optimize_params.py -c config/rsi_adx_atr.yaml --symbol BTCUSDT
+
+# ========== 交易 ==========
+# 模擬交易
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
 
 # 查看帳戶狀態
 python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --status

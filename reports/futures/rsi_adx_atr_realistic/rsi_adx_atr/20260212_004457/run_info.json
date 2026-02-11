@@ -1,0 +1,10 @@
+{
+  "timestamp": "20260212_004457",
+  "strategy": "rsi_adx_atr",
+  "config": "/tmp/fixed_size_config.yaml",
+  "data_start": "2022-01-01",
+  "data_end": "now",
+  "symbols": [
+    "BTCUSDT"
+  ]
+}

@@ -1,0 +1,86 @@
+# ============================================================
+# RSI + ADX + ATR 增強版策略配置
+# 
+# 相比原版 rsi_adx_atr 的改進：
+#   1. RSI 背離檢測 → 過濾假突破
+#   2. 成交量確認   → 確保有資金推動
+#   3. 部分止盈     → 到達第一目標先平一半
+#   4. 動態冷卻期   → 根據出場原因調整冷卻
+#
+# 預期效果：
+#   - 交易頻率降低 30-40%
+#   - 勝率提升 5-10%
+#   - 回撤略有改善
+# ============================================================
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 8
+  slippage_bps: 5
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+strategy:
+  name: "rsi_adx_atr_enhanced"
+  params:
+    # ── RSI 參數 ──
+    rsi_period: 14
+    oversold: 35
+    overbought: 70
+    
+    # ── ADX 參數 ──
+    min_adx: 20
+    adx_period: 14
+    
+    # ── 背離檢測（新增）──
+    use_divergence: true        # 是否使用背離檢測
+    divergence_lookback: 14     # 背離回看週期
+    
+    # ── 成交量確認（新增）──
+    use_volume_confirm: true    # 是否使用成交量確認
+    volume_threshold: 1.2       # 成交量 > 均量 × 1.2
+    volume_period: 20           # 均量計算週期
+    
+    # ── 止損/止盈參數 ──
+    stop_loss_atr: 2.0          # 止損 ATR 倍數
+    take_profit_atr: 4.0        # 最終止盈 ATR 倍數
+    partial_tp_atr: 2.0         # 部分止盈 ATR 倍數
+    partial_tp_ratio: 0.5       # 部分止盈比例（平一半）
+    trailing_stop_atr: 2.5      # 部分止盈後的移動止損
+    atr_period: 14
+    
+    # ── 冷卻期參數 ──
+    cooldown_bars: 6            # 基礎冷卻期
+    dynamic_cooldown: true      # 動態冷卻（止損後更久）
+    
+  # ── 幣種專屬參數覆寫 ──
+  symbol_overrides:
+    BTCUSDT:
+      oversold: 30
+    ETHUSDT:
+      oversold: 35
+    BNBUSDT:
+      oversold: 30
+    SOLUSDT:
+      oversold: 30
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0.20
+  allocation: null
+
+output:
+  report_dir: "./reports"

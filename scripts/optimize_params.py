@@ -146,6 +146,31 @@ def get_param_grid(strategy_name: str) -> dict:
             "stop_loss_atr": [1.5, 2.0, 2.5],
             "take_profit_atr": [2.5, 3.0, 4.0],
         },
+        # RSI + ADX + ATR 增強版（背離 + 成交量 + 部分止盈）
+        "rsi_adx_atr_enhanced": {
+            "rsi_period": [10, 14, 18],
+            "oversold": [30, 35, 40],
+            "min_adx": [15, 20, 25],
+            "use_divergence": [True, False],
+            "use_volume_confirm": [True, False],
+            "stop_loss_atr": [1.5, 2.0, 2.5],
+            "partial_tp_atr": [1.5, 2.0, 2.5],
+            "take_profit_atr": [3.0, 4.0, 5.0],
+        },
+        "rsi_adx_atr_conservative": {
+            "rsi_period": [12, 14, 16],
+            "oversold": [30, 35],
+            "min_adx": [20, 25, 30],
+            "stop_loss_atr": [2.0, 2.5, 3.0],
+            "take_profit_atr": [3.0, 3.5, 4.0],
+        },
+        "rsi_adx_atr_aggressive": {
+            "rsi_period": [10, 12, 14],
+            "oversold": [30, 35, 40],
+            "min_adx": [12, 15, 18],
+            "stop_loss_atr": [1.0, 1.5, 2.0],
+            "take_profit_atr": [4.0, 5.0, 6.0],
+        },
     }
     
     return grids.get(strategy_name, {})
