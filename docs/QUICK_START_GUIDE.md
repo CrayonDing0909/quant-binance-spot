@@ -765,12 +765,18 @@ python scripts/run_live.py -c config/rsi_adx_atr.yaml --real --once
 # 編輯 crontab
 crontab -e
 
-# 每小時整點執行（配合 1h K 線）
-0 * * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
+# 每小時第 5 分鐘執行（配合 1h K 線）
+# ⭐ 建議在 :05 而非 :00 執行，讓 K 線數據穩定
+5 * * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
 
 # 每 4 小時執行（配合 4h K 線）
-0 */4 * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
+5 */4 * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
 ```
+
+**重要**：
+- `--once`：執行一次後立即退出，**cron 必須加這個參數**
+- 不加 `--once` 會進入 daemon 模式，持續等待下一根 K 線
+- 設在 `:05` 而非 `:00`：讓 K 線數據穩定，避免假信號
 
 ---
 
@@ -836,8 +842,8 @@ python scripts/daily_report.py -c config/rsi_adx_atr.yaml --print-only
 crontab -e
 
 # === 交易執行 ===
-# 每小時執行 Paper Trading（配合 1h K 線）
-0 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
+# 每小時第 5 分鐘執行（讓 K 線數據穩定）
+5 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
 
 # === 監控 ===
 # 每 30 分鐘健康檢查
@@ -848,9 +854,14 @@ crontab -e
 5 0 * * * cd /opt/qtrade && python scripts/daily_report.py -c config/rsi_adx_atr.yaml >> logs/daily_report.log 2>&1
 
 # === 驗證 ===
-# 每週日 00:00 執行一致性驗證
-0 0 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency >> logs/consistency.log 2>&1
+# 每週日 01:00 執行一致性驗證
+0 1 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency >> logs/consistency.log 2>&1
 ```
+
+**⚠️ 常見錯誤**：
+- ❌ 忘記加 `--once`，導致多個 daemon 同時運行
+- ❌ 設在 `:00` 整點，K 線數據可能還不穩定
+- ❌ 路徑錯誤，建議使用絕對路徑
 
 ---
 
@@ -1004,12 +1015,17 @@ python scripts/test_futures_manual.py
 現貨和合約可以同時運行，互不干擾：
 
 ```bash
-# === 現貨策略 ===
-0 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/spot_live.log 2>&1
+# === 現貨策略（Paper Trading）===
+5 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/spot_live.log 2>&1
 
-# === 合約策略 ===
-0 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper --once >> logs/futures_live.log 2>&1
+# === 合約策略（Real Trading）===
+5 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/futures_live.log 2>&1
 ```
+
+**注意**：
+- 設在 `:05` 而非 `:00`，讓 K 線數據穩定
+- `--once` 是必須的，否則會進入 daemon 模式
+- 現貨用 `--paper`，合約確認穩定後用 `--real`
 
 ### 10.8 合約風險提醒 ⚠️
 
@@ -1020,6 +1036,45 @@ python scripts/test_futures_manual.py
    - 先用 Paper Trading 測試至少 2 週
    - 合約 max_drawdown_pct 設定更保守（如 10-15%）
    - 保留較多現金作為保證金緩衝（cash_reserve: 0.3）
+
+### 10.9 Binance 帳戶模式說明 ⭐ NEW
+
+Binance Futures 有兩種持倉模式：
+
+| 模式 | 說明 | 特點 |
+|------|------|------|
+| **One-Way Mode** | 同一交易對只能單向持倉 | 做多再做空會互相抵消 |
+| **Hedge Mode** | 可同時持有多空倉位 | 需要指定 `positionSide` |
+
+**如何查看/切換**：
+- Binance App → Futures → 設定 ⚙️ → Position Mode
+
+**注意**：如果你的帳戶是 **Hedge Mode**，本專案已自動支援，無需額外設定。
+
+### 10.10 回測數字的現實預期 ⭐ NEW
+
+⚠️ **回測報酬不等於實際報酬！**
+
+| 影響因素 | 回測假設 | 實際情況 |
+|----------|----------|----------|
+| 滑價 | 0.03% | 可能 0.1-0.5% |
+| 市場衝擊 | 無 | 大單會影響價格 |
+| 流動性 | 隨時成交 | 可能無法成交 |
+| 資金容量 | 無限 | 有上限 |
+
+**經驗法則**：
+```
+實際報酬 ≈ 回測報酬 ÷ 3~5
+
+回測年化 400% → 實際預期 80-130%
+回測年化 100% → 實際預期 20-35%
+```
+
+**回測的正確用法**：
+- ✅ 比較不同策略的優劣
+- ✅ 驗證策略邏輯是否合理
+- ❌ 直接當作收益預測
+- ❌ 追求最高回測報酬
 
 ---
 
