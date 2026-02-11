@@ -15,11 +15,18 @@
     # 指定配置檔
     python scripts/health_check.py --config config/rsi_adx_atr.yaml
     
+    # 檢查真實交易模式（檢查 real_state.json）
+    python scripts/health_check.py --real
+    
     # 輸出 JSON 格式
     python scripts/health_check.py --json
 
 建議 cron 設定（每 30 分鐘檢查一次，異常時通知）：
+    # Paper Trading (模擬):
     */30 * * * * cd /path/to/quant-binance-spot && python scripts/health_check.py --notify >> logs/health.log 2>&1
+    
+    # Real Trading (真實):
+    */30 * * * * cd /path/to/quant-binance-spot && python scripts/health_check.py --real --notify >> logs/health.log 2>&1
 """
 from __future__ import annotations
 
@@ -66,6 +73,16 @@ def main():
         help="狀態檔路徑（覆寫自動偵測）",
     )
     parser.add_argument(
+        "--real",
+        action="store_true",
+        help="檢查 real_state.json（真實交易模式）",
+    )
+    parser.add_argument(
+        "--paper",
+        action="store_true",
+        help="檢查 paper_state.json（模擬交易模式，預設）",
+    )
+    parser.add_argument(
         "--disk-warning",
         type=float,
         default=0.85,
@@ -93,7 +110,9 @@ def main():
     else:
         try:
             cfg = load_config(args.config)
-            state_path = Path(f"reports/live/{cfg.strategy.name}/paper_state.json")
+            # 根據模式決定 state 檔案名稱
+            mode = "real" if args.real else "paper"
+            state_path = Path(f"reports/live/{cfg.strategy.name}/{mode}_state.json")
         except Exception:
             pass
     
