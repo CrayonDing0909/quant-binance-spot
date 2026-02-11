@@ -1,0 +1,150 @@
+# Quant Binance Trading Bot - Project Rules
+
+## 專案概述
+這是一個 Binance 量化交易系統，支援現貨 (Spot) 和合約 (Futures) 交易。
+包含策略開發、回測、驗證、模擬交易、實盤交易的完整流程。
+
+## 目錄結構
+
+```
+src/qtrade/
+├── strategy/          # 策略開發
+│   ├── base.py        # StrategyContext, BaseStrategy
+│   ├── filters.py     # 信號過濾器 (trend, volume, volatility, HTF)
+│   ├── exit_rules.py  # 出場規則 (止損/止盈/移動止損)
+│   └── *.py           # 具體策略實作
+├── backtest/          # 回測引擎
+│   ├── run_backtest.py   # 核心回測邏輯 (vectorbt)
+│   ├── metrics.py        # 績效指標計算
+│   ├── plotting.py       # 圖表繪製
+│   └── kelly_validation.py # Kelly 公式驗證
+├── validation/        # 策略驗證
+│   ├── walk_forward.py   # Walk-Forward 分析
+│   ├── prado_methods.py  # DSR, PBO, CPCV (López de Prado)
+│   ├── cross_asset.py    # 跨資產驗證
+│   └── consistency.py    # Live/Backtest 一致性
+├── live/              # 實盤/模擬交易
+│   ├── paper_broker.py      # 模擬交易 Broker
+│   ├── binance_spot_broker.py   # 現貨 Broker
+│   ├── binance_futures_broker.py # 合約 Broker (待實作)
+│   └── runner.py        # LiveRunner 主迴圈
+├── data/              # 數據管理
+│   ├── binance_client.py # Binance REST API
+│   ├── klines.py         # K線獲取
+│   └── storage.py        # Parquet 儲存
+├── monitor/           # 監控通知
+│   └── notifier.py    # Telegram 通知
+├── risk/              # 風險管理
+│   └── monte_carlo.py # Monte Carlo 模擬
+└── config.py          # 配置管理 (dataclass + YAML)
+
+scripts/               # 執行腳本
+├── download_data.py   # 下載 K線數據
+├── run_backtest.py    # 執行回測
+├── run_live.py        # 執行實盤/模擬
+├── validate.py        # 策略驗證
+└── optimize_params.py # 參數優化
+
+config/                # 配置檔案
+├── rsi_adx_atr.yaml          # 現貨策略配置
+└── futures_rsi_adx_atr.yaml  # 合約策略配置
+
+data/binance/          # K線數據 (Parquet)
+├── spot/1h/           # 現貨數據
+└── futures/1h/        # 合約數據
+
+reports/               # 回測報告
+├── {strategy}/        # 現貨報告
+└── futures/{strategy}/ # 合約報告
+```
+
+## 核心概念
+
+### 信號範圍
+- **Spot (現貨)**: `[0, 1]` - 只做多
+- **Futures (合約)**: `[-1, 1]` - 多空都做
+  - `+1.0` = 全倉做多
+  - `-1.0` = 全倉做空
+  - `0.0` = 空倉
+
+### StrategyContext
+策略上下文，提供市場資訊給策略：
+```python
+ctx = StrategyContext(
+    symbol="BTCUSDT",
+    interval="1h",
+    market_type="futures",  # "spot" | "futures"
+    direction="both",       # "both" | "long_only" | "short_only"
+)
+ctx.supports_short  # True if futures and not long_only
+ctx.can_long        # True if not short_only
+ctx.can_short       # True if futures and not long_only
+```
+
+### vectorbt 注意事項
+- 使用 `pf.positions.records_readable` 而非 `pf.trades.records_readable`
+- `trades` 會把部分平倉拆成多筆，`positions` 才是完整的 round-trip
+- 合約回測使用 `direction="both"`
+
+### 配置結構 (YAML → dataclass)
+```yaml
+market:
+  market_type: futures  # spot | futures
+  symbols: [BTCUSDT, ETHUSDT]
+  interval: 1h
+
+futures:  # 合約專用
+  leverage: 1
+  margin_type: cross
+  direction: both  # both | long_only | short_only
+
+strategy:
+  name: rsi_adx_atr
+  params: {...}
+
+notification:  # Telegram
+  bot_token: xxx
+  chat_id: xxx
+  prefix: "[FUTURES]"
+```
+
+## 開發規範
+
+### 程式碼風格
+- 中文註解，英文變數/函數名
+- Type hints 必須
+- docstring 用中文說明
+
+### 新增策略
+1. 在 `src/qtrade/strategy/` 建立 `{name}_strategy.py`
+2. 使用 `@register_strategy("name")` 註冊
+3. 函數簽名：`def generate_positions(df, ctx, params) -> pd.Series`
+4. 回傳值：Spot `[0,1]`, Futures `[-1,1]`
+
+### 新增 Broker
+1. 實作 `BrokerProtocol` 介面
+2. 必須方法：`get_balance()`, `get_position()`, `place_order()`
+3. 支援 `market_type` 參數
+
+## 常用指令
+
+```bash
+# 下載數據
+python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
+
+# 回測
+python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --direction both
+
+# 驗證
+python scripts/validate.py -c config/futures_rsi_adx_atr.yaml --quick
+
+# 模擬交易
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
+
+# 參數優化
+python scripts/optimize_params.py -c config/rsi_adx_atr.yaml --symbol BTCUSDT
+```
+
+## 待完成功能 (TODO)
+- [ ] BinanceFuturesBroker 實作（真實合約交易）
+- [ ] 合約風控（強平價格計算、資金費率追蹤）
