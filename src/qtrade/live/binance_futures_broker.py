@@ -424,9 +424,11 @@ class BinanceFuturesBroker:
             )
 
         try:
+            # Hedge Mode 需要指定 positionSide
             result = self.http.signed_post("/fapi/v1/order", {
                 "symbol": symbol,
                 "side": "BUY",
+                "positionSide": "LONG",  # Hedge Mode 必需
                 "type": "MARKET",
                 "quantity": f"{qty}",
             })
@@ -459,7 +461,6 @@ class BinanceFuturesBroker:
             # 嘗試解析 Binance 錯誤詳情
             error_msg = str(e)
             try:
-                import json
                 if hasattr(e, 'response') and e.response is not None:
                     error_detail = e.response.json()
                     error_msg = f"{e} | Binance: {error_detail}"
@@ -525,9 +526,11 @@ class BinanceFuturesBroker:
             )
 
         try:
+            # Hedge Mode 需要指定 positionSide
             result = self.http.signed_post("/fapi/v1/order", {
                 "symbol": symbol,
                 "side": "SELL",
+                "positionSide": "SHORT",  # Hedge Mode 必需
                 "type": "MARKET",
                 "quantity": f"{qty}",
             })
@@ -557,7 +560,15 @@ class BinanceFuturesBroker:
             return order
 
         except Exception as e:
-            logger.error(f"❌ 做空失敗 {symbol}: {e}")
+            # 嘗試解析 Binance 錯誤詳情
+            error_msg = str(e)
+            try:
+                if hasattr(e, 'response') and e.response is not None:
+                    error_detail = e.response.json()
+                    error_msg = f"{e} | Binance: {error_detail}"
+            except Exception:
+                pass
+            logger.error(f"❌ 做空失敗 {symbol}: {error_msg}")
             return None
 
     def market_close(
@@ -617,12 +628,16 @@ class BinanceFuturesBroker:
             )
 
         try:
+            # Hedge Mode: 指定 positionSide 而非 reduceOnly
+            # 平多倉 positionSide=LONG, 平空倉 positionSide=SHORT
+            position_side_param = "LONG" if pos.qty > 0 else "SHORT"
+            
             result = self.http.signed_post("/fapi/v1/order", {
                 "symbol": symbol,
                 "side": side,
+                "positionSide": position_side_param,  # Hedge Mode 必需
                 "type": "MARKET",
                 "quantity": f"{close_qty}",
-                "reduceOnly": "true",
             })
 
             exec_qty = float(result.get("executedQty", 0))
@@ -658,7 +673,15 @@ class BinanceFuturesBroker:
             return order
 
         except Exception as e:
-            logger.error(f"❌ 平倉失敗 {symbol}: {e}")
+            # 嘗試解析 Binance 錯誤詳情
+            error_msg = str(e)
+            try:
+                if hasattr(e, 'response') and e.response is not None:
+                    error_detail = e.response.json()
+                    error_msg = f"{e} | Binance: {error_detail}"
+            except Exception:
+                pass
+            logger.error(f"❌ 平倉失敗 {symbol}: {error_msg}")
             return None
 
     def close_all_positions(self) -> list[FuturesOrderResult]:
@@ -728,11 +751,13 @@ class BinanceFuturesBroker:
 
         try:
             # 先取消舊的止損單
-            self.cancel_stop_loss(symbol)
+            self.cancel_stop_loss(symbol, position_side)
 
+            # Hedge Mode: 必須指定 positionSide
             params = {
                 "symbol": symbol,
                 "side": side,
+                "positionSide": position_side,  # Hedge Mode 必需
                 "type": "STOP_MARKET",
                 "stopPrice": f"{stop_price}",
                 "closePosition": "true",  # 全部平倉
@@ -770,18 +795,27 @@ class BinanceFuturesBroker:
             logger.error(f"❌ 掛止損單失敗 {symbol}: {e}")
             return None
 
-    def cancel_stop_loss(self, symbol: str) -> bool:
-        """取消該交易對的止損單（STOP_MARKET 類型）"""
+    def cancel_stop_loss(self, symbol: str, position_side: str | None = None) -> bool:
+        """
+        取消該交易對的止損單（STOP_MARKET 類型）
+        
+        Args:
+            symbol: 交易對
+            position_side: 持倉方向 ("LONG" / "SHORT")，若 None 則取消所有
+        """
         if self.dry_run:
-            logger.debug(f"🧪 [DRY-RUN] 取消止損單 {symbol}")
+            logger.debug(f"🧪 [DRY-RUN] 取消止損單 {symbol} [{position_side or 'ALL'}]")
             return True
 
         try:
             orders = self.get_open_orders(symbol)
             for order in orders:
                 if order.get("type") == "STOP_MARKET":
+                    # 如果指定了 position_side，只取消該方向的止損單
+                    if position_side and order.get("positionSide") != position_side:
+                        continue
                     self.cancel_order(symbol, str(order["orderId"]))
-                    logger.info(f"🗑️  止損單已取消 {symbol} orderId={order['orderId']}")
+                    logger.info(f"🗑️  止損單已取消 {symbol} [{order.get('positionSide')}] orderId={order['orderId']}")
             return True
         except Exception as e:
             logger.warning(f"⚠️  取消止損單失敗 {symbol}: {e}")
