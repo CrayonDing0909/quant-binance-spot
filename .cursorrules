@@ -6,6 +6,34 @@
 
 ---
 
+## 開發環境設置
+
+### 虛擬環境
+**重要：執行任何 Python 指令前，必須先啟動虛擬環境！**
+
+```bash
+# 啟動虛擬環境（每次開新 terminal 都要執行）
+cd /Users/dylanting/Documents/spot_bot/quant-binance-spot
+source .venv/bin/activate
+
+# 確認環境已啟動（會看到 (.venv) 前綴）
+which python  # 應該顯示 .venv/bin/python
+```
+
+### 安裝依賴
+```bash
+pip install -r requirements.txt
+pip install -e .  # 安裝專案為 editable 模式
+```
+
+### 環境變數（交易用）
+```bash
+export BINANCE_API_KEY=your_key
+export BINANCE_API_SECRET=your_secret
+```
+
+---
+
 ## 資料流 (Data Flow)
 
 ```
