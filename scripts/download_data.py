@@ -33,9 +33,19 @@ def download_incremental(
     end_date: str | None,
     data_path: Path,
     force_full: bool = False,
+    market_type: str = "spot",
 ) -> tuple[int, int]:
     """
     增量下載 K 線數據
+    
+    Args:
+        symbol: 交易對
+        interval: K 線週期
+        start_date: 開始日期
+        end_date: 結束日期
+        data_path: 儲存路徑
+        force_full: 是否強制全量下載
+        market_type: 市場類型 "spot" 或 "futures"
     
     Returns:
         (下載的新資料筆數, 總資料筆數)
@@ -58,7 +68,7 @@ def download_incremental(
     if force_full or local_start is None:
         # 全量下載
         print(f"  📥 全量下載 {start_date} → {end_date or '現在'}...")
-        df = fetch_klines(symbol, interval, start_date, end_date)
+        df = fetch_klines(symbol, interval, start_date, end_date, market_type=market_type)
         save_klines(df, data_path)
         return len(df), len(df)
     
@@ -70,7 +80,7 @@ def download_incremental(
     if target_start < local_start:
         gap_end = (local_start - interval_delta).strftime("%Y-%m-%d")
         print(f"  📥 補齊前段: {start_date} → {gap_end}")
-        front_df = fetch_klines(symbol, interval, start_date, gap_end)
+        front_df = fetch_klines(symbol, interval, start_date, gap_end, market_type=market_type)
         if not front_df.empty:
             chunks_to_merge.append(front_df)
             new_rows += len(front_df)
@@ -84,7 +94,7 @@ def download_incremental(
         fetch_start_str = fetch_start.strftime("%Y-%m-%d")
         fetch_end_str = target_end.strftime("%Y-%m-%d") if end_date else None
         print(f"  📥 更新後段: {fetch_start_str} → {fetch_end_str or '現在'}")
-        back_df = fetch_klines(symbol, interval, fetch_start_str, fetch_end_str)
+        back_df = fetch_klines(symbol, interval, fetch_start_str, fetch_end_str, market_type=market_type)
         if not back_df.empty:
             # 計算真正的新數據（排除重疊部分）
             truly_new = back_df[back_df.index > local_end]
@@ -129,16 +139,21 @@ def main() -> None:
     
     cfg = load_config(args.config)
     m = cfg.market
+    market_type = m.market_type.value  # "spot" or "futures"
     
     # 如果指定了 symbol，只處理該交易對
     symbols = [args.symbol] if args.symbol else m.symbols
     
+    # 市場類型標籤
+    market_emoji = "🟢" if market_type == "spot" else "🔴"
+    market_label = "SPOT" if market_type == "spot" else "FUTURES"
+    
     # 顯示狀態模式
     if args.status:
-        print("\n📊 本地數據狀態:")
+        print(f"\n📊 本地數據狀態 {market_emoji} [{market_label}]:")
         print("-" * 60)
         for sym in symbols:
-            data_path = cfg.data_dir / "binance" / "spot" / m.interval / f"{sym}.parquet"
+            data_path = cfg.data_dir / "binance" / market_type / m.interval / f"{sym}.parquet"
             local_start, local_end = get_local_data_range(data_path)
             if local_start:
                 print(f"  {sym}: {local_start.strftime('%Y-%m-%d')} → {local_end.strftime('%Y-%m-%d %H:%M')}")
@@ -148,12 +163,13 @@ def main() -> None:
         return
     
     # 下載模式
-    print("\n🚀 開始下載 K 線數據")
+    print(f"\n🚀 開始下載 K 線數據 {market_emoji} [{market_label}]")
     print("-" * 60)
     
     total_new = 0
     for sym in symbols:
-        data_path = cfg.data_dir / "binance" / "spot" / m.interval / f"{sym}.parquet"
+        # 根據 market_type 決定存儲路徑
+        data_path = cfg.data_dir / "binance" / market_type / m.interval / f"{sym}.parquet"
         
         # 先顯示本地狀態
         local_start, local_end = get_local_data_range(data_path)
@@ -170,6 +186,7 @@ def main() -> None:
             end_date=m.end,
             data_path=data_path,
             force_full=args.full,
+            market_type=market_type,
         )
         
         total_new += new_rows

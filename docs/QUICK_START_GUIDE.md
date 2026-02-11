@@ -2,6 +2,8 @@
 
 本教學將帶你從零開始，完整地開發一個交易策略，包括策略發想、實現、回測、優化和驗證。
 
+**支援現貨 (Spot) 和合約 (Futures) 交易！** 🟢 🔴
+
 ## 📋 目錄
 
 1. [專案功能概覽](#專案功能概覽)
@@ -13,7 +15,8 @@
 7. [第六步：風險管理](#第六步風險管理)
 8. [第七步：即時交易](#第七步即時交易)
 9. [第八步：監控與維運](#第八步監控與維運)
-10. [完整範例：RSI 策略](#完整範例rsi策略)
+10. [合約交易教學](#合約交易教學) ⭐ NEW
+11. [完整範例：RSI 策略](#完整範例rsi策略)
 
 ---
 
@@ -70,7 +73,7 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
 
 ## 專案功能概覽
 
-這個專案提供了完整的量化交易策略開發工具：
+這個專案提供了完整的量化交易策略開發工具，**支援現貨和合約交易**：
 
 ### 🎯 核心功能
 
@@ -80,7 +83,7 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - 策略註冊系統
 
 2. **資料管理**
-   - 自動下載幣安資料
+   - 自動下載幣安資料（現貨/合約）
    - 資料品質檢查
    - 資料清洗
 
@@ -88,6 +91,7 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - 向量化回測（快速）
    - 支援手續費和滑點
    - 自動產生報告和圖表
+   - **支援做空模擬（合約）** ⭐ NEW
 
 4. **策略優化**
    - 參數網格搜尋
@@ -110,6 +114,7 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - Paper Trading（模擬交易）
    - Real Trading（真實交易）
    - Telegram 通知
+   - **支援現貨 🟢 和合約 🔴** ⭐ NEW
 
 8. **監控與維運** ⭐ NEW
    - 系統健康檢查
@@ -846,6 +851,175 @@ crontab -e
 # 每週日 00:00 執行一致性驗證
 0 0 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency >> logs/consistency.log 2>&1
 ```
+
+---
+
+## 合約交易教學 ⭐ NEW
+
+本專案支援現貨 (Spot) 和合約 (Futures) 交易，使用相同的開發流程。
+
+### 現貨 vs 合約
+
+| 功能 | 現貨 🟢 | 合約 🔴 |
+|------|---------|---------|
+| 做多 | ✅ | ✅ |
+| 做空 | ❌ | ✅ |
+| 槓桿 | 1x | 1x-125x |
+| 信號範圍 | [0, 1] | [-1, 1] |
+| 風險 | 較低 | 較高 |
+
+### 10.1 配置合約策略
+
+建立合約策略配置檔（例如 `config/futures_rsi_adx_atr.yaml`）：
+
+```yaml
+# 合約策略配置
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"  # ⭐ 關鍵：設定為 futures
+
+# 合約專屬配置
+futures:
+  leverage: 3             # 槓桿倍數（建議 1-5 倍）
+  margin_type: "ISOLATED" # ISOLATED（逐倉）或 CROSSED（全倉）
+  position_mode: "ONE_WAY" # ONE_WAY（單向）或 HEDGE（雙向）
+
+strategy:
+  name: "rsi_adx_atr"
+  params:
+    rsi_period: 10
+    oversold: 30           # RSI < 30 → 做多
+    overbought: 70         # RSI > 70 → 做空（合約專用）
+    min_adx: 15
+    # ...其他參數
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4              # 合約手續費較低
+  slippage_bps: 3
+  trade_on: "next_open"
+
+# 風控（合約建議更保守）
+risk:
+  max_drawdown_pct: 0.15  # 15% 熔斷
+
+# Telegram 通知（可與現貨使用不同 Bot）
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔴 [FUTURES]"
+  enabled: true
+
+output:
+  report_dir: "./reports/futures/rsi_adx_atr"
+```
+
+### 10.2 策略做空信號
+
+策略可以輸出 [-1, 1] 範圍的信號：
+- `1.0`：滿倉做多
+- `0.0`：空倉
+- `-1.0`：滿倉做空
+
+```python
+@register_strategy("my_futures_strategy")
+def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.Series:
+    rsi = calculate_rsi(df["close"], period=14)
+    
+    pos = pd.Series(0.0, index=df.index)
+    
+    # 做多條件
+    pos[rsi < 30] = 1.0
+    
+    # 做空條件（僅合約有效）
+    if ctx.supports_short:  # ⭐ 檢查是否支援做空
+        pos[rsi > 70] = -1.0
+    
+    return pos.shift(1).fillna(0.0)
+```
+
+**注意**：現貨模式下，負數信號會自動 clip 到 0，策略程式碼不需要特別處理。
+
+### 10.3 下載合約資料
+
+```bash
+# 下載合約 K 線資料
+python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
+
+# 資料會儲存到 data/binance/futures/1h/
+```
+
+### 10.4 回測合約策略
+
+```bash
+# 執行合約回測（支援做空模擬）
+python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml
+```
+
+### 10.5 Paper Trading（合約）
+
+```bash
+# 啟動合約 Paper Trading
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper --once
+
+# 查看狀態
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --status
+```
+
+輸出範例：
+```
+🔴 Paper Trading [FUTURES]
+   槓桿: 3x
+
+──────────────────────────────────────────────────
+  BTCUSDT: SHORT 50%, price=67404.28, RSI=75.5, ADX=34.48
+  ETHUSDT: LONG 30%, price=1974.45, RSI=25.2, ADX=25.0
+
+==================================================
+  Paper Trading 帳戶摘要 🔴 [FUTURES (3x)]
+==================================================
+  初始資金:   $10,000.00
+  當前現金:   $5,000.00
+  總權益:     $10,500.00
+  總收益:     +5.00%
+  交易筆數:   5
+  BTCUSDT [SHORT]: 0.100000 @ 68000.00 (PnL: +$600.00 📈)
+==================================================
+```
+
+### 10.6 測試合約功能
+
+執行測試腳本驗證功能：
+
+```bash
+# 執行合約功能測試
+python scripts/test_futures_manual.py
+```
+
+### 10.7 合約 Cron 設定
+
+現貨和合約可以同時運行，互不干擾：
+
+```bash
+# === 現貨策略 ===
+0 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/spot_live.log 2>&1
+
+# === 合約策略 ===
+0 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper --once >> logs/futures_live.log 2>&1
+```
+
+### 10.8 合約風險提醒 ⚠️
+
+1. **槓桿風險**：高槓桿會放大盈虧，建議新手用 1-3 倍
+2. **強平風險**：價格劇烈波動可能觸發強制平倉
+3. **資金費率**：合約持倉需要支付/收取資金費率
+4. **建議**：
+   - 先用 Paper Trading 測試至少 2 週
+   - 合約 max_drawdown_pct 設定更保守（如 10-15%）
+   - 保留較多現金作為保證金緩衝（cash_reserve: 0.3）
 
 ---
 

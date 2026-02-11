@@ -10,9 +10,27 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class StrategyContext:
-    """策略上下文資訊"""
+    """
+    策略上下文資訊
+    
+    Attributes:
+        symbol: 交易對
+        interval: K 線週期
+        market_type: 市場類型 "spot" 或 "futures"
+    """
     symbol: str
     interval: str = "1h"
+    market_type: str = "spot"
+
+    @property
+    def supports_short(self) -> bool:
+        """是否支援做空（僅 futures 模式）"""
+        return self.market_type == "futures"
+
+    @property
+    def is_futures(self) -> bool:
+        """是否為合約模式"""
+        return self.market_type == "futures"
 
 
 @dataclass
@@ -111,6 +129,12 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     這是函數式策略的介面定義。實際策略應該使用 @register_strategy 裝飾器。
     
     Returns:
-        持倉比例序列 [0, 1]
+        持倉比例序列:
+        - Spot 模式: [0, 1]，0 = 空倉，1 = 滿倉做多
+        - Futures 模式: [-1, 1]，-1 = 滿倉做空，0 = 空倉，1 = 滿倉做多
+        
+    Note:
+        策略可以統一輸出 [-1, 1]，Spot 模式下負數會被自動 clip 到 0。
+        使用 ctx.supports_short 或 ctx.is_futures 判斷是否支援做空。
     """
     raise NotImplementedError

@@ -14,42 +14,107 @@ Telegram 通知模組
     notifier = TelegramNotifier()  # 自動讀取 .env
     notifier.send("Hello!")
     notifier.send_trade(symbol="BTCUSDT", side="BUY", ...)
+
+支援 Spot/Futures 分開通知：
+    # 方法 1：直接傳參數
+    spot_notifier = TelegramNotifier(
+        bot_token=os.getenv("SPOT_TELEGRAM_BOT_TOKEN"),
+        chat_id=os.getenv("SPOT_TELEGRAM_CHAT_ID"),
+        prefix="🟢 [SPOT]"
+    )
+    
+    # 方法 2：從 NotificationConfig 建立
+    notifier = TelegramNotifier.from_config(cfg.notification)
 """
 from __future__ import annotations
 import os
 import requests
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from ..utils.log import get_logger
+
+if TYPE_CHECKING:
+    from ..config import NotificationConfig
 
 logger = get_logger("telegram")
 
 
 class TelegramNotifier:
-    """Telegram Bot 通知器"""
+    """
+    Telegram Bot 通知器
+    
+    支援：
+    - 多 Bot（Spot / Futures 各用不同 Bot）
+    - 訊息前綴（在同一個 Chat 區分來源）
+    """
 
     def __init__(
         self,
         bot_token: str | None = None,
         chat_id: str | None = None,
+        prefix: str = "",
+        enabled: bool = True,
     ):
+        """
+        初始化 Telegram 通知器
+        
+        Args:
+            bot_token: Bot Token（None = 從環境變數讀取）
+            chat_id: Chat ID（None = 從環境變數讀取）
+            prefix: 訊息前綴，例如 "🟢 [SPOT]" 或 "🔴 [FUTURES]"
+            enabled: 是否啟用（可用於臨時停用）
+        """
         self.bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
-        self.enabled = bool(self.bot_token and self.chat_id)
+        self.prefix = prefix
+        self._user_enabled = enabled
+        
+        # 實際啟用狀態：用戶啟用 + 有 token + 有 chat_id
+        self.enabled = enabled and bool(self.bot_token and self.chat_id)
 
-        if not self.enabled:
+        if self._user_enabled and not self.enabled:
             logger.warning(
                 "⚠️  Telegram 通知未啟用（缺少 TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID）\n"
                 "   設置方法：在 .env 中加入 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID"
             )
+        elif self.enabled and self.prefix:
+            logger.info(f"✅ Telegram 通知已啟用，前綴: {self.prefix}")
 
-    def send(self, text: str, parse_mode: str = "HTML") -> bool:
+    @classmethod
+    def from_config(cls, config: "NotificationConfig | None") -> "TelegramNotifier":
+        """
+        從 NotificationConfig 建立通知器
+        
+        Args:
+            config: NotificationConfig 或 None（None = 使用預設環境變數）
+            
+        Returns:
+            TelegramNotifier 實例
+        """
+        if config is None:
+            return cls()
+        return cls(
+            bot_token=config.telegram_bot_token,
+            chat_id=config.telegram_chat_id,
+            prefix=config.prefix,
+            enabled=config.enabled,
+        )
+
+    def _format_message(self, text: str) -> str:
+        """加上前綴（如果有的話）"""
+        if self.prefix:
+            return f"{self.prefix}\n\n{text}"
+        return text
+
+    def send(self, text: str, parse_mode: str = "HTML", add_prefix: bool = True) -> bool:
         """
         發送文字訊息
 
         Args:
             text: 訊息內容（支援 HTML 格式）
             parse_mode: "HTML" 或 "Markdown"
+            add_prefix: 是否加上前綴（預設 True）
 
         Returns:
             是否發送成功
@@ -57,10 +122,13 @@ class TelegramNotifier:
         if not self.enabled:
             return False
 
+        # 加上前綴
+        formatted_text = self._format_message(text) if add_prefix else text
+
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         payload = {
             "chat_id": self.chat_id,
-            "text": text,
+            "text": formatted_text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True,
         }
@@ -87,21 +155,53 @@ class TelegramNotifier:
         reason: str = "",
         pnl: float | None = None,
         weight: float | None = None,
+        leverage: int | None = None,
+        liquidation_price: float | None = None,
     ) -> bool:
-        """發送交易通知"""
-        emoji = "🟢" if side == "BUY" else "🔴"
+        """
+        發送交易通知
+        
+        Args:
+            symbol: 交易對
+            side: BUY / SELL / LONG / SHORT / CLOSE_LONG / CLOSE_SHORT
+            qty: 數量
+            price: 價格
+            reason: 原因
+            pnl: 盈虧
+            weight: 倉位權重
+            leverage: 槓桿（合約專用）
+            liquidation_price: 強平價格（合約專用）
+        """
+        # 根據 side 決定 emoji 和標籤
+        side_map = {
+            "BUY": ("🟢", "BUY"),
+            "SELL": ("🔴", "SELL"),
+            "LONG": ("🟢", "LONG"),
+            "SHORT": ("🔴", "SHORT"),
+            "CLOSE_LONG": ("📤", "CLOSE LONG"),
+            "CLOSE_SHORT": ("📥", "CLOSE SHORT"),
+        }
+        emoji, side_label = side_map.get(side.upper(), ("⚪", side))
+        
         pnl_str = ""
         if pnl is not None:
             pnl_emoji = "📈" if pnl > 0 else "📉"
             pnl_str = f"\n  PnL: <b>{pnl:+.2f}</b> {pnl_emoji}"
 
         weight_str = f" ({weight:.0%})" if weight is not None else ""
+        
+        # 合約專屬資訊
+        leverage_str = f" ({leverage}x)" if leverage and leverage > 1 else ""
+        liq_str = ""
+        if liquidation_price:
+            liq_str = f"\n  強平價: ${liquidation_price:,.2f}"
 
         msg = (
-            f"{emoji} <b>{side} {symbol}</b>{weight_str}\n"
+            f"{emoji} <b>{side_label} {symbol}</b>{weight_str}{leverage_str}\n"
             f"  數量: {qty:.6f}\n"
             f"  價格: ${price:,.2f}\n"
             f"  原因: {reason}"
+            f"{liq_str}"
             f"{pnl_str}"
         )
         return self.send(msg)
@@ -114,10 +214,22 @@ class TelegramNotifier:
         for sig in signals:
             ind = sig.get("indicators", {})
             signal_pct = sig["signal"]
-            emoji = "🟢" if signal_pct > 0.5 else "⚪"
+            
+            # 支援做空信號：[-1, 1]
+            # 🟢 = 做多 (> 0.5)，🔴 = 做空 (< -0.5)，⚪ = 空倉
+            if signal_pct > 0.5:
+                emoji = "🟢"
+                signal_label = f"LONG {signal_pct:.0%}"
+            elif signal_pct < -0.5:
+                emoji = "🔴"
+                signal_label = f"SHORT {abs(signal_pct):.0%}"
+            else:
+                emoji = "⚪"
+                signal_label = f"FLAT {signal_pct:.0%}"
+            
             lines.append(
                 f"{emoji} <b>{sig['symbol']}</b>: "
-                f"signal={signal_pct:.0%}, "
+                f"{signal_label}, "
                 f"${sig['price']:,.2f}\n"
                 f"   RSI={ind.get('rsi', '?')} | "
                 f"ADX={ind.get('adx', '?')} | "
@@ -166,14 +278,35 @@ class TelegramNotifier:
         interval: str,
         mode: str,
         weights: dict[str, float] | None = None,
+        market_type: str = "spot",
+        leverage: int | None = None,
     ) -> bool:
-        """發送啟動通知"""
+        """
+        發送啟動通知
+        
+        Args:
+            strategy: 策略名稱
+            symbols: 交易對列表
+            interval: K 線週期
+            mode: paper / real
+            weights: 倉位分配
+            market_type: spot / futures
+            leverage: 槓桿倍數（合約專用）
+        """
         alloc = ""
         if weights:
             alloc = "\n  分配: " + ", ".join(f"{s}={w:.0%}" for s, w in weights.items())
+        
+        # 市場類型標籤
+        market_emoji = "🟢" if market_type == "spot" else "🔴"
+        market_label = "SPOT" if market_type == "spot" else "FUTURES"
+        
+        # 合約槓桿
+        leverage_str = f" ({leverage}x)" if leverage and leverage > 1 else ""
 
         msg = (
             f"🚀 <b>Trading Bot 啟動</b> [{mode.upper()}]\n\n"
+            f"  {market_emoji} 市場: {market_label}{leverage_str}\n"
             f"  策略: {strategy}\n"
             f"  交易對: {', '.join(symbols)}\n"
             f"  週期: {interval}"

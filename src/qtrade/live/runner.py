@@ -60,10 +60,12 @@ class LiveRunner:
         self.cfg = cfg
         self.broker = broker
         self.mode = mode
-        self.notifier = notifier or TelegramNotifier()
+        # 使用配置中的通知設定，或預設的環境變數
+        self.notifier = notifier or TelegramNotifier.from_config(cfg.notification)
         self.strategy_name = cfg.strategy.name
         self.symbols = cfg.market.symbols
         self.interval = cfg.market.interval
+        self.market_type = cfg.market.market_type.value  # "spot" or "futures"
         self.is_running = False
 
         # 多幣種倉位分配權重
@@ -347,6 +349,13 @@ class LiveRunner:
 
             # 執行交易（信號 × 分配權重 × 倉位調整）
             raw_signal = sig["signal"]
+            
+            # Spot 模式：自動 clip 信號到 [0, 1]（不支援做空）
+            # Futures 模式：保持 [-1, 1]
+            if self.market_type == "spot" and raw_signal < 0:
+                logger.debug(f"  {symbol}: Spot 模式不支援做空，信號 {raw_signal:.0%} clip 到 0")
+                raw_signal = 0.0
+            
             weight = self._weights.get(symbol, 1.0 / max(len(self.symbols), 1))
             price = sig["price"]
             if price <= 0:
@@ -459,12 +468,15 @@ class LiveRunner:
         logger.info("=" * 60)
 
         # 啟動通知
+        leverage = self.cfg.futures.leverage if self.cfg.futures else None
         self.notifier.send_startup(
             strategy=self.strategy_name,
             symbols=self.symbols,
             interval=self.interval,
             mode=self.mode,
             weights=self._weights,
+            market_type=self.market_type,
+            leverage=leverage,
         )
 
         try:

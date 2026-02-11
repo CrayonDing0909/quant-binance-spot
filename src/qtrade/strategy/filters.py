@@ -31,19 +31,20 @@ def trend_filter(
     require_uptrend: bool = True,
 ) -> pd.Series:
     """
-    ADX 趨勢過濾器
+    ADX 趨勢過濾器（支援做空）
 
     規則：
     - ADX < min_adx → 無趨勢，禁止新開倉
-    - require_uptrend=True → 還要求 +DI > -DI（上升趨勢）
+    - 做多：require_uptrend=True 時，要求 +DI > -DI（上升趨勢）
+    - 做空：require_uptrend=True 時，要求 -DI > +DI（下降趨勢）
     - 已有持倉不受影響（由出場規則或策略信號決定平倉）
 
     Args:
         df:              K線數據
-        raw_pos:         原始持倉信號
+        raw_pos:         原始持倉信號 [-1, 1]
         min_adx:         最小 ADX 值，低於此值不開新倉
         adx_period:      ADX 週期
-        require_uptrend: 是否要求上升趨勢（+DI > -DI）
+        require_uptrend: 是否要求趨勢方向配合（做多配上升趨勢，做空配下降趨勢）
 
     Returns:
         過濾後的持倉序列
@@ -55,26 +56,38 @@ def trend_filter(
 
     raw = raw_pos.values.copy()
     result = np.zeros(len(raw), dtype=float)
-    was_in_position = False
+    position_state = 0  # 0 = flat, 1 = long, -1 = short
 
     for i in range(len(raw)):
         has_trend = not np.isnan(adx[i]) and adx[i] >= min_adx
-        is_uptrend = plus_di[i] > minus_di[i] if require_uptrend else True
+        is_uptrend = plus_di[i] > minus_di[i]
+        is_downtrend = minus_di[i] > plus_di[i]
 
-        if raw[i] > 0:
-            if was_in_position:
-                # 已有持倉 → 保持（不因 ADX 下降而強制平倉）
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                # 已有多倉 → 保持
                 result[i] = raw[i]
-            elif has_trend and is_uptrend:
-                # 允許新開倉
+            elif has_trend and (is_uptrend or not require_uptrend):
+                # 允許新開多倉
                 result[i] = raw[i]
-                was_in_position = True
+                position_state = 1
+            else:
+                # 不允許新開倉
+                result[i] = 0.0
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                # 已有空倉 → 保持
+                result[i] = raw[i]
+            elif has_trend and (is_downtrend or not require_uptrend):
+                # 允許新開空倉（需要下降趨勢）
+                result[i] = raw[i]
+                position_state = -1
             else:
                 # 不允許新開倉
                 result[i] = 0.0
         else:
             result[i] = 0.0
-            was_in_position = False
+            position_state = 0
 
     return pd.Series(result, index=raw_pos.index)
 
@@ -86,14 +99,14 @@ def volume_filter(
     volume_period: int = 20,
 ) -> pd.Series:
     """
-    成交量過濾器
+    成交量過濾器（支援做空）
 
     規則：當前成交量 > 均量 × min_volume_ratio 時才允許新開倉。
     避免在低流動性時段進場。
 
     Args:
         df:                K線數據
-        raw_pos:           原始持倉信號
+        raw_pos:           原始持倉信號 [-1, 1]
         min_volume_ratio:  最小成交量倍數
         volume_period:     均量計算週期
 
@@ -105,22 +118,30 @@ def volume_filter(
 
     raw = raw_pos.values.copy()
     result = np.zeros(len(raw), dtype=float)
-    was_in_position = False
+    position_state = 0  # 0 = flat, 1 = long, -1 = short
 
     for i in range(len(raw)):
         vol_ok = not np.isnan(vol_ma[i]) and volume[i] >= vol_ma[i] * min_volume_ratio
 
-        if raw[i] > 0:
-            if was_in_position:
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
                 result[i] = raw[i]
             elif vol_ok:
                 result[i] = raw[i]
-                was_in_position = True
+                position_state = 1
+            else:
+                result[i] = 0.0
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                result[i] = raw[i]
+            elif vol_ok:
+                result[i] = raw[i]
+                position_state = -1
             else:
                 result[i] = 0.0
         else:
             result[i] = 0.0
-            was_in_position = False
+            position_state = 0
 
     return pd.Series(result, index=raw_pos.index)
 
@@ -135,7 +156,7 @@ def volatility_filter(
     min_percentile: float = 25.0,
 ) -> pd.Series:
     """
-    波動率過濾器（ATR Ratio）
+    波動率過濾器（ATR Ratio）（支援做空）
 
     專業量化交易的標準做法：當波動率不足時暫停交易，避免：
     - 假突破信號增多
@@ -153,7 +174,7 @@ def volatility_filter(
 
     Args:
         df:              K線數據
-        raw_pos:         原始持倉信號
+        raw_pos:         原始持倉信號 [-1, 1]
         min_atr_ratio:   最小 ATR/Price 比率（絕對閾值模式）
         atr_period:      ATR 計算週期
         lookback:        百分位計算的回看週期
@@ -190,25 +211,36 @@ def volatility_filter(
 
     raw = raw_pos.values.copy()
     result = np.zeros(len(raw), dtype=float)
-    was_in_position = False
+    position_state = 0  # 0 = flat, 1 = long, -1 = short
 
     for i in range(len(raw)):
         vol_ok = not np.isnan(atr_ratio[i]) and vol_ok_arr[i]
 
-        if raw[i] > 0:
-            if was_in_position:
-                # 已有持倉 → 保持（不因波動率下降而強制平倉）
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                # 已有多倉 → 保持（不因波動率下降而強制平倉）
                 result[i] = raw[i]
             elif vol_ok:
-                # 波動率足夠 → 允許新開倉
+                # 波動率足夠 → 允許新開多倉
                 result[i] = raw[i]
-                was_in_position = True
+                position_state = 1
+            else:
+                # 波動率不足 → 禁止新開倉
+                result[i] = 0.0
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                # 已有空倉 → 保持
+                result[i] = raw[i]
+            elif vol_ok:
+                # 波動率足夠 → 允許新開空倉
+                result[i] = raw[i]
+                position_state = -1
             else:
                 # 波動率不足 → 禁止新開倉
                 result[i] = 0.0
         else:
             result[i] = 0.0
-            was_in_position = False
+            position_state = 0
 
     return pd.Series(result, index=raw_pos.index)
 
@@ -255,13 +287,14 @@ def htf_trend_filter(
     current_interval: str = "1h",
 ) -> pd.Series:
     """
-    多時間框架趨勢過濾器
+    多時間框架趨勢過濾器（支援做空）
 
     邏輯：
         1. 將 1h 數據重採樣為 4h
         2. 在 4h 上計算 EMA20 和 EMA50
         3. EMA20 > EMA50 = 上升趨勢 → 允許做多
-        4. EMA20 < EMA50 = 下降趨勢 → 禁止新開倉（已有持倉不強制平倉）
+        4. EMA20 < EMA50 = 下降趨勢 → 允許做空（Futures）
+        5. 已有持倉不強制平倉
 
     為什麼用 EMA 交叉而不是 ADX？
         - ADX 只判斷趨勢強度，不判斷方向
@@ -270,7 +303,7 @@ def htf_trend_filter(
 
     Args:
         df:               低級 K 線數據（e.g. 1h）
-        raw_pos:          原始持倉信號
+        raw_pos:          原始持倉信號 [-1, 1]
         htf_interval:     高級時間框架，e.g. "4h"
         ema_fast:         快速 EMA 週期（在高級 TF 上），預設 20
         ema_slow:         慢速 EMA 週期（在高級 TF 上），預設 50
@@ -297,35 +330,49 @@ def htf_trend_filter(
     ema_f = calculate_ema(htf_df["close"], ema_fast)
     ema_s = calculate_ema(htf_df["close"], ema_slow)
 
-    # 判斷趨勢方向：EMA_fast > EMA_slow → 上升趨勢
-    htf_uptrend = (ema_f > ema_s).astype(float)
+    # 判斷趨勢方向
+    # +1 = 上升趨勢，-1 = 下降趨勢
+    htf_trend = pd.Series(0.0, index=htf_df.index)
+    htf_trend[ema_f > ema_s] = 1.0
+    htf_trend[ema_f < ema_s] = -1.0
 
     # 將高級 TF 的信號映射回低級 TF
-    # 使用 reindex + forward fill：每根 4h K 線的趨勢應用到其包含的所有 1h K 線
-    htf_uptrend_ltf = htf_uptrend.reindex(df.index, method="ffill").fillna(0.0)
+    htf_trend_ltf = htf_trend.reindex(df.index, method="ffill").fillna(0.0)
 
-    # 應用過濾邏輯（同 trend_filter 的設計：不強制平已有倉位）
+    # 應用過濾邏輯
     raw = raw_pos.values.copy()
-    trend = htf_uptrend_ltf.values
+    trend = htf_trend_ltf.values
     result = np.zeros(len(raw), dtype=float)
-    was_in_position = False
+    position_state = 0  # 0 = flat, 1 = long, -1 = short
 
     for i in range(len(raw)):
         is_uptrend = trend[i] > 0.5
+        is_downtrend = trend[i] < -0.5
 
-        if raw[i] > 0:
-            if was_in_position:
-                # 已有持倉 → 保持（不因高級 TF 轉弱而強制平倉）
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                # 已有多倉 → 保持
                 result[i] = raw[i]
             elif is_uptrend:
-                # 高級 TF 上升趨勢 → 允許新開倉
+                # 高級 TF 上升趨勢 → 允許新開多倉
                 result[i] = raw[i]
-                was_in_position = True
+                position_state = 1
             else:
-                # 高級 TF 下降趨勢 → 禁止新開倉
+                # 高級 TF 非上升趨勢 → 禁止新開多倉
+                result[i] = 0.0
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                # 已有空倉 → 保持
+                result[i] = raw[i]
+            elif is_downtrend:
+                # 高級 TF 下降趨勢 → 允許新開空倉
+                result[i] = raw[i]
+                position_state = -1
+            else:
+                # 高級 TF 非下降趨勢 → 禁止新開空倉
                 result[i] = 0.0
         else:
             result[i] = 0.0
-            was_in_position = False
+            position_state = 0
 
     return pd.Series(result, index=raw_pos.index)

@@ -1,9 +1,16 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 import os
 import yaml
 from dotenv import load_dotenv
+
+
+class MarketType(str, Enum):
+    """市場類型"""
+    SPOT = "spot"
+    FUTURES = "futures"
 
 
 @dataclass(frozen=True)
@@ -12,6 +19,7 @@ class MarketConfig:
     interval: str
     start: str
     end: str | None
+    market_type: MarketType = MarketType.SPOT  # 新增：預設現貨
 
 
 @dataclass(frozen=True)
@@ -132,6 +140,52 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class FuturesConfig:
+    """
+    合約專屬配置
+    
+    leverage: 槓桿倍數 [1, 125]
+        - 建議新手用 1-3 倍
+        - 高波動幣種建議低槓桿
+    
+    margin_type: 保證金模式
+        - "ISOLATED": 逐倉（推薦，風險隔離）
+        - "CROSSED": 全倉（共用保證金）
+    
+    position_mode: 持倉模式
+        - "ONE_WAY": 單向持倉（預設，同時只能多或空）
+        - "HEDGE": 雙向持倉（可同時持有多空倉位）
+    """
+    leverage: int = 1
+    margin_type: str = "ISOLATED"
+    position_mode: str = "ONE_WAY"
+
+
+@dataclass(frozen=True)
+class NotificationConfig:
+    """
+    通知配置（支援 Spot/Futures 分開通知）
+    
+    telegram_bot_token: Telegram Bot Token
+        - 設定後覆蓋環境變數 TELEGRAM_BOT_TOKEN
+        - 可用 ${ENV_VAR} 語法引用環境變數
+    
+    telegram_chat_id: Telegram Chat ID
+        - 設定後覆蓋環境變數 TELEGRAM_CHAT_ID
+    
+    prefix: 訊息前綴
+        - 例如 "🟢 [SPOT]" 或 "🔴 [FUTURES]"
+        - 方便在同一個 Chat 區分不同策略
+    
+    enabled: 是否啟用通知
+    """
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    prefix: str = ""
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class AppConfig:
     market: MarketConfig
     backtest: BacktestConfig
@@ -141,6 +195,32 @@ class AppConfig:
     portfolio: PortfolioConfig = PortfolioConfig()
     risk: RiskConfig = RiskConfig()
     position_sizing: PositionSizingConfig = PositionSizingConfig()
+    futures: FuturesConfig | None = None  # 合約配置（僅 market_type=futures 時使用）
+    notification: NotificationConfig | None = None  # 通知配置
+
+    @property
+    def is_futures(self) -> bool:
+        """是否為合約模式"""
+        return self.market.market_type == MarketType.FUTURES
+
+    @property
+    def supports_short(self) -> bool:
+        """是否支援做空（合約模式才支援）"""
+        return self.is_futures
+
+
+def _resolve_env_var(value: str | None) -> str | None:
+    """
+    解析環境變數語法 ${VAR_NAME}
+    
+    例如：${SPOT_TELEGRAM_BOT_TOKEN} → 實際值
+    """
+    if not value or not isinstance(value, str):
+        return value
+    if value.startswith("${") and value.endswith("}"):
+        env_name = value[2:-1]
+        return os.getenv(env_name)
+    return value
 
 
 def load_config(path: str = "config/base.yaml") -> AppConfig:
@@ -150,6 +230,15 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
 
     data_dir = Path(os.getenv("DATA_DIR", "./data")).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    # market 配置
+    market_raw = dict(raw["market"])
+    market_type_str = market_raw.pop("market_type", "spot")
+    market_type = MarketType(market_type_str)
+    market = MarketConfig(
+        **market_raw,
+        market_type=market_type,
+    )
 
     # portfolio 可選
     portfolio_raw = raw.get("portfolio", {})
@@ -178,8 +267,29 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         vol_lookback=ps_raw.get("vol_lookback", 20),
     )
 
+    # futures 可選（僅合約模式使用）
+    futures: FuturesConfig | None = None
+    if market_type == MarketType.FUTURES:
+        futures_raw = raw.get("futures", {})
+        futures = FuturesConfig(
+            leverage=futures_raw.get("leverage", 1),
+            margin_type=futures_raw.get("margin_type", "ISOLATED"),
+            position_mode=futures_raw.get("position_mode", "ONE_WAY"),
+        )
+
+    # notification 可選
+    notification: NotificationConfig | None = None
+    notif_raw = raw.get("notification")
+    if notif_raw:
+        notification = NotificationConfig(
+            telegram_bot_token=_resolve_env_var(notif_raw.get("telegram_bot_token")),
+            telegram_chat_id=_resolve_env_var(notif_raw.get("telegram_chat_id")),
+            prefix=notif_raw.get("prefix", ""),
+            enabled=notif_raw.get("enabled", True),
+        )
+
     return AppConfig(
-        market=MarketConfig(**raw["market"]),
+        market=market,
         backtest=BacktestConfig(**raw["backtest"]),
         strategy=StrategyConfig(
             name=raw["strategy"]["name"],
@@ -191,4 +301,6 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         portfolio=portfolio,
         risk=risk,
         position_sizing=position_sizing,
+        futures=futures,
+        notification=notification,
     )

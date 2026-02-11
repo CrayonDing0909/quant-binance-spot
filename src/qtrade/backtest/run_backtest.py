@@ -23,10 +23,21 @@ def run_symbol_backtest(
     strategy_name: str = None,
     validate_data: Optional[bool] = None,
     clean_data_before: Optional[bool] = None,
-    risk_limits: Optional[RiskLimits] = None
+    risk_limits: Optional[RiskLimits] = None,
+    market_type: str = "spot",
 ) -> dict:
     """
     運行單個交易對的回測
+
+    Args:
+        symbol: 交易對
+        data_path: K 線數據路徑
+        cfg: 配置字典
+        strategy_name: 策略名稱
+        validate_data: 是否驗證數據
+        clean_data_before: 是否清洗數據
+        risk_limits: 風險限制
+        market_type: "spot" 或 "futures"（futures 支援做空）
 
     Returns:
         {
@@ -55,14 +66,25 @@ def run_symbol_backtest(
     if should_clean:
         df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
 
-    ctx = StrategyContext(symbol=symbol, interval=cfg.get("interval", "1h"))
+    # 是否支援做空
+    supports_short = (market_type == "futures")
+    
+    ctx = StrategyContext(
+        symbol=symbol,
+        interval=cfg.get("interval", "1h"),
+        market_type=market_type,
+    )
 
     # 獲取策略函數
     strategy_name = strategy_name or cfg.get("strategy_name", "ema_cross")
     strategy_func = get_strategy(strategy_name)
 
-    # positions: 0..1 (Spot long-only)
+    # positions: [-1, 1] (Futures) 或 [0, 1] (Spot)
     pos = strategy_func(df, ctx, cfg["strategy_params"])
+    
+    # Spot 模式：將做空信號 clip 到 0
+    if not supports_short:
+        pos = pos.clip(lower=0.0)
 
     # 應用風險限制（如果提供）
     if risk_limits is not None:
@@ -84,6 +106,9 @@ def run_symbol_backtest(
     slippage = _bps_to_pct(cfg["slippage_bps"])
 
     # ── 策略 Portfolio ─────────────────────────────
+    # Spot: direction="longonly"，Futures: direction="both"
+    direction = "both" if supports_short else "longonly"
+    
     pf = vbt.Portfolio.from_orders(
         close=close,
         size=pos,
@@ -93,7 +118,7 @@ def run_symbol_backtest(
         slippage=slippage,
         init_cash=cfg["initial_cash"],
         freq="1h",
-        direction="longonly",
+        direction=direction,
     )
 
     # ── Buy & Hold 基準 ────────────────────────────

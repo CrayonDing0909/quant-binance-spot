@@ -72,6 +72,7 @@ def main() -> None:
 
     # 載入配置
     cfg = load_config(args.config)
+    market_type = cfg.market.market_type.value  # "spot" or "futures"
 
     # 確定使用的策略
     strategy_name = args.strategy or cfg.strategy.name
@@ -79,6 +80,10 @@ def main() -> None:
         print("❌ 錯誤: 未指定策略名稱")
         print("   請在配置檔中設定 strategy.name，或使用 -s/--strategy 參數")
         return
+    
+    # 市場類型標籤
+    market_emoji = "🟢" if market_type == "spot" else "🔴"
+    market_label = "SPOT" if market_type == "spot" else "FUTURES"
 
     # 確定輸出目錄
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -110,6 +115,7 @@ def main() -> None:
         json.dump(run_info, f, indent=2, ensure_ascii=False)
 
     print(f"📊 策略: {strategy_name}")
+    print(f"{market_emoji} 市場: {market_label}")
     print(f"📁 輸出目錄: {report_dir}")
     print(f"🕐 運行時間: {timestamp_str}")
 
@@ -128,18 +134,19 @@ def main() -> None:
             "clean_data_before": cfg.backtest.clean_data,
             "interval": cfg.market.interval,
         }
-        data_path = cfg.data_dir / "binance" / "spot" / cfg.market.interval / f"{sym}.parquet"
+        # 根據 market_type 選擇數據路徑
+        data_path = cfg.data_dir / "binance" / market_type / cfg.market.interval / f"{sym}.parquet"
 
         if not data_path.exists():
             print(f"⚠️  數據檔案不存在: {data_path}")
-            print(f"   請先運行: python scripts/download_data.py --symbol {sym}")
+            print(f"   請先運行: python scripts/download_data.py -c {args.config} --symbol {sym}")
             continue
 
         print(f"\n{'='*60}")
-        print(f"回測: {strategy_name} - {sym}")
+        print(f"回測: {strategy_name} - {sym} {market_emoji} [{market_label}]")
         print(f"{'='*60}")
 
-        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name)
+        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name, market_type=market_type)
         pf = res["pf"]
         pf_bh = res["pf_bh"]
 

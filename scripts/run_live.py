@@ -81,6 +81,7 @@ def cmd_run(args, cfg) -> None:
     """運行即時交易"""
     strategy_name = args.strategy or cfg.strategy.name
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
+    market_type = cfg.market.market_type.value  # "spot" or "futures"
 
     # 覆蓋 config 中的 symbols
     if args.symbol:
@@ -90,16 +91,24 @@ def cmd_run(args, cfg) -> None:
                 interval=cfg.market.interval,
                 start=cfg.market.start,
                 end=cfg.market.end,
+                market_type=cfg.market.market_type,
             ),
             backtest=cfg.backtest,
             strategy=cfg.strategy,
             output=cfg.output,
             portfolio=cfg.portfolio,
             data_dir=cfg.data_dir,
+            futures=cfg.futures,
+            notification=cfg.notification,
         )
 
-    # 初始化 Telegram 通知
-    notifier = TelegramNotifier()
+    # 初始化 Telegram 通知（從配置或環境變數）
+    notifier = TelegramNotifier.from_config(cfg.notification)
+    
+    # 市場類型標籤
+    market_emoji = "🟢" if market_type == "spot" else "🔴"
+    market_label = "SPOT" if market_type == "spot" else "FUTURES"
+    leverage = cfg.futures.leverage if cfg.futures else 1
 
     if args.real:
         # ── Real Trading 模式 ──
@@ -150,6 +159,11 @@ def cmd_run(args, cfg) -> None:
     else:
         # ── Paper Trading 模式 ──
         mode = "paper"
+        
+        print(f"{market_emoji} Paper Trading [{market_label}]")
+        if market_type == "futures":
+            print(f"   槓桿: {leverage}x")
+        print()
 
         state_dir = Path(cfg.output.report_dir) / "live" / strategy_name
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -159,6 +173,8 @@ def cmd_run(args, cfg) -> None:
             fee_bps=cfg.backtest.fee_bps,
             slippage_bps=cfg.backtest.slippage_bps,
             state_path=state_dir / "paper_state.json",
+            market_type=market_type,
+            leverage=leverage,
         )
 
         runner = LiveRunner(cfg=cfg, broker=broker, mode=mode, notifier=notifier)
@@ -168,7 +184,15 @@ def cmd_run(args, cfg) -> None:
             print(f"\n{'─'*50}")
             for sig in signals:
                 ind = sig["indicators"]
-                print(f"  {sig['symbol']}: signal={sig['signal']:.0%}, "
+                signal_val = sig['signal']
+                # 支援做空信號顯示
+                if signal_val > 0.5:
+                    signal_str = f"LONG {signal_val:.0%}"
+                elif signal_val < -0.5:
+                    signal_str = f"SHORT {abs(signal_val):.0%}"
+                else:
+                    signal_str = f"FLAT {signal_val:.0%}"
+                print(f"  {sig['symbol']}: {signal_str}, "
                       f"price={sig['price']:.2f}, "
                       f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
 
@@ -257,14 +281,30 @@ def cmd_status(args, cfg) -> None:
     with open(state_path) as f:
         state = json.load(f)
 
+    # 市場類型
+    market_type = state.get("market_type", "spot")
+    leverage = state.get("leverage", 1)
+    market_emoji = "🟢" if market_type == "spot" else "🔴"
+    market_label = "SPOT" if market_type == "spot" else f"FUTURES ({leverage}x)"
+
     print("=" * 50)
-    print(f"  Paper Trading 狀態 [{strategy_name}]")
+    print(f"  Paper Trading 狀態 {market_emoji} [{market_label}]")
+    print(f"  策略: {strategy_name}")
     print("=" * 50)
     print(f"  初始資金:  ${state['initial_cash']:,.2f}")
     print(f"  當前現金:  ${state['cash']:,.2f}")
     print(f"  持倉:")
     for sym, pos in state.get("positions", {}).items():
-        print(f"    {sym}: {pos['qty']:.6f} @ {pos['avg_entry']:.2f}")
+        qty = pos['qty']
+        # 支援做空顯示
+        if qty > 0:
+            side_label = "LONG"
+        elif qty < 0:
+            side_label = "SHORT"
+            qty = abs(qty)
+        else:
+            continue
+        print(f"    {sym} [{side_label}]: {qty:.6f} @ {pos['avg_entry']:.2f}")
     print(f"  交易筆數:  {len(state.get('trades', []))}")
 
     # 最近 5 筆交易
@@ -275,7 +315,7 @@ def cmd_status(args, cfg) -> None:
             from datetime import datetime, timezone
             ts = datetime.fromtimestamp(t["timestamp"], tz=timezone.utc).strftime("%m-%d %H:%M")
             pnl_str = f" PnL={t['pnl']:+.2f}" if t.get("pnl") is not None else ""
-            print(f"    [{ts}] {t['side']:4s} {t['symbol']} "
+            print(f"    [{ts}] {t['side']:12s} {t['symbol']} "
                   f"{t['qty']:.6f} @ {t['price']:.2f}{pnl_str}")
     print("=" * 50)
 
