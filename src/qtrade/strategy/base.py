@@ -17,15 +17,27 @@ class StrategyContext:
         symbol: 交易對
         interval: K 線週期
         market_type: 市場類型 "spot" 或 "futures"
+        direction: 交易方向 "both", "long_only", "short_only"
     """
     symbol: str
     interval: str = "1h"
     market_type: str = "spot"
+    direction: str = "both"  # "both", "long_only", "short_only"
 
     @property
     def supports_short(self) -> bool:
-        """是否支援做空（僅 futures 模式）"""
-        return self.market_type == "futures"
+        """是否支援做空（futures 且 direction 不是 long_only）"""
+        return self.market_type == "futures" and self.direction != "long_only"
+
+    @property
+    def can_long(self) -> bool:
+        """是否可以做多"""
+        return self.direction != "short_only"
+
+    @property
+    def can_short(self) -> bool:
+        """是否可以做空"""
+        return self.market_type == "futures" and self.direction != "long_only"
 
     @property
     def is_futures(self) -> bool:

@@ -155,10 +155,16 @@ class FuturesConfig:
     position_mode: 持倉模式
         - "ONE_WAY": 單向持倉（預設，同時只能多或空）
         - "HEDGE": 雙向持倉（可同時持有多空倉位）
+    
+    direction: 交易方向
+        - "both": 多空都做（預設）
+        - "long_only": 只做多（合約但不做空）
+        - "short_only": 只做空
     """
     leverage: int = 1
     margin_type: str = "ISOLATED"
     position_mode: str = "ONE_WAY"
+    direction: str = "both"  # "both", "long_only", "short_only"
 
 
 @dataclass(frozen=True)
@@ -275,6 +281,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
             leverage=futures_raw.get("leverage", 1),
             margin_type=futures_raw.get("margin_type", "ISOLATED"),
             position_mode=futures_raw.get("position_mode", "ONE_WAY"),
+            direction=futures_raw.get("direction", "both"),
         )
 
     # notification 可選

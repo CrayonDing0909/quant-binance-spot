@@ -21,6 +21,11 @@
 
     # 加上時間戳（不覆蓋舊報告）
     python scripts/run_backtest.py --timestamp
+
+    # 合約回測 - 指定交易方向
+    python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --direction both
+    python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --direction long_only
+    python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --direction short_only
 """
 from __future__ import annotations
 import argparse
@@ -67,6 +72,13 @@ def main() -> None:
         action="store_true",
         help="在輸出目錄加上時間戳，避免覆蓋舊報告"
     )
+    parser.add_argument(
+        "--direction", "-d",
+        type=str,
+        choices=["both", "long_only", "short_only"],
+        default=None,
+        help="交易方向（覆蓋配置檔）: both=多空都做, long_only=只做多, short_only=只做空"
+    )
 
     args = parser.parse_args()
 
@@ -81,9 +93,25 @@ def main() -> None:
         print("   請在配置檔中設定 strategy.name，或使用 -s/--strategy 參數")
         return
     
+    # 交易方向（命令列參數優先）
+    if args.direction:
+        direction = args.direction
+    elif cfg.futures and cfg.futures.direction:
+        direction = cfg.futures.direction
+    else:
+        direction = "both" if market_type == "futures" else "long_only"
+    
     # 市場類型標籤
     market_emoji = "🟢" if market_type == "spot" else "🔴"
     market_label = "SPOT" if market_type == "spot" else "FUTURES"
+    
+    # 交易方向標籤
+    direction_labels = {
+        "both": "📊 多空都做",
+        "long_only": "📈 只做多",
+        "short_only": "📉 只做空",
+    }
+    direction_label = direction_labels.get(direction, direction)
 
     # 確定輸出目錄
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -116,6 +144,8 @@ def main() -> None:
 
     print(f"📊 策略: {strategy_name}")
     print(f"{market_emoji} 市場: {market_label}")
+    if market_type == "futures":
+        print(f"{direction_label}")
     print(f"📁 輸出目錄: {report_dir}")
     print(f"🕐 運行時間: {timestamp_str}")
 
@@ -143,10 +173,10 @@ def main() -> None:
             continue
 
         print(f"\n{'='*60}")
-        print(f"回測: {strategy_name} - {sym} {market_emoji} [{market_label}]")
+        print(f"回測: {strategy_name} - {sym} {market_emoji} [{market_label}] {direction_label}")
         print(f"{'='*60}")
 
-        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name, market_type=market_type)
+        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name, market_type=market_type, direction=direction)
         pf = res["pf"]
         pf_bh = res["pf_bh"]
 
