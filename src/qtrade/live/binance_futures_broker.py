@@ -431,6 +431,7 @@ class BinanceFuturesBroker:
                 "positionSide": "LONG",  # Hedge Mode 必需
                 "type": "MARKET",
                 "quantity": f"{qty}",
+                "newOrderRespType": "RESULT",  # 返回成交資訊
             })
 
             exec_qty = float(result.get("executedQty", 0))
@@ -533,6 +534,7 @@ class BinanceFuturesBroker:
                 "positionSide": "SHORT",  # Hedge Mode 必需
                 "type": "MARKET",
                 "quantity": f"{qty}",
+                "newOrderRespType": "RESULT",  # 返回成交資訊
             })
 
             exec_qty = float(result.get("executedQty", 0))
@@ -638,6 +640,7 @@ class BinanceFuturesBroker:
                 "positionSide": position_side_param,  # Hedge Mode 必需
                 "type": "MARKET",
                 "quantity": f"{close_qty}",
+                "newOrderRespType": "RESULT",  # 返回成交資訊
             })
 
             exec_qty = float(result.get("executedQty", 0))
