@@ -207,8 +207,15 @@ class LiveRunner:
         # 獲取當前權益
         if isinstance(self.broker, PaperBroker):
             equity = self.broker.get_equity({symbol: price})
+        elif hasattr(self.broker, "get_equity"):
+            # Futures broker: get_equity() 不需要參數
+            # Spot broker: get_equity(symbols) 需要 symbols 列表
+            try:
+                equity = self.broker.get_equity()  # Futures
+            except TypeError:
+                equity = self.broker.get_equity([symbol])  # Spot
         else:
-            equity = getattr(self.broker, "get_equity", lambda _: 10000)([symbol])
+            equity = 10000
         
         # 計算倉位大小
         position_size = self.position_sizer.calculate_size(
