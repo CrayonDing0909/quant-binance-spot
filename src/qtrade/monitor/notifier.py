@@ -157,6 +157,8 @@ class TelegramNotifier:
         weight: float | None = None,
         leverage: int | None = None,
         liquidation_price: float | None = None,
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> bool:
         """
         發送交易通知
@@ -165,12 +167,14 @@ class TelegramNotifier:
             symbol: 交易對
             side: BUY / SELL / LONG / SHORT / CLOSE_LONG / CLOSE_SHORT
             qty: 數量
-            price: 價格
+            price: 價格（入場均價）
             reason: 原因
             pnl: 盈虧
             weight: 倉位權重
             leverage: 槓桿（合約專用）
             liquidation_price: 強平價格（合約專用）
+            stop_loss_price: 止損價格
+            take_profit_price: 止盈價格
         """
         # 根據 side 決定 emoji 和標籤
         side_map = {
@@ -194,22 +198,51 @@ class TelegramNotifier:
         leverage_str = f" ({leverage}x)" if leverage and leverage > 1 else ""
         liq_str = ""
         if liquidation_price:
-            liq_str = f"\n  強平價: ${liquidation_price:,.2f}"
+            liq_str = f"\n  🚨 強平價: ${liquidation_price:,.2f}"
+        
+        # 止損止盈
+        sl_str = ""
+        if stop_loss_price and stop_loss_price > 0:
+            sl_str = f"\n  🛡️ 止損: ${stop_loss_price:,.2f}"
+        tp_str = ""
+        if take_profit_price and take_profit_price > 0:
+            tp_str = f"\n  🎯 止盈: ${take_profit_price:,.2f}"
 
         msg = (
             f"{emoji} <b>{side_label} {symbol}</b>{weight_str}{leverage_str}\n"
-            f"  數量: {qty:.6f}\n"
-            f"  價格: ${price:,.2f}\n"
-            f"  原因: {reason}"
+            f"  📍 入場: ${price:,.2f}\n"
+            f"  📦 數量: {qty:.6f}"
+            f"{sl_str}"
+            f"{tp_str}"
             f"{liq_str}"
+            f"\n  📝 原因: {reason}"
             f"{pnl_str}"
         )
         return self.send(msg)
 
-    def send_signal_summary(self, signals: list[dict], mode: str = "PAPER") -> bool:
-        """發送信號摘要（每個 tick 結束後）"""
+    def send_signal_summary(
+        self, 
+        signals: list[dict], 
+        mode: str = "PAPER",
+        has_trade: bool = False,
+    ) -> bool:
+        """
+        發送信號摘要（每個 tick 結束後）
+        
+        Args:
+            signals: 信號列表
+            mode: PAPER / REAL
+            has_trade: 這次 tick 是否有交易
+        """
         now = datetime.now(timezone.utc).strftime("%m-%d %H:%M UTC")
-        lines = [f"📊 <b>Signal Tick</b> [{mode}] @ {now}\n"]
+        
+        # 交易狀態指示
+        if has_trade:
+            trade_status = "✅ <b>已下單</b>"
+        else:
+            trade_status = "💤 無交易（倉位不變）"
+        
+        lines = [f"📊 <b>Signal Tick</b> [{mode}] @ {now}\n{trade_status}\n"]
 
         for sig in signals:
             ind = sig.get("indicators", {})

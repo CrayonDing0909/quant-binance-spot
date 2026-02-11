@@ -381,18 +381,28 @@ class LiveRunner:
                 if ps_method != "fixed":
                     reason += f" [{ps_method}→{adjusted_signal:.0%}]"
                 
-                # v2.1: 計算硬止損價格（支援做多與做空）
+                # v2.2: 計算止損止盈價格（支援做多與做空）
                 stop_loss_price = None
+                take_profit_price = None
                 stop_loss_atr = params.get("stop_loss_atr")
+                take_profit_atr = params.get("take_profit_atr")
                 atr_value = sig.get("indicators", {}).get("atr")
                 
-                if stop_loss_atr and atr_value:
+                if atr_value:
                     if target_pct > current_pct and target_pct > 0:  # 開多/加多
-                        stop_loss_price = price - float(stop_loss_atr) * float(atr_value)
-                        logger.info(f"🛡️  {symbol} [LONG] 止損: ${stop_loss_price:,.2f} (ATR={atr_value:.2f})")
+                        if stop_loss_atr:
+                            stop_loss_price = price - float(stop_loss_atr) * float(atr_value)
+                        if take_profit_atr:
+                            take_profit_price = price + float(take_profit_atr) * float(atr_value)
+                        if stop_loss_price or take_profit_price:
+                            logger.info(f"🛡️  {symbol} [LONG] SL=${stop_loss_price:,.2f if stop_loss_price else 'N/A'}, TP=${take_profit_price:,.2f if take_profit_price else 'N/A'}")
                     elif target_pct < current_pct and target_pct < 0:  # 開空/加空
-                        stop_loss_price = price + float(stop_loss_atr) * float(atr_value)
-                        logger.info(f"🛡️  {symbol} [SHORT] 止損: ${stop_loss_price:,.2f} (ATR={atr_value:.2f})")
+                        if stop_loss_atr:
+                            stop_loss_price = price + float(stop_loss_atr) * float(atr_value)
+                        if take_profit_atr:
+                            take_profit_price = price - float(take_profit_atr) * float(atr_value)
+                        if stop_loss_price or take_profit_price:
+                            logger.info(f"🛡️  {symbol} [SHORT] SL=${stop_loss_price:,.2f if stop_loss_price else 'N/A'}, TP=${take_profit_price:,.2f if take_profit_price else 'N/A'}")
                     
                 trade = self.broker.execute_target_position(
                     symbol=symbol,
@@ -423,6 +433,7 @@ class LiveRunner:
                             self.state_manager.update_position(symbol, pos.qty, pos.avg_entry)
                     
                     # Telegram 通知交易
+                    leverage = self.cfg.futures.leverage if self.cfg.futures else None
                     self.notifier.send_trade(
                         symbol=symbol,
                         side=trade.side,
@@ -431,6 +442,9 @@ class LiveRunner:
                         reason=reason,
                         pnl=trade.pnl,
                         weight=weight,
+                        leverage=leverage if self.market_type == "futures" else None,
+                        stop_loss_price=stop_loss_price,
+                        take_profit_price=take_profit_price,
                     )
             else:
                 logger.debug(f"  {symbol}: 倉位不變 (target={target_pct:.0%}, current={current_pct:.0%})")
@@ -439,7 +453,11 @@ class LiveRunner:
         # --once 模式（cron）：每次都發，讓每小時都能看到信號狀態
         # 持續運行模式：有交易或每 6 tick 發送一次
         if has_trade or self.tick_count <= 1 or self.tick_count % 6 == 0:
-            self.notifier.send_signal_summary(signals, mode=self.mode.upper())
+            self.notifier.send_signal_summary(
+                signals, 
+                mode=self.mode.upper(),
+                has_trade=has_trade,
+            )
         
         # 每次 tick 都更新狀態檔時間戳（即使沒交易），讓健康檢查能偵測 cron 存活
         if isinstance(self.broker, PaperBroker):
