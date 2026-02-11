@@ -34,7 +34,8 @@ logger = get_logger("live_runner")
 class BrokerProtocol(Protocol):
     """Broker 通用介面，Paper 和 Real broker 都實現此介面"""
     def execute_target_position(
-        self, symbol: str, target_pct: float, current_price: float, reason: str = ""
+        self, symbol: str, target_pct: float, current_price: float, reason: str = "",
+        stop_loss_price: float | None = None, take_profit_price: float | None = None
     ) -> object | None: ...
 
     def get_position_pct(self, symbol: str, current_price: float) -> float: ...
@@ -414,6 +415,7 @@ class LiveRunner:
                     current_price=price,
                     reason=reason,
                     stop_loss_price=stop_loss_price,
+                    take_profit_price=take_profit_price,
                 )
                 if trade:
                     self.trade_count += 1

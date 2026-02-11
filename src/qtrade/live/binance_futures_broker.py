@@ -798,6 +798,139 @@ class BinanceFuturesBroker:
             logger.error(f"❌ 掛止損單失敗 {symbol}: {e}")
             return None
 
+    def place_take_profit(
+        self,
+        symbol: str,
+        take_profit_price: float,
+        position_side: str = "LONG",
+        qty: float | None = None,
+        reason: str = "take_profit",
+    ) -> FuturesOrderResult | None:
+        """
+        預掛止盈單（TAKE_PROFIT_MARKET）
+
+        當價格觸及 take_profit_price 時，交易所自動執行平倉。
+        即使程式斷線，止盈單依然有效。
+
+        Args:
+            symbol: 交易對
+            take_profit_price: 止盈觸發價格
+            position_side: "LONG" = 平多倉止盈, "SHORT" = 平空倉止盈
+            qty: 止盈數量（None = 全部平倉）
+            reason: 原因
+
+        Returns:
+            FuturesOrderResult 或 None
+        """
+        sf = self._get_filter(symbol)
+        
+        # 止盈價格精度處理
+        if sf.tick_size > 0:
+            precision = max(0, -int(math.log10(sf.tick_size)))
+            take_profit_price = round(take_profit_price, precision)
+
+        # 平多倉 = SELL, 平空倉 = BUY
+        side = "SELL" if position_side == "LONG" else "BUY"
+        
+        if self.dry_run:
+            logger.info(
+                f"🧪 [DRY-RUN] 止盈單 {symbol} [{position_side}]: "
+                f"trigger @ ${take_profit_price:,.2f} (reason={reason})"
+            )
+            return FuturesOrderResult(
+                order_id="DRY-RUN-TP",
+                symbol=symbol,
+                side=side,
+                position_side=position_side,
+                qty=qty or 0,
+                price=take_profit_price,
+                fee=0,
+                value=0,
+                pnl=None,
+                status="DRY_RUN",
+                reason=reason,
+            )
+
+        try:
+            # 先取消舊的止盈單
+            self.cancel_take_profit(symbol, position_side)
+
+            # Hedge Mode: 必須指定 positionSide
+            params = {
+                "symbol": symbol,
+                "side": side,
+                "positionSide": position_side,  # Hedge Mode 必需
+                "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": f"{take_profit_price}",
+                "closePosition": "true",  # 全部平倉
+            }
+            
+            # 如果指定數量，就不用 closePosition
+            if qty:
+                qty = sf.round_qty(qty)
+                params["quantity"] = f"{qty}"
+                del params["closePosition"]
+
+            result = self.http.signed_post("/fapi/v1/order", params)
+
+            order = FuturesOrderResult(
+                order_id=str(result["orderId"]),
+                symbol=symbol,
+                side=side,
+                position_side=position_side,
+                qty=qty or 0,
+                price=take_profit_price,
+                fee=0,
+                value=0,
+                pnl=None,
+                status=result.get("status", "NEW"),
+                reason=reason,
+                raw=result,
+            )
+            logger.info(
+                f"🎯 止盈單已掛 {symbol} [{position_side}]: "
+                f"trigger @ ${take_profit_price:,.2f} (orderId={order.order_id})"
+            )
+            return order
+
+        except Exception as e:
+            # 嘗試解析 Binance 錯誤詳情
+            error_msg = str(e)
+            try:
+                if hasattr(e, 'response') and e.response is not None:
+                    error_detail = e.response.json()
+                    error_msg = f"{e} | Binance: {error_detail}"
+            except Exception:
+                pass
+            logger.error(f"❌ 掛止盈單失敗 {symbol}: {error_msg}")
+            return None
+
+    def cancel_take_profit(self, symbol: str, position_side: str | None = None) -> bool:
+        """
+        取消該交易對的止盈單（TAKE_PROFIT_MARKET 類型）
+        
+        Args:
+            symbol: 交易對
+            position_side: 持倉方向 ("LONG" / "SHORT")，若 None 則取消所有
+        """
+        if self.dry_run:
+            logger.debug(f"🧪 [DRY-RUN] 取消止盈單 {symbol} [{position_side or 'ALL'}]")
+            return True
+
+        try:
+            orders = self.get_open_orders(symbol)
+            for order in orders:
+                if order.get("type") == "TAKE_PROFIT_MARKET":
+                    # 如果指定了 position_side，只取消該方向的止盈單
+                    if position_side and order.get("positionSide") != position_side:
+                        continue
+                    self.cancel_order(symbol, str(order["orderId"]))
+                    logger.info(f"🗑️  止盈單已取消 {symbol} [{order.get('positionSide')}] orderId={order['orderId']}")
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️  取消止盈單失敗 {symbol}: {e}")
+            return False
+
     def cancel_stop_loss(self, symbol: str, position_side: str | None = None) -> bool:
         """
         取消該交易對的止損單（STOP_MARKET 類型）
@@ -844,6 +977,7 @@ class BinanceFuturesBroker:
         current_price: float | None = None,
         reason: str = "signal",
         stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> FuturesOrderResult | None:
         """
         執行目標倉位調整
@@ -906,6 +1040,7 @@ class BinanceFuturesBroker:
             if pos and pos.qty < 0:
                 # 有空倉，先平空
                 self.cancel_stop_loss(symbol)
+                self.cancel_take_profit(symbol)
                 close_qty = min(change_notional / current_price, abs(pos.qty))
                 return self.market_close(symbol, qty=close_qty, reason=f"{reason}_close_short")
             else:
@@ -913,20 +1048,29 @@ class BinanceFuturesBroker:
                 qty = change_notional / current_price
                 result = self.market_long(symbol, qty=qty, reason=reason)
                 
-                # 開倉成功後掛止損單
-                if result and stop_loss_price and stop_loss_price > 0:
-                    self.place_stop_loss(
-                        symbol=symbol,
-                        stop_price=stop_loss_price,
-                        position_side="LONG",
-                        reason="auto_stop_loss",
-                    )
+                # 開倉成功後掛止損單和止盈單
+                if result:
+                    if stop_loss_price and stop_loss_price > 0:
+                        self.place_stop_loss(
+                            symbol=symbol,
+                            stop_price=stop_loss_price,
+                            position_side="LONG",
+                            reason="auto_stop_loss",
+                        )
+                    if take_profit_price and take_profit_price > 0:
+                        self.place_take_profit(
+                            symbol=symbol,
+                            take_profit_price=take_profit_price,
+                            position_side="LONG",
+                            reason="auto_take_profit",
+                        )
                 return result
         else:
             # 需要增加空頭曝險（或減少多頭）
             if pos and pos.qty > 0:
                 # 有多倉，先平多
                 self.cancel_stop_loss(symbol)
+                self.cancel_take_profit(symbol)
                 close_qty = min(change_notional / current_price, pos.qty)
                 return self.market_close(symbol, qty=close_qty, reason=f"{reason}_close_long")
             else:
@@ -934,14 +1078,22 @@ class BinanceFuturesBroker:
                 qty = change_notional / current_price
                 result = self.market_short(symbol, qty=qty, reason=reason)
                 
-                # 開空成功後掛止損單（空倉止損價在上方）
-                if result and stop_loss_price and stop_loss_price > 0:
-                    self.place_stop_loss(
-                        symbol=symbol,
-                        stop_price=stop_loss_price,
-                        position_side="SHORT",
-                        reason="auto_stop_loss",
-                    )
+                # 開空成功後掛止損單和止盈單（空倉止損價在上方，止盈價在下方）
+                if result:
+                    if stop_loss_price and stop_loss_price > 0:
+                        self.place_stop_loss(
+                            symbol=symbol,
+                            stop_price=stop_loss_price,
+                            position_side="SHORT",
+                            reason="auto_stop_loss",
+                        )
+                    if take_profit_price and take_profit_price > 0:
+                        self.place_take_profit(
+                            symbol=symbol,
+                            take_profit_price=take_profit_price,
+                            position_side="SHORT",
+                            reason="auto_take_profit",
+                        )
                 return result
 
     # ── 訂單管理 ──────────────────────────────────────────
