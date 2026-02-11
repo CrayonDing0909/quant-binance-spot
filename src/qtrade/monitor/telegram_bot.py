@@ -178,12 +178,22 @@ class TelegramCommandBot:
         """/ping - 檢查 Bot 是否在線"""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         
-        status_emoji = "🟢" if self.live_runner and self.live_runner.is_running else "🔴"
+        if self.live_runner and self.live_runner.is_running:
+            status_emoji = "🟢"
+            status_text = "Daemon 模式運行中"
+        elif self.live_runner:
+            status_emoji = "🔴"
+            status_text = "Daemon 已停止"
+        else:
+            # 獨立模式 - Cron 控制
+            status_emoji = "🟢"
+            status_text = "Cron 模式（每小時執行）"
         
         await update.message.reply_text(
             f"🏓 Pong!\n\n"
             f"⏰ 時間: {now}\n"
-            f"{status_emoji} Trading Bot: {'運行中' if self.live_runner and self.live_runner.is_running else '未運行'}"
+            f"{status_emoji} Trading Bot: {status_text}\n"
+            f"📡 Telegram Bot: 在線"
         )
     
     async def cmd_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -269,7 +279,15 @@ class TelegramCommandBot:
             return
         
         if not self.live_runner:
-            await update.message.reply_text("❌ 沒有連接到 LiveRunner")
+            # 獨立模式 - Cron 控制
+            await update.message.reply_text(
+                "⚠️ <b>Cron 模式</b>\n\n"
+                "Trading Bot 由 Cron 控制，無法透過 Telegram 停止。\n\n"
+                "如需停止，請 SSH 到伺服器執行：\n"
+                "<code>crontab -e</code>\n"
+                "然後註解或刪除相關行。",
+                parse_mode="HTML",
+            )
             return
         
         if not self.live_runner.is_running:
@@ -460,6 +478,9 @@ class TelegramCommandBot:
                     }
                     for t in self.broker.account.trades[-limit:]
                 ]
+        else:
+            # 獨立模式：嘗試讀取 real_state.json
+            trades = self._load_trades_from_state_file(limit)
         
         if not trades:
             lines.append("暫無交易紀錄")
@@ -471,26 +492,66 @@ class TelegramCommandBot:
             qty = t.get("qty", 0)
             price = t.get("price", 0)
             pnl = t.get("pnl")
+            timestamp = t.get("timestamp", "")
+            
+            # 格式化時間
+            time_str = ""
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    time_str = dt.strftime("%m-%d %H:%M") + " "
+                except Exception:
+                    pass
             
             side_emoji = "🟢" if "BUY" in side.upper() or "LONG" in side.upper() else "🔴"
             pnl_str = ""
             if pnl is not None:
                 pnl_emoji = "📈" if pnl > 0 else "📉"
-                pnl_str = f" {pnl_emoji} {pnl:+.2f}"
+                pnl_str = f" {pnl_emoji} ${pnl:+.2f}"
             
-            lines.append(f"{side_emoji} {symbol} {side} {qty:.4f} @ ${price:,.2f}{pnl_str}")
+            lines.append(f"{side_emoji} {time_str}{symbol} {side}\n   {qty:.4f} @ ${price:,.2f}{pnl_str}")
         
         return "\n".join(lines)
+    
+    def _load_trades_from_state_file(self, limit: int = 10) -> list[dict]:
+        """從 state 文件讀取交易紀錄"""
+        import json
+        from pathlib import Path
+        
+        # 嘗試多個可能的 state 文件路徑
+        possible_paths = [
+            Path("reports/live/rsi_adx_atr/real_state.json"),
+            Path("reports/live/rsi_adx_atr_enhanced/real_state.json"),
+            Path("reports/live/futures_rsi_adx_atr/real_state.json"),
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    return data.get("trades", [])[-limit:]
+                except Exception as e:
+                    logger.warning(f"讀取 {path} 失敗: {e}")
+        
+        return []
     
     def _get_signals(self) -> str:
         """獲取最新信號"""
         lines = ["📡 <b>最新信號</b>\n"]
         
-        if not self._last_signals:
+        # 如果有快取的信號，使用快取
+        signals = self._last_signals
+        
+        # 獨立模式：實時生成信號
+        if not signals and not self.live_runner:
+            signals = self._generate_realtime_signals()
+        
+        if not signals:
             lines.append("暫無信號（等待下一個 Tick）")
             return "\n".join(lines)
         
-        for sig in self._last_signals:
+        for sig in signals:
             symbol = sig.get("symbol", "?")
             signal = sig.get("signal", 0)
             price = sig.get("price", 0)
@@ -520,6 +581,34 @@ class TelegramCommandBot:
         
         return "\n".join(lines)
     
+    def _generate_realtime_signals(self) -> list[dict]:
+        """實時生成信號（獨立模式用）"""
+        signals = []
+        
+        # 預設交易對
+        symbols = ["BTCUSDT", "ETHUSDT"]
+        strategy_name = "rsi_adx_atr"
+        interval = "1h"
+        
+        try:
+            from ..live.signal_generator import generate_signal
+            
+            for symbol in symbols:
+                try:
+                    sig = generate_signal(
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        params={},  # 使用預設參數
+                        interval=interval,
+                    )
+                    signals.append(sig)
+                except Exception as e:
+                    logger.warning(f"生成 {symbol} 信號失敗: {e}")
+        except ImportError as e:
+            logger.warning(f"無法導入 signal_generator: {e}")
+        
+        return signals
+    
     def _get_stats(self) -> str:
         """獲取交易統計"""
         lines = ["📊 <b>交易統計</b>\n"]
@@ -545,9 +634,56 @@ class TelegramCommandBot:
             lines.append(f"📈 平均獲利: ${stats.get('avg_win', 0):,.2f}")
             lines.append(f"📉 平均虧損: ${stats.get('avg_loss', 0):,.2f}")
         else:
-            lines.append("⚠️ 無法獲取統計資訊")
+            # 獨立模式：從 state 文件讀取
+            stats = self._load_stats_from_state_file()
+            if stats:
+                lines.append(f"📝 總交易: {stats.get('total_trades', 0)} 筆")
+                lines.append(f"✅ 獲勝: {stats.get('winning_trades', 0)} 筆")
+                lines.append(f"❌ 虧損: {stats.get('losing_trades', 0)} 筆")
+                win_rate = stats.get('win_rate', 0)
+                lines.append(f"🎯 勝率: {win_rate:.1%}")
+                lines.append(f"💰 累積 PnL: ${stats.get('cumulative_pnl', 0):,.2f}")
+                lines.append(f"📉 最大回撤: {stats.get('max_drawdown_pct', 0):.2f}%")
+            else:
+                lines.append("⚠️ 暫無交易統計（尚未有交易紀錄）")
         
         return "\n".join(lines)
+    
+    def _load_stats_from_state_file(self) -> dict | None:
+        """從 state 文件讀取統計資訊"""
+        import json
+        from pathlib import Path
+        
+        # 嘗試多個可能的 state 文件路徑
+        possible_paths = [
+            Path("reports/live/rsi_adx_atr/real_state.json"),
+            Path("reports/live/rsi_adx_atr_enhanced/real_state.json"),
+            Path("reports/live/futures_rsi_adx_atr/real_state.json"),
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    
+                    # 計算勝率
+                    total = data.get("total_trades", 0)
+                    winning = data.get("winning_trades", 0)
+                    win_rate = winning / total if total > 0 else 0
+                    
+                    return {
+                        "total_trades": total,
+                        "winning_trades": winning,
+                        "losing_trades": data.get("losing_trades", 0),
+                        "win_rate": win_rate,
+                        "cumulative_pnl": data.get("cumulative_pnl", 0),
+                        "max_drawdown_pct": data.get("max_drawdown_pct", 0),
+                    }
+                except Exception as e:
+                    logger.warning(f"讀取 {path} 失敗: {e}")
+        
+        return None
     
     def _get_positions(self) -> dict:
         """獲取當前持倉"""
