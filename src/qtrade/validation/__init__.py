@@ -86,6 +86,14 @@ from .consistency import (
     run_consistency_check,
 )
 
+# Backtest Self-Check (回測邏輯自檢)
+from .consistency_checker import (
+    ConsistencyChecker,
+    ConsistencyReport as BacktestCheckReport,
+    CheckResult,
+    check_strategy_consistency,
+)
+
 __all__ = [
     # Walk-Forward
     "walk_forward_analysis",
@@ -121,8 +129,13 @@ __all__ = [
     "PBOResult",
     "CPCVResult",
     "run_all_advanced_validation",
-    # Consistency
+    # Consistency (Live vs Backtest)
     "ConsistencyValidator",
     "ConsistencyReport",
     "run_consistency_check",
+    # Backtest Self-Check
+    "ConsistencyChecker",
+    "BacktestCheckReport",
+    "CheckResult",
+    "check_strategy_consistency",
 ]

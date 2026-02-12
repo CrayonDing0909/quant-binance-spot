@@ -795,6 +795,29 @@ class BinanceFuturesBroker:
             pass
         return False
 
+    @staticmethod
+    def _normalize_algo_response(result: dict, order_type: str) -> dict:
+        """
+        統一 Algo Order API 回傳格式。
+
+        Binance Algo Order 回傳示例：
+            {"clientAlgoId": "...", "success": true, "code": 0, "msg": "OK", "algoId": 123}
+        而上層期待 "orderId" 欄位。
+        """
+        # algoId / algoOrderId → orderId
+        for key in ("algoId", "algoOrderId", "orderId"):
+            if key in result:
+                result["orderId"] = str(result[key])
+                break
+        else:
+            # 都沒有的話，用 clientAlgoId
+            if "clientAlgoId" in result:
+                result["orderId"] = result["clientAlgoId"]
+
+        result.setdefault("type", order_type)
+        result["_via"] = "algoOrder"
+        return result
+
     def _place_conditional_order(
         self,
         symbol: str,
@@ -840,12 +863,11 @@ class BinanceFuturesBroker:
         }
         try:
             result = self.http.signed_post("/fapi/v1/algoOrder", params_market)
-            # 統一 key：algoOrderId → orderId（供上層使用）
-            if "algoOrderId" in result and "orderId" not in result:
-                result["orderId"] = result["algoOrderId"]
-            result.setdefault("type", market_type)
-            result["_via"] = "algoOrder"
-            logger.info(f"✅ {symbol}: 條件單已掛 via Algo Order API ({market_type})")
+            result = self._normalize_algo_response(result, market_type)
+            logger.info(
+                f"✅ {symbol}: 條件單已掛 via Algo Order API ({market_type}) "
+                f"orderId={result.get('orderId')}"
+            )
             return result
         except Exception as e_market:
             # 記錄完整錯誤方便除錯
@@ -891,10 +913,7 @@ class BinanceFuturesBroker:
             f"trigger={stop_price}, limit={limit_price}"
         )
         result = self.http.signed_post("/fapi/v1/algoOrder", params_limit)
-        if "algoOrderId" in result and "orderId" not in result:
-            result["orderId"] = result["algoOrderId"]
-        result.setdefault("type", order_kind)
-        result["_via"] = "algoOrder"
+        result = self._normalize_algo_response(result, order_kind)
         return result
 
     # ── Algo Order 查詢 / 取消 ────────────────────────────────
@@ -916,30 +935,34 @@ class BinanceFuturesBroker:
             else:
                 orders = result if isinstance(result, list) else []
 
-            # 統一欄位：triggerPrice → stopPrice
+            # 統一欄位名稱
             for o in orders:
+                # triggerPrice → stopPrice（上層用 stopPrice）
                 if "triggerPrice" in o and "stopPrice" not in o:
                     o["stopPrice"] = o["triggerPrice"]
-                if "algoOrderId" in o and "orderId" not in o:
-                    o["orderId"] = o["algoOrderId"]
+                # algoId / algoOrderId → orderId
+                for key in ("algoId", "algoOrderId"):
+                    if key in o and "orderId" not in o:
+                        o["orderId"] = str(o[key])
+                        break
             return orders
         except Exception as e:
             logger.debug(f"查詢 algo open orders 失敗: {e}")
             return []
 
     def cancel_algo_order(self, algo_order_id: str | int) -> bool:
-        """取消 Algo Order"""
+        """取消 Algo Order（嘗試 algoId 和 algoOrderId 兩種 key）"""
         if self.dry_run:
             logger.debug(f"🧪 [DRY-RUN] 取消 algo order {algo_order_id}")
             return True
         try:
             self.http.signed_delete("/fapi/v1/algoOrder", {
-                "algoOrderId": str(algo_order_id),
+                "algoId": str(algo_order_id),
             })
-            logger.info(f"🗑️  Algo 訂單已取消 algoOrderId={algo_order_id}")
+            logger.info(f"🗑️  Algo 訂單已取消 algoId={algo_order_id}")
             return True
         except Exception as e:
-            if "Unknown" in str(e):
+            if "Unknown" in str(e) or "NOT_FOUND" in str(e):
                 return True
             logger.warning(f"⚠️  取消 algo 訂單失敗 {algo_order_id}: {e}")
             return False
@@ -956,11 +979,9 @@ class BinanceFuturesBroker:
                 o["_source"] = "order"
                 orders.append(o)
         # 2) Algo open orders（/fapi/v1/algoOrder/openOrders）
+        #    get_open_algo_orders 已統一 algoId→orderId, triggerPrice→stopPrice
         for o in self.get_open_algo_orders(symbol):
             o["_source"] = "algoOrder"
-            # algo order 回傳的 id 欄位可能是 algoOrderId
-            if "algoOrderId" in o and "orderId" not in o:
-                o["orderId"] = o["algoOrderId"]
             orders.append(o)
         return orders
 
@@ -1213,17 +1234,17 @@ class BinanceFuturesBroker:
                         f"🗑️  {label}單已取消 {symbol} [{order.get('positionSide')}] "
                         f"orderId={order['orderId']}"
                     )
-            # 2) Algo orders
+            # 2) Algo orders（已統一 algoId → orderId）
             for order in self.get_open_algo_orders(symbol):
                 if order.get("type") in target_types:
                     if position_side and order.get("positionSide") != position_side:
                         continue
-                    oid = order.get("algoOrderId") or order.get("orderId")
+                    oid = order.get("orderId") or order.get("algoId") or order.get("algoOrderId")
                     if oid:
                         self.cancel_algo_order(oid)
                         logger.info(
                             f"🗑️  {label}單已取消 (algo) {symbol} [{order.get('positionSide')}] "
-                            f"algoOrderId={oid}"
+                            f"algoId={oid}"
                         )
             return True
         except Exception as e:
