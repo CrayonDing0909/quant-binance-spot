@@ -803,7 +803,7 @@ class BinanceFuturesBroker:
             symbol: 交易對
             stop_price: 止損觸發價格
             position_side: "LONG" = 平多倉止損, "SHORT" = 平空倉止損
-            qty: 止損數量（None = 全部平倉）
+            qty: 止損數量（None = 自動取得當前持倉數量）
             reason: 原因
 
         Returns:
@@ -816,6 +816,20 @@ class BinanceFuturesBroker:
             import math
             precision = max(0, -int(math.log10(sf.tick_size)))
             stop_price = round(stop_price, precision)
+
+        # 如果沒指定數量，自動從持倉取得（避免 closePosition 兼容性問題）
+        if qty is None:
+            pos = self.get_position(symbol)
+            if pos and abs(pos.qty) > 0:
+                qty = abs(pos.qty)
+            else:
+                logger.warning(f"⚠️  {symbol}: 無法取得持倉數量，無法掛止損單")
+                return None
+
+        qty = sf.round_qty(qty)
+        if qty <= 0:
+            logger.warning(f"⚠️  {symbol}: 止損數量為 0，跳過")
+            return None
 
         # 平多倉 = SELL, 平空倉 = BUY
         side = "SELL" if position_side == "LONG" else "BUY"
@@ -830,7 +844,7 @@ class BinanceFuturesBroker:
                 symbol=symbol,
                 side=side,
                 position_side=position_side,
-                qty=qty or 0,
+                qty=qty,
                 price=stop_price,
                 fee=0,
                 value=0,
@@ -844,20 +858,15 @@ class BinanceFuturesBroker:
             self.cancel_stop_loss(symbol, position_side)
 
             # Hedge Mode: 必須指定 positionSide
+            # 使用明確 quantity 而非 closePosition（Binance API 兼容性更好）
             params = {
                 "symbol": symbol,
                 "side": side,
-                "positionSide": position_side,  # Hedge Mode 必需
+                "positionSide": position_side,
                 "type": "STOP_MARKET",
                 "stopPrice": f"{stop_price}",
-                "closePosition": "true",  # 全部平倉
+                "quantity": f"{qty}",
             }
-            
-            # 如果指定數量，就不用 closePosition
-            if qty:
-                qty = sf.round_qty(qty)
-                params["quantity"] = f"{qty}"
-                del params["closePosition"]
 
             result = self.http.signed_post("/fapi/v1/order", params)
 
@@ -866,7 +875,7 @@ class BinanceFuturesBroker:
                 symbol=symbol,
                 side=side,
                 position_side=position_side,
-                qty=qty or 0,
+                qty=qty,
                 price=stop_price,
                 fee=0,
                 value=0,
@@ -877,12 +886,19 @@ class BinanceFuturesBroker:
             )
             logger.info(
                 f"🛡️  止損單已掛 {symbol} [{position_side}]: "
-                f"trigger @ ${stop_price:,.2f} (orderId={order.order_id})"
+                f"trigger @ ${stop_price:,.2f} qty={qty} (orderId={order.order_id})"
             )
             return order
 
         except Exception as e:
-            logger.error(f"❌ 掛止損單失敗 {symbol}: {e}")
+            error_msg = str(e)
+            try:
+                if hasattr(e, 'response') and e.response is not None:
+                    error_detail = e.response.json()
+                    error_msg = f"{e} | Binance: {error_detail}"
+            except Exception:
+                pass
+            logger.error(f"❌ 掛止損單失敗 {symbol}: {error_msg}")
             return None
 
     def place_take_profit(
@@ -903,7 +919,7 @@ class BinanceFuturesBroker:
             symbol: 交易對
             take_profit_price: 止盈觸發價格
             position_side: "LONG" = 平多倉止盈, "SHORT" = 平空倉止盈
-            qty: 止盈數量（None = 全部平倉）
+            qty: 止盈數量（None = 自動取得當前持倉數量）
             reason: 原因
 
         Returns:
@@ -915,6 +931,20 @@ class BinanceFuturesBroker:
         if sf.tick_size > 0:
             precision = max(0, -int(math.log10(sf.tick_size)))
             take_profit_price = round(take_profit_price, precision)
+
+        # 如果沒指定數量，自動從持倉取得（避免 closePosition 兼容性問題）
+        if qty is None:
+            pos = self.get_position(symbol)
+            if pos and abs(pos.qty) > 0:
+                qty = abs(pos.qty)
+            else:
+                logger.warning(f"⚠️  {symbol}: 無法取得持倉數量，無法掛止盈單")
+                return None
+
+        qty = sf.round_qty(qty)
+        if qty <= 0:
+            logger.warning(f"⚠️  {symbol}: 止盈數量為 0，跳過")
+            return None
 
         # 平多倉 = SELL, 平空倉 = BUY
         side = "SELL" if position_side == "LONG" else "BUY"
@@ -929,7 +959,7 @@ class BinanceFuturesBroker:
                 symbol=symbol,
                 side=side,
                 position_side=position_side,
-                qty=qty or 0,
+                qty=qty,
                 price=take_profit_price,
                 fee=0,
                 value=0,
@@ -943,20 +973,15 @@ class BinanceFuturesBroker:
             self.cancel_take_profit(symbol, position_side)
 
             # Hedge Mode: 必須指定 positionSide
+            # 使用明確 quantity 而非 closePosition（Binance API 兼容性更好）
             params = {
                 "symbol": symbol,
                 "side": side,
-                "positionSide": position_side,  # Hedge Mode 必需
+                "positionSide": position_side,
                 "type": "TAKE_PROFIT_MARKET",
                 "stopPrice": f"{take_profit_price}",
-                "closePosition": "true",  # 全部平倉
+                "quantity": f"{qty}",
             }
-            
-            # 如果指定數量，就不用 closePosition
-            if qty:
-                qty = sf.round_qty(qty)
-                params["quantity"] = f"{qty}"
-                del params["closePosition"]
 
             result = self.http.signed_post("/fapi/v1/order", params)
 
@@ -965,7 +990,7 @@ class BinanceFuturesBroker:
                 symbol=symbol,
                 side=side,
                 position_side=position_side,
-                qty=qty or 0,
+                qty=qty,
                 price=take_profit_price,
                 fee=0,
                 value=0,
@@ -976,7 +1001,7 @@ class BinanceFuturesBroker:
             )
             logger.info(
                 f"🎯 止盈單已掛 {symbol} [{position_side}]: "
-                f"trigger @ ${take_profit_price:,.2f} (orderId={order.order_id})"
+                f"trigger @ ${take_profit_price:,.2f} qty={qty} (orderId={order.order_id})"
             )
             return order
 
