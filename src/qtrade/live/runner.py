@@ -587,6 +587,28 @@ class LiveRunner:
                     except Exception as e:
                         logger.warning(f"⚠️  {symbol}: SL/TP 補掛檢查失敗: {e}")
 
+            # 附加持倉 + SL/TP 資訊到 signal dict（供 Telegram 摘要使用）
+            sig["_position"] = {"pct": current_pct}
+            if abs(current_pct) > 0.01 and not isinstance(self.broker, PaperBroker):
+                try:
+                    pos_obj = self.broker.get_position(symbol) if hasattr(self.broker, "get_position") else None
+                    if pos_obj and hasattr(pos_obj, "entry_price"):
+                        sig["_position"]["entry"] = pos_obj.entry_price
+                        sig["_position"]["qty"] = abs(pos_obj.qty)
+                        sig["_position"]["side"] = "LONG" if pos_obj.qty > 0 else "SHORT"
+
+                    if hasattr(self.broker, "get_all_conditional_orders"):
+                        orders = self.broker.get_all_conditional_orders(symbol)
+                        for o in orders:
+                            otype = o.get("type", "")
+                            trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
+                            if otype in {"STOP_MARKET", "STOP"} and trigger > 0:
+                                sig["_position"]["sl"] = trigger
+                            elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} and trigger > 0:
+                                sig["_position"]["tp"] = trigger
+                except Exception:
+                    pass  # 查詢失敗不影響主流程
+
         # 發送信號摘要到 Telegram
         # --once 模式（cron）：每次都發，讓每小時都能看到信號狀態
         # 持續運行模式：有交易或每 6 tick 發送一次

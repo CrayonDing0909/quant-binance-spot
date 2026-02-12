@@ -293,7 +293,7 @@ class TelegramNotifier:
                 emoji = "⚪"
                 signal_label = f"FLAT {signal_pct:.0%}"
             
-            lines.append(
+            sig_lines = (
                 f"{emoji} <b>{sig['symbol']}</b>: "
                 f"{signal_label}, "
                 f"${sig['price']:,.2f}\n"
@@ -301,6 +301,35 @@ class TelegramNotifier:
                 f"ADX={ind.get('adx', '?')} | "
                 f"+DI={ind.get('plus_di', '?')} -DI={ind.get('minus_di', '?')}"
             )
+            
+            # 附加持倉 + SL/TP 資訊（由 runner 注入）
+            pos_info = sig.get("_position", {})
+            pos_pct = pos_info.get("pct", 0)
+            if abs(pos_pct) > 0.01:
+                side = pos_info.get("side", "?")
+                entry = pos_info.get("entry", 0)
+                qty = pos_info.get("qty", 0)
+                is_long = side == "LONG"
+                
+                pos_str = f"\n   📦 {side} {pos_pct:+.0%}"
+                if entry > 0:
+                    pos_str += f" @ ${entry:,.2f}"
+                sig_lines += pos_str
+                
+                sl = pos_info.get("sl")
+                tp = pos_info.get("tp")
+                if sl and entry > 0 and qty > 0:
+                    sl_pnl = self._estimate_pnl(entry, sl, qty, is_long=is_long, is_short=not is_long)
+                    pnl_str = f" (<b>{sl_pnl:+.2f}</b>)" if sl_pnl is not None else ""
+                    sig_lines += f"\n   🛡️ SL: ${sl:,.2f}{pnl_str}"
+                if tp and entry > 0 and qty > 0:
+                    tp_pnl = self._estimate_pnl(entry, tp, qty, is_long=is_long, is_short=not is_long)
+                    pnl_str = f" (<b>{tp_pnl:+.2f}</b>)" if tp_pnl is not None else ""
+                    sig_lines += f"\n   🎯 TP: ${tp:,.2f}{pnl_str}"
+                if not sl and not tp:
+                    sig_lines += "\n   ⚠️ 無 SL/TP 掛單"
+            
+            lines.append(sig_lines)
 
         return self.send("\n".join(lines))
 
