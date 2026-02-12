@@ -805,13 +805,16 @@ class BinanceFuturesBroker:
         order_kind: str,   # "STOP" or "TAKE_PROFIT"
     ) -> dict:
         """
-        掛條件單（止損/止盈），自動處理 Binance API 端點兼容性。
+        掛條件單（止損/止盈），全部使用 Algo Order API。
+
+        Binance 已將條件單遷移至 /fapi/v1/algoOrder 端點。
+        關鍵差異：
+        - 使用 triggerPrice（不是 stopPrice）
+        - 必須指定 algoType=CONDITIONAL
 
         策略（按順序嘗試）：
-        1. Algo Order API — POST /fapi/v1/algoOrder (Binance 推薦)
-           使用 STOP_MARKET / TAKE_PROFIT_MARKET（市價，保證成交）
-        2. 普通 Order API — POST /fapi/v1/order
-           使用 STOP / TAKE_PROFIT（限價 + 0.5% 滑價緩衝）
+        1. STOP_MARKET / TAKE_PROFIT_MARKET（市價，保證成交）
+        2. STOP / TAKE_PROFIT（限價 + 0.5% 滑價緩衝）
 
         Args:
             order_kind: "STOP" → 止損, "TAKE_PROFIT" → 止盈
@@ -825,31 +828,42 @@ class BinanceFuturesBroker:
         sf = self._get_filter(symbol)
         market_type = f"{order_kind}_MARKET"  # STOP_MARKET or TAKE_PROFIT_MARKET
 
-        # ── 方式 1：Algo Order API（Binance 官方推薦的條件單端點）──
-        params_algo = {
+        # ── 方式 1：Algo Order API + MARKET 類型（保證成交）──
+        params_market = {
             "symbol": symbol,
             "side": side,
             "positionSide": position_side,
             "type": market_type,
-            "stopPrice": f"{stop_price}",
+            "triggerPrice": f"{stop_price}",    # ← Algo API 用 triggerPrice
             "quantity": f"{qty}",
-            "algoType": "CONDITIONAL",
+            "algoType": "CONDITIONAL",          # ← 必須指定
         }
         try:
-            result = self.http.signed_post("/fapi/v1/algoOrder", params_algo)
+            result = self.http.signed_post("/fapi/v1/algoOrder", params_market)
             # 統一 key：algoOrderId → orderId（供上層使用）
             if "algoOrderId" in result and "orderId" not in result:
                 result["orderId"] = result["algoOrderId"]
+            result.setdefault("type", market_type)
             result["_via"] = "algoOrder"
             logger.info(f"✅ {symbol}: 條件單已掛 via Algo Order API ({market_type})")
             return result
-        except Exception as e_algo:
-            logger.info(
-                f"ℹ️  {symbol}: Algo Order API ({market_type}) 失敗，嘗試限價條件單"
+        except Exception as e_market:
+            # 記錄完整錯誤方便除錯
+            err_detail = str(e_market)
+            try:
+                if hasattr(e_market, 'response') and e_market.response is not None:
+                    err_detail = f"{e_market} | {e_market.response.text}"
+            except Exception:
+                pass
+            logger.warning(
+                f"⚠️  {symbol}: Algo Order ({market_type}) 失敗: {err_detail}"
             )
-            logger.debug(f"  Algo Order error: {e_algo}")
 
-        # ── 方式 2：普通 Order API + 限價條件單 ──
+            # 若不是 -4120（order type not supported），不做 fallback
+            if not self._is_binance_error(e_market, -4120):
+                raise
+
+        # ── 方式 2：Algo Order API + LIMIT 類型 ──
         # 計算限價：0.5% 滑價緩衝確保觸發後成交
         slippage = 0.005
         if side == "BUY":
@@ -865,20 +879,32 @@ class BinanceFuturesBroker:
             "symbol": symbol,
             "side": side,
             "positionSide": position_side,
-            "type": order_kind,           # STOP or TAKE_PROFIT (限價版)
-            "stopPrice": f"{stop_price}",
+            "type": order_kind,               # STOP or TAKE_PROFIT (限價版)
+            "triggerPrice": f"{stop_price}",   # ← Algo API 用 triggerPrice
             "price": f"{limit_price}",
             "quantity": f"{qty}",
             "timeInForce": "GTC",
+            "algoType": "CONDITIONAL",         # ← 必須指定
         }
-        result = self.http.signed_post("/fapi/v1/order", params_limit)
-        result["_via"] = "order"
+        logger.info(
+            f"ℹ️  {symbol}: 改用 Algo Order API 限價條件單 ({order_kind}) "
+            f"trigger={stop_price}, limit={limit_price}"
+        )
+        result = self.http.signed_post("/fapi/v1/algoOrder", params_limit)
+        if "algoOrderId" in result and "orderId" not in result:
+            result["orderId"] = result["algoOrderId"]
+        result.setdefault("type", order_kind)
+        result["_via"] = "algoOrder"
         return result
 
     # ── Algo Order 查詢 / 取消 ────────────────────────────────
 
     def get_open_algo_orders(self, symbol: str | None = None) -> list[dict]:
-        """查詢 Algo Order API 的未成交條件單"""
+        """
+        查詢 Algo Order API 的未成交條件單。
+        回傳的每筆 order 會自動補上 "stopPrice" 欄位（從 triggerPrice 映射），
+        以便上層統一用 stopPrice 讀取。
+        """
         try:
             params = {}
             if symbol:
@@ -886,8 +912,17 @@ class BinanceFuturesBroker:
             result = self.http.signed_get("/fapi/v1/algoOrder/openOrders", params)
             # 回傳可能是 {"orders": [...]} 或直接 [...]
             if isinstance(result, dict) and "orders" in result:
-                return result["orders"]
-            return result if isinstance(result, list) else []
+                orders = result["orders"]
+            else:
+                orders = result if isinstance(result, list) else []
+
+            # 統一欄位：triggerPrice → stopPrice
+            for o in orders:
+                if "triggerPrice" in o and "stopPrice" not in o:
+                    o["stopPrice"] = o["triggerPrice"]
+                if "algoOrderId" in o and "orderId" not in o:
+                    o["orderId"] = o["algoOrderId"]
+            return orders
         except Exception as e:
             logger.debug(f"查詢 algo open orders 失敗: {e}")
             return []
