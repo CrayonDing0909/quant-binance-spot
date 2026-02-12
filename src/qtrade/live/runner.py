@@ -380,6 +380,46 @@ class LiveRunner:
             current_pct = self.broker.get_position_pct(symbol, price)
             diff = abs(target_pct - current_pct)
 
+            # v2.4: SL/TP 冷卻檢查 — 防止交易所止損後立刻重新進場
+            # 場景：bar 開頭幾分鐘 SL/TP 被觸發 → 倉位歸零 → cron 用舊 bar 信號重新開倉
+            # 檢測邏輯：
+            #   1. 策略要求開倉（target ≠ 0）但 broker 無持倉（current ≈ 0）
+            #   2. 交易所沒有 SL/TP 掛單（已被消耗）
+            #   3. 最近 10 分鐘內有成交紀錄（= SL/TP 剛被觸發）
+            #   → 跳過本次開倉，等下根 bar 讓策略重新確認
+            if (
+                abs(current_pct) < 0.01              # 目前幾乎無倉
+                and abs(target_pct) > 0.02            # 策略要求開倉
+                and not isinstance(self.broker, PaperBroker)
+                and hasattr(self.broker, "get_open_orders")
+                and hasattr(self.broker, "get_trade_history")
+            ):
+                try:
+                    open_orders = self.broker.get_open_orders(symbol)
+                    sl_tp_types = {"STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"}
+                    has_sl_tp = any(o.get("type") in sl_tp_types for o in open_orders)
+
+                    if not has_sl_tp:
+                        # 無 SL/TP 掛單 → 可能剛被觸發，查最近成交
+                        # 只檢查 10 分鐘窗口：SL/TP 只會在 bar 開頭 (xx:00~xx:05) 觸發
+                        # 而上一次 cron 的平倉在 ~55 分鐘前，不會誤判
+                        recent_trades = self.broker.get_trade_history(symbol=symbol, limit=5)
+                        now_ms = int(time.time() * 1000)
+                        cooldown_ms = 10 * 60 * 1000  # 10 分鐘
+
+                        recently_closed = any(
+                            now_ms - t.get("time", 0) < cooldown_ms
+                            for t in (recent_trades or [])
+                        )
+                        if recently_closed:
+                            logger.warning(
+                                f"⚠️  {symbol}: 無持倉且無 SL/TP 掛單，但最近 10min 有成交 → "
+                                f"疑似 SL/TP 觸發，跳過本次開倉（冷卻等下根 bar）"
+                            )
+                            continue  # 跳到下一個 symbol
+                except Exception as e:
+                    logger.debug(f"  {symbol}: SL/TP 冷卻檢查失敗: {e}（繼續正常流程）")
+
             if diff >= 0.02:
                 ps_method = self.cfg.position_sizing.method
                 reason = f"signal={raw_signal:.0%}×{weight:.0%}"

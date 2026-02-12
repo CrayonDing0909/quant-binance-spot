@@ -622,12 +622,23 @@ class TelegramCommandBot:
         """實時生成信號（獨立模式用）"""
         signals = []
         
-        # 預設交易對（Futures 雙向模式）
-        symbols = ["BTCUSDT", "ETHUSDT"]
-        strategy_name = "rsi_adx_atr"
-        interval = "1h"
-        market_type = "futures"
-        direction = "both"
+        # 從 LiveRunner 的 config 動態取得設定，避免硬編碼
+        if self.live_runner and hasattr(self.live_runner, "cfg"):
+            cfg = self.live_runner.cfg
+            symbols = cfg.market.symbols
+            strategy_name = cfg.strategy.name
+            interval = cfg.market.interval
+            market_type = cfg.market_type_str
+            direction = cfg.direction
+            params = dict(cfg.strategy.params) if cfg.strategy.params else {}
+        else:
+            # 無 runner 時的 fallback（獨立模式）
+            symbols = ["BTCUSDT", "ETHUSDT"]
+            strategy_name = "rsi_adx_atr"
+            interval = "1h"
+            market_type = "futures"
+            direction = "both"
+            params = {}
         
         try:
             from ..live.signal_generator import generate_signal
@@ -637,7 +648,7 @@ class TelegramCommandBot:
                     sig = generate_signal(
                         symbol=symbol,
                         strategy_name=strategy_name,
-                        params={},  # 使用預設參數
+                        params=params,
                         interval=interval,
                         market_type=market_type,
                         direction=direction,
