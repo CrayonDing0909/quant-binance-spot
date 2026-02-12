@@ -501,6 +501,54 @@ class LiveRunner:
             else:
                 logger.debug(f"  {symbol}: 倉位不變 (target={target_pct:.0%}, current={current_pct:.0%})")
 
+            # v2.5: SL/TP 補掛機制 — 確保有持倉就有 SL/TP 保護
+            # 不論是否執行了交易，每次 cron 都檢查 SL/TP 是否存在
+            # 場景：初次掛單 API 失敗、交易所清除掛單、手動取消等
+            if (
+                abs(current_pct) > 0.01                          # 有持倉
+                and not isinstance(self.broker, PaperBroker)     # 只對 Real broker
+                and hasattr(self.broker, "place_stop_loss")
+                and hasattr(self.broker, "get_open_orders")
+            ):
+                stop_loss_atr = params.get("stop_loss_atr")
+                take_profit_atr = params.get("take_profit_atr")
+                atr_value = sig.get("indicators", {}).get("atr")
+
+                if (stop_loss_atr or take_profit_atr) and atr_value:
+                    try:
+                        open_orders = self.broker.get_open_orders(symbol)
+                        has_sl = any(o.get("type") == "STOP_MARKET" for o in open_orders)
+                        has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in open_orders)
+
+                        position_side = "LONG" if current_pct > 0 else "SHORT"
+
+                        if not has_sl and stop_loss_atr:
+                            if current_pct > 0:
+                                sl_price = price - float(stop_loss_atr) * float(atr_value)
+                            else:
+                                sl_price = price + float(stop_loss_atr) * float(atr_value)
+                            logger.info(f"🔄 {symbol}: 補掛止損單 SL=${sl_price:,.2f} [{position_side}]")
+                            self.broker.place_stop_loss(
+                                symbol=symbol, stop_price=sl_price,
+                                position_side=position_side, reason="ensure_stop_loss",
+                            )
+
+                        if not has_tp and take_profit_atr:
+                            if current_pct > 0:
+                                tp_price = price + float(take_profit_atr) * float(atr_value)
+                            else:
+                                tp_price = price - float(take_profit_atr) * float(atr_value)
+                            logger.info(f"🔄 {symbol}: 補掛止盈單 TP=${tp_price:,.2f} [{position_side}]")
+                            self.broker.place_take_profit(
+                                symbol=symbol, take_profit_price=tp_price,
+                                position_side=position_side, reason="ensure_take_profit",
+                            )
+
+                        if has_sl and has_tp:
+                            logger.debug(f"  {symbol}: SL/TP 掛單正常 ✓")
+                    except Exception as e:
+                        logger.warning(f"⚠️  {symbol}: SL/TP 補掛檢查失敗: {e}")
+
         # 發送信號摘要到 Telegram
         # --once 模式（cron）：每次都發，讓每小時都能看到信號狀態
         # 持續運行模式：有交易或每 6 tick 發送一次
