@@ -338,13 +338,21 @@ class LiveRunner:
         for symbol in self.symbols:
             params = self.cfg.strategy.get_params(symbol)
 
-            # 生成信號
+            # 生成信號（傳入 market_type 和 direction，確保 Futures 模式能做空）
+            direction = "both"
+            if self.cfg.futures and self.cfg.futures.direction:
+                direction = self.cfg.futures.direction
+            elif self.market_type == "spot":
+                direction = "long_only"
+
             try:
                 sig = generate_signal(
                     symbol=symbol,
                     strategy_name=self.strategy_name,
                     params=params,
                     interval=self.interval,
+                    market_type=self.market_type,
+                    direction=direction,
                 )
             except Exception as e:
                 logger.error(f"❌ {symbol} 信號生成失敗: {e}")

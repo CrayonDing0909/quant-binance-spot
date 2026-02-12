@@ -82,6 +82,8 @@ def generate_signal(
     interval: str = "1h",
     bars: int = MIN_BARS,
     df: pd.DataFrame | None = None,
+    market_type: str = "spot",
+    direction: str = "both",
 ) -> dict:
     """
     生成單個交易對的信號
@@ -93,11 +95,13 @@ def generate_signal(
         interval: K 線週期
         bars: 需要的 K 線數量
         df: 可選，直接傳入 K 線數據（測試用）
+        market_type: 市場類型 "spot" 或 "futures"
+        direction: 交易方向 "both", "long_only", "short_only"
 
     Returns:
         {
             "symbol": str,
-            "signal": float,          # 目標倉位 [0, 1]
+            "signal": float,          # 目標倉位 [-1, 1]（futures）或 [0, 1]（spot）
             "price": float,           # 當前價格
             "timestamp": str,         # 最新 K 線時間
             "strategy": str,
@@ -119,8 +123,13 @@ def generate_signal(
             "indicators": {},
         }
 
-    # 運行策略
-    ctx = StrategyContext(symbol=symbol, interval=interval)
+    # 運行策略（傳入正確的 market_type 和 direction）
+    ctx = StrategyContext(
+        symbol=symbol,
+        interval=interval,
+        market_type=market_type,
+        direction=direction,
+    )
     strategy_func = get_strategy(strategy_name)
     positions = strategy_func(df, ctx, params)
 
