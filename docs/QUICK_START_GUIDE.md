@@ -444,7 +444,30 @@ python scripts/optimize_params.py --strategy my_rsi_strategy --metric "Sharpe Ra
 2. 找到表現最好的參數
 3. 產生優化報告
 
-### 4.3 優化指標選擇
+### 4.3 綜合回測工具 ⭐ NEW
+
+使用 `comprehensive_backtest.py` 可以一次測試多個維度：
+
+```bash
+# 完整測試（市場階段 + 倉位管理 + 出場策略 + 策略參數）
+python scripts/comprehensive_backtest.py --symbol BTCUSDT
+
+# 只測試特定維度
+python scripts/comprehensive_backtest.py --symbol BTCUSDT --test position_sizing exit_strategy
+
+# Futures 模式
+python scripts/comprehensive_backtest.py --symbol BTCUSDT --market-type futures
+```
+
+**測試維度**：
+| 維度 | 測試項目 |
+|------|---------|
+| market_regime | 牛市、熊市、震盪市、高/低波動 |
+| position_sizing | 固定倉位、Kelly 公式（全/半/四分之一） |
+| exit_strategy | ATR SL/TP、Trailing Stop、RSI Exit |
+| strategy_params | 預設、積極、保守 |
+
+### 4.4 優化指標選擇
 
 可以選擇不同的優化指標：
 
