@@ -783,6 +783,93 @@ class BinanceFuturesBroker:
                 results.append(r)
         return results
 
+    # ── 條件單共用邏輯 ────────────────────────────────────────
+
+    def _place_conditional_order(
+        self,
+        symbol: str,
+        side: str,
+        position_side: str,
+        stop_price: float,
+        qty: float,
+        order_kind: str,   # "STOP" or "TAKE_PROFIT"
+    ) -> dict:
+        """
+        掛條件單（止損/止盈），自動處理 Binance API 兼容性。
+
+        策略：
+        1. 先嘗試 STOP_MARKET / TAKE_PROFIT_MARKET（市價，保證成交）
+        2. 若 Binance 回傳 -4120（已棄用），自動改用 STOP / TAKE_PROFIT
+           （限價 + 0.5% 滑價緩衝，確保極高成交率）
+
+        Args:
+            order_kind: "STOP" → 止損, "TAKE_PROFIT" → 止盈
+
+        Returns:
+            Binance order response dict
+
+        Raises:
+            原始 Exception（若兩次都失敗）
+        """
+        sf = self._get_filter(symbol)
+
+        # ── 第一輪：嘗試 MARKET 類型 ──
+        market_type = f"{order_kind}_MARKET"  # STOP_MARKET or TAKE_PROFIT_MARKET
+        params = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": market_type,
+            "stopPrice": f"{stop_price}",
+            "quantity": f"{qty}",
+        }
+        try:
+            return self.http.signed_post("/fapi/v1/order", params)
+        except Exception as e:
+            # 檢查是否為 -4120（order type not supported）
+            is_4120 = False
+            try:
+                if hasattr(e, 'response') and e.response is not None:
+                    err_body = e.response.json()
+                    if err_body.get("code") == -4120:
+                        is_4120 = True
+            except Exception:
+                pass
+
+            if not is_4120:
+                raise  # 非 -4120 → 原樣拋出
+
+            logger.info(
+                f"ℹ️  {symbol}: {market_type} 不支援 (-4120)，改用 {order_kind} 限價單"
+            )
+
+        # ── 第二輪：改用限價條件單 ──
+        # 計算限價：給 0.5% 滑價緩衝確保成交
+        slippage = 0.005
+        if side == "BUY":
+            # 買入平倉 → 限價略高於觸發價
+            limit_price = stop_price * (1 + slippage)
+        else:
+            # 賣出平倉 → 限價略低於觸發價
+            limit_price = stop_price * (1 - slippage)
+
+        # 價格精度處理
+        if sf.tick_size > 0:
+            precision = max(0, -int(math.log10(sf.tick_size)))
+            limit_price = round(limit_price, precision)
+
+        params_limit = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": order_kind,           # STOP or TAKE_PROFIT
+            "stopPrice": f"{stop_price}",
+            "price": f"{limit_price}",
+            "quantity": f"{qty}",
+            "timeInForce": "GTC",
+        }
+        return self.http.signed_post("/fapi/v1/order", params_limit)
+
     # ── 止損單 ──────────────────────────────────────────────
 
     def place_stop_loss(
@@ -857,18 +944,10 @@ class BinanceFuturesBroker:
             # 先取消舊的止損單
             self.cancel_stop_loss(symbol, position_side)
 
-            # Hedge Mode: 必須指定 positionSide
-            # 使用明確 quantity 而非 closePosition（Binance API 兼容性更好）
-            params = {
-                "symbol": symbol,
-                "side": side,
-                "positionSide": position_side,
-                "type": "STOP_MARKET",
-                "stopPrice": f"{stop_price}",
-                "quantity": f"{qty}",
-            }
-
-            result = self.http.signed_post("/fapi/v1/order", params)
+            result = self._place_conditional_order(
+                symbol=symbol, side=side, position_side=position_side,
+                stop_price=stop_price, qty=qty, order_kind="STOP",
+            )
 
             order = FuturesOrderResult(
                 order_id=str(result["orderId"]),
@@ -972,18 +1051,10 @@ class BinanceFuturesBroker:
             # 先取消舊的止盈單
             self.cancel_take_profit(symbol, position_side)
 
-            # Hedge Mode: 必須指定 positionSide
-            # 使用明確 quantity 而非 closePosition（Binance API 兼容性更好）
-            params = {
-                "symbol": symbol,
-                "side": side,
-                "positionSide": position_side,
-                "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": f"{take_profit_price}",
-                "quantity": f"{qty}",
-            }
-
-            result = self.http.signed_post("/fapi/v1/order", params)
+            result = self._place_conditional_order(
+                symbol=symbol, side=side, position_side=position_side,
+                stop_price=take_profit_price, qty=qty, order_kind="TAKE_PROFIT",
+            )
 
             order = FuturesOrderResult(
                 order_id=str(result["orderId"]),
@@ -1017,9 +1088,14 @@ class BinanceFuturesBroker:
             logger.error(f"❌ 掛止盈單失敗 {symbol}: {error_msg}")
             return None
 
+    # 條件單類型集合（兼容 MARKET 和限價版本）
+    _TP_TYPES = {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}
+    _SL_TYPES = {"STOP_MARKET", "STOP"}
+    _SL_TP_TYPES = _TP_TYPES | _SL_TYPES
+
     def cancel_take_profit(self, symbol: str, position_side: str | None = None) -> bool:
         """
-        取消該交易對的止盈單（TAKE_PROFIT_MARKET 類型）
+        取消該交易對的止盈單（TAKE_PROFIT / TAKE_PROFIT_MARKET）
         
         Args:
             symbol: 交易對
@@ -1032,8 +1108,7 @@ class BinanceFuturesBroker:
         try:
             orders = self.get_open_orders(symbol)
             for order in orders:
-                if order.get("type") == "TAKE_PROFIT_MARKET":
-                    # 如果指定了 position_side，只取消該方向的止盈單
+                if order.get("type") in self._TP_TYPES:
                     if position_side and order.get("positionSide") != position_side:
                         continue
                     self.cancel_order(symbol, str(order["orderId"]))
@@ -1045,7 +1120,7 @@ class BinanceFuturesBroker:
 
     def cancel_stop_loss(self, symbol: str, position_side: str | None = None) -> bool:
         """
-        取消該交易對的止損單（STOP_MARKET 類型）
+        取消該交易對的止損單（STOP / STOP_MARKET）
         
         Args:
             symbol: 交易對
@@ -1058,8 +1133,7 @@ class BinanceFuturesBroker:
         try:
             orders = self.get_open_orders(symbol)
             for order in orders:
-                if order.get("type") == "STOP_MARKET":
-                    # 如果指定了 position_side，只取消該方向的止損單
+                if order.get("type") in self._SL_TYPES:
                     if position_side and order.get("positionSide") != position_side:
                         continue
                     self.cancel_order(symbol, str(order["orderId"]))
@@ -1074,7 +1148,7 @@ class BinanceFuturesBroker:
         try:
             orders = self.get_open_orders(symbol)
             for order in orders:
-                if order.get("type") == "STOP_MARKET":
+                if order.get("type") in self._SL_TYPES:
                     return order
             return None
         except Exception:

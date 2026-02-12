@@ -517,8 +517,8 @@ class LiveRunner:
                 if (stop_loss_atr or take_profit_atr) and atr_value:
                     try:
                         open_orders = self.broker.get_open_orders(symbol)
-                        has_sl = any(o.get("type") == "STOP_MARKET" for o in open_orders)
-                        has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in open_orders)
+                        has_sl = any(o.get("type") in {"STOP_MARKET", "STOP"} for o in open_orders)
+                        has_tp = any(o.get("type") in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} for o in open_orders)
 
                         position_side = "LONG" if current_pct > 0 else "SHORT"
 
