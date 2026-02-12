@@ -92,13 +92,11 @@ class TelegramBot:
     
     def _register_default_commands(self):
         """註冊預設命令"""
-        self.register_command("start", self._cmd_start, "啟動 Bot")
         self.register_command("help", self._cmd_help, "顯示幫助")
-        self.register_command("status", self._cmd_status, "帳戶狀態")
+        self.register_command("status", self._cmd_status, "帳戶狀態（含 SL/TP）")
         self.register_command("balance", self._cmd_balance, "查看餘額")
-        self.register_command("positions", self._cmd_positions, "當前持倉")
+        self.register_command("positions", self._cmd_positions, "當前持倉（詳細）")
         self.register_command("trades", self._cmd_trades, "最近交易")
-        self.register_command("price", self._cmd_price, "查詢價格")
         self.register_command("pnl", self._cmd_pnl, "今日盈虧")
         self.register_command("ping", self._cmd_ping, "測試連接")
     
@@ -240,19 +238,6 @@ class TelegramBot:
     # 預設命令處理器
     # ══════════════════════════════════════════════════════════════
     
-    def _cmd_start(self, args: list[str], chat_id: str) -> str:
-        return (
-            "🤖 <b>Trading Bot 已啟動</b>\n\n"
-            "可用命令：\n"
-            "/status - 帳戶狀態\n"
-            "/positions - 當前持倉\n"
-            "/balance - 查看餘額\n"
-            "/trades [n] - 最近交易\n"
-            "/price <symbol> - 查詢價格\n"
-            "/pnl - 今日盈虧\n"
-            "/help - 詳細幫助"
-        )
-    
     def _cmd_help(self, args: list[str], chat_id: str) -> str:
         lines = ["📖 <b>命令列表</b>\n"]
         for name, info in self._commands.items():
@@ -264,7 +249,7 @@ class TelegramBot:
         return "🏓 Pong! Bot 運行正常"
     
     def _cmd_status(self, args: list[str], chat_id: str) -> str:
-        """帳戶狀態"""
+        """帳戶狀態（含每個持倉的 SL/TP 摘要）"""
         if not self.broker:
             return "⚠️ Broker 未連接"
         
@@ -277,25 +262,81 @@ class TelegramBot:
                 equity = float(info.get("totalWalletBalance", 0)) + float(info.get("totalUnrealizedProfit", 0))
                 available = float(info.get("availableBalance", 0))
                 unrealized = float(info.get("totalUnrealizedProfit", 0))
-                margin = float(info.get("totalMarginBalance", 0))
-                can_trade = info.get("canTrade", False)
                 
                 positions = []
                 if hasattr(self.broker, "get_positions"):
                     positions = self.broker.get_positions()
                 
                 pnl_emoji = "📈" if unrealized >= 0 else "📉"
-                status_emoji = "✅" if can_trade else "❌"
                 
                 lines = [
                     f"💼 <b>帳戶狀態</b>\n",
-                    f"{status_emoji} 交易權限: {'開啟' if can_trade else '關閉'}",
                     f"💰 總權益: <b>${equity:,.2f}</b>",
                     f"💵 可用餘額: ${available:,.2f}",
-                    f"📊 保證金餘額: ${margin:,.2f}",
                     f"{pnl_emoji} 未實現盈虧: ${unrealized:+,.2f}",
-                    f"📋 持倉數量: {len(positions)} 個",
                 ]
+                
+                # 每個持倉的摘要 + SL/TP
+                if positions:
+                    lines.append(f"\n📋 <b>持倉 ({len(positions)})</b>")
+                    for pos in positions:
+                        sym = pos.symbol if hasattr(pos, "symbol") else pos.get("symbol", "?")
+                        qty = pos.qty if hasattr(pos, "qty") else pos.get("qty", 0)
+                        entry = pos.entry_price if hasattr(pos, "entry_price") else pos.get("entry_price", 0)
+                        pnl = pos.unrealized_pnl if hasattr(pos, "unrealized_pnl") else pos.get("unrealized_pnl", 0)
+                        is_long = qty > 0
+                        side = "LONG" if is_long else "SHORT"
+                        emoji = "🟢" if pnl >= 0 else "🔴"
+                        
+                        lines.append(f"{emoji} <b>{sym}</b> [{side}] ${pnl:+,.2f}")
+                        
+                        # 查詢 SL/TP
+                        if hasattr(self.broker, "get_all_conditional_orders"):
+                            try:
+                                orders = self.broker.get_all_conditional_orders(sym)
+                                sl_price, tp_price = None, None
+                                for o in orders:
+                                    trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
+                                    if trigger <= 0:
+                                        continue
+                                    otype = o.get("type", "")
+                                    if otype in {"STOP_MARKET", "STOP"}:
+                                        sl_price = trigger
+                                    elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
+                                        tp_price = trigger
+                                    elif entry > 0:
+                                        # Algo orders fallback
+                                        if is_long:
+                                            if trigger < entry:
+                                                sl_price = trigger
+                                            else:
+                                                tp_price = trigger
+                                        else:
+                                            if trigger > entry:
+                                                sl_price = trigger
+                                            else:
+                                                tp_price = trigger
+                                
+                                sl_str, tp_str = "", ""
+                                if sl_price:
+                                    sl_pnl = self._calc_pnl(entry, sl_price, abs(qty), is_long)
+                                    sl_str = f"   🛡️ SL: ${sl_price:,.2f}"
+                                    if sl_pnl is not None:
+                                        sl_str += f" ({sl_pnl:+.2f})"
+                                    lines.append(sl_str)
+                                if tp_price:
+                                    tp_pnl = self._calc_pnl(entry, tp_price, abs(qty), is_long)
+                                    tp_str = f"   🎯 TP: ${tp_price:,.2f}"
+                                    if tp_pnl is not None:
+                                        tp_str += f" ({tp_pnl:+.2f})"
+                                    lines.append(tp_str)
+                                if not sl_price and not tp_price:
+                                    lines.append("   ⚠️ 無 SL/TP")
+                            except Exception:
+                                lines.append("   ⚠️ SL/TP 查詢失敗")
+                else:
+                    lines.append("\n📭 無持倉")
+                
                 return "\n".join(lines)
             # Paper broker
             elif hasattr(self.broker, "account"):
@@ -406,41 +447,6 @@ class TelegramBot:
             return "📭 沒有交易記錄"
         except Exception as e:
             return f"❌ 獲取交易失敗: {e}"
-    
-    def _cmd_price(self, args: list[str], chat_id: str) -> str:
-        """查詢價格"""
-        if not args:
-            return "❓ 請指定交易對，例如：/price BTCUSDT"
-        
-        symbol = args[0].upper()
-        
-        try:
-            # 使用 Binance API 查詢價格
-            url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-            resp = requests.get(url, timeout=5)
-            data = resp.json()
-            
-            if "code" in data:
-                return f"❌ 無效的交易對: {symbol}"
-            
-            price = float(data["lastPrice"])
-            change_pct = float(data["priceChangePercent"])
-            high = float(data["highPrice"])
-            low = float(data["lowPrice"])
-            volume = float(data["volume"])
-            
-            emoji = "📈" if change_pct > 0 else "📉"
-            
-            return (
-                f"{emoji} <b>{symbol}</b>\n\n"
-                f"💰 價格: <b>${price:,.2f}</b>\n"
-                f"📊 24h 漲跌: {change_pct:+.2f}%\n"
-                f"🔺 最高: ${high:,.2f}\n"
-                f"🔻 最低: ${low:,.2f}\n"
-                f"📦 成交量: {volume:,.0f}"
-            )
-        except Exception as e:
-            return f"❌ 查詢價格失敗: {e}"
     
     def _cmd_pnl(self, args: list[str], chat_id: str) -> str:
         """今日盈虧"""
