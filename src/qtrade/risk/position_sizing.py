@@ -28,7 +28,7 @@ class PositionSizer(ABC):
         計算倉位大小
         
         Args:
-            signal: 信號強度 [0, 1]
+            signal: 信號強度 [-1, 1]（正=做多, 負=做空）
             equity: 當前權益
             price: 當前價格
             **kwargs: 其他參數

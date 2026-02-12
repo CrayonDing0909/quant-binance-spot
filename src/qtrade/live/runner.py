@@ -195,12 +195,12 @@ class LiveRunner:
         應用倉位計算器調整信號
         
         Args:
-            raw_signal: 原始信號 [0, 1]
+            raw_signal: 原始信號 [-1, 1]（Futures 可負；Spot 已在 run_once clip 到 [0,1]）
             price: 當前價格
             symbol: 交易對
             
         Returns:
-            調整後的信號 [0, 1]
+            調整後的信號 [-1, 1]
         """
         if self.position_sizer is None:
             return raw_signal
@@ -229,8 +229,8 @@ class LiveRunner:
         position_value = position_size * price
         adjusted_signal = position_value / equity if equity > 0 else raw_signal
         
-        # 限制在 [0, 1]
-        return max(0.0, min(1.0, adjusted_signal))
+        # 限制在 [-1, 1]（Futures 可做空，Spot 的負信號已在 run_once 提前 clip）
+        return max(-1.0, min(1.0, adjusted_signal))
 
     def _check_circuit_breaker(self) -> bool:
         """
