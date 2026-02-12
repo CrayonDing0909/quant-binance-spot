@@ -390,15 +390,16 @@ class LiveRunner:
                 if ps_method != "fixed":
                     reason += f" [{ps_method}→{adjusted_signal:.0%}]"
                 
-                # v2.2: 計算止損止盈價格（支援做多與做空）
+                # v2.3: 計算止損止盈價格（支援做多、做空、減倉後保護剩餘倉位）
                 stop_loss_price = None
                 take_profit_price = None
                 stop_loss_atr = params.get("stop_loss_atr")
                 take_profit_atr = params.get("take_profit_atr")
                 atr_value = sig.get("indicators", {}).get("atr")
                 
-                if atr_value:
-                    if target_pct > current_pct and target_pct > 0:  # 開多/加多
+                if atr_value and target_pct != 0:
+                    # 目標是多倉（不論是開多、加多、還是減倉後仍為多）
+                    if target_pct > 0:
                         if stop_loss_atr:
                             stop_loss_price = price - float(stop_loss_atr) * float(atr_value)
                         if take_profit_atr:
@@ -407,7 +408,8 @@ class LiveRunner:
                             sl_str = f"${stop_loss_price:,.2f}" if stop_loss_price else "N/A"
                             tp_str = f"${take_profit_price:,.2f}" if take_profit_price else "N/A"
                             logger.info(f"🛡️  {symbol} [LONG] SL={sl_str}, TP={tp_str}")
-                    elif target_pct < current_pct and target_pct < 0:  # 開空/加空
+                    # 目標是空倉（不論是開空、加空、還是減倉後仍為空）
+                    elif target_pct < 0:
                         if stop_loss_atr:
                             stop_loss_price = price + float(stop_loss_atr) * float(atr_value)
                         if take_profit_atr:
@@ -611,12 +613,17 @@ class LiveRunner:
                 positions_info = {}
                 total_value = usdt
                 for sym in self.symbols:
-                    qty = self.broker.get_position(sym)
-                    if qty > 0:
+                    pos = self.broker.get_position(sym)
+                    if pos and pos.is_open:
                         price = self.broker.get_price(sym)
-                        val = qty * price
+                        val = abs(pos.qty) * price
                         total_value += val
-                        positions_info[sym] = {"qty": qty, "avg_entry": price}
+                        side = "LONG" if pos.qty > 0 else "SHORT"
+                        positions_info[sym] = {
+                            "qty": pos.qty,
+                            "avg_entry": pos.entry_price,
+                            "side": side,
+                        }
 
                 logger.info(
                     f"\n{'='*50}\n"

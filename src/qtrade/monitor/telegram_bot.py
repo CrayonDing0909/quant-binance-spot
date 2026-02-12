@@ -622,10 +622,12 @@ class TelegramCommandBot:
         """實時生成信號（獨立模式用）"""
         signals = []
         
-        # 預設交易對
+        # 預設交易對（Futures 雙向模式）
         symbols = ["BTCUSDT", "ETHUSDT"]
         strategy_name = "rsi_adx_atr"
         interval = "1h"
+        market_type = "futures"
+        direction = "both"
         
         try:
             from ..live.signal_generator import generate_signal
@@ -637,6 +639,8 @@ class TelegramCommandBot:
                         strategy_name=strategy_name,
                         params={},  # 使用預設參數
                         interval=interval,
+                        market_type=market_type,
+                        direction=direction,
                     )
                     signals.append(sig)
                 except Exception as e:

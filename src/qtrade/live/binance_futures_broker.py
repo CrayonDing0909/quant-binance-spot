@@ -1122,65 +1122,102 @@ class BinanceFuturesBroker:
             self.cancel_stop_loss(symbol)
             return self.market_close(symbol, reason=reason)
 
-        if diff > 0:
-            # 需要增加多頭曝險
+        # ── 判斷：方向切換 vs 加減倉 ──
+        # 方向切換：持空倉→目標做多，或持多倉→目標做空
+        is_direction_switch = (
+            (pos and pos.qty < 0 and target_pct > 0) or
+            (pos and pos.qty > 0 and target_pct < 0)
+        )
+
+        if is_direction_switch:
+            # ── 方向切換：先全部平倉，再開新方向倉位 ──
+            old_side = "SHORT" if pos.qty < 0 else "LONG"
+            new_side = "LONG" if target_pct > 0 else "SHORT"
+            logger.info(f"🔄 {symbol}: 方向切換 {old_side} → {new_side}")
+
+            self.cancel_stop_loss(symbol)
+            self.cancel_take_profit(symbol)
+            close_result = self.market_close(symbol, reason=f"{reason}_close_{old_side.lower()}")
+
+            if close_result:
+                # 平倉成功，開新方向
+                open_notional = abs(target_pct) * equity
+                open_qty = open_notional / current_price
+                position_side = new_side
+
+                if target_pct > 0:
+                    result = self.market_long(symbol, qty=open_qty, reason=reason)
+                else:
+                    result = self.market_short(symbol, qty=open_qty, reason=reason)
+
+                if result:
+                    if stop_loss_price and stop_loss_price > 0:
+                        self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
+                                             position_side=position_side, reason="auto_stop_loss")
+                    if take_profit_price and take_profit_price > 0:
+                        self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
+                                               position_side=position_side, reason="auto_take_profit")
+                return result or close_result
+            return close_result
+
+        elif diff > 0:
             if pos and pos.qty < 0:
-                # 有空倉，先平空
-                self.cancel_stop_loss(symbol)
-                self.cancel_take_profit(symbol)
+                # 減少空倉（e.g. -50% → -30%）
                 close_qty = min(change_notional / current_price, abs(pos.qty))
-                return self.market_close(symbol, qty=close_qty, reason=f"{reason}_close_short")
+                result = self.market_close(symbol, qty=close_qty, reason=f"{reason}_reduce_short")
+                # 減倉後重新掛 SL/TP（保護剩餘倉位）
+                if result and stop_loss_price and stop_loss_price > 0:
+                    self.cancel_stop_loss(symbol)
+                    self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
+                                         position_side="SHORT", reason="auto_stop_loss")
+                if result and take_profit_price and take_profit_price > 0:
+                    self.cancel_take_profit(symbol)
+                    self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
+                                           position_side="SHORT", reason="auto_take_profit")
+                return result
             else:
                 # 開多或加多
                 qty = change_notional / current_price
                 result = self.market_long(symbol, qty=qty, reason=reason)
-                
-                # 開倉成功後掛止損單和止盈單
                 if result:
                     if stop_loss_price and stop_loss_price > 0:
-                        self.place_stop_loss(
-                            symbol=symbol,
-                            stop_price=stop_loss_price,
-                            position_side="LONG",
-                            reason="auto_stop_loss",
-                        )
+                        self.cancel_stop_loss(symbol, "LONG")
+                        self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
+                                             position_side="LONG", reason="auto_stop_loss")
                     if take_profit_price and take_profit_price > 0:
-                        self.place_take_profit(
-                            symbol=symbol,
-                            take_profit_price=take_profit_price,
-                            position_side="LONG",
-                            reason="auto_take_profit",
-                        )
+                        self.cancel_take_profit(symbol, "LONG")
+                        self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
+                                               position_side="LONG", reason="auto_take_profit")
                 return result
         else:
-            # 需要增加空頭曝險（或減少多頭）
+            # diff < 0
             if pos and pos.qty > 0:
-                # 有多倉，先平多
-                self.cancel_stop_loss(symbol)
-                self.cancel_take_profit(symbol)
+                # 減少多倉（e.g. 50% → 30%）
                 close_qty = min(change_notional / current_price, pos.qty)
-                return self.market_close(symbol, qty=close_qty, reason=f"{reason}_close_long")
+                result = self.market_close(symbol, qty=close_qty, reason=f"{reason}_reduce_long")
+                # 減倉後重新掛 SL/TP（保護剩餘倉位）
+                if result and stop_loss_price and stop_loss_price > 0:
+                    self.cancel_stop_loss(symbol)
+                    self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
+                                         position_side="LONG", reason="auto_stop_loss")
+                if result and take_profit_price and take_profit_price > 0:
+                    self.cancel_take_profit(symbol)
+                    self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
+                                           position_side="LONG", reason="auto_take_profit")
+                return result
             else:
                 # 開空或加空
                 qty = change_notional / current_price
                 result = self.market_short(symbol, qty=qty, reason=reason)
-                
-                # 開空成功後掛止損單和止盈單（空倉止損價在上方，止盈價在下方）
                 if result:
                     if stop_loss_price and stop_loss_price > 0:
-                        self.place_stop_loss(
-                            symbol=symbol,
-                            stop_price=stop_loss_price,
-                            position_side="SHORT",
-                            reason="auto_stop_loss",
-                        )
+                        self.cancel_stop_loss(symbol, "SHORT")
+                        self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
+                                             position_side="SHORT", reason="auto_stop_loss")
                     if take_profit_price and take_profit_price > 0:
-                        self.place_take_profit(
-                            symbol=symbol,
-                            take_profit_price=take_profit_price,
-                            position_side="SHORT",
-                            reason="auto_take_profit",
-                        )
+                        self.cancel_take_profit(symbol, "SHORT")
+                        self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
+                                               position_side="SHORT", reason="auto_take_profit")
                 return result
 
     # ── 訂單管理 ──────────────────────────────────────────

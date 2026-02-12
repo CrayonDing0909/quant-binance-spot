@@ -510,10 +510,18 @@ def run_consistency_check(
     
     results = {}
     
+    # 從配置取得 market_type 和 direction
+    market_type = cfg.market.market_type.value if hasattr(cfg.market.market_type, 'value') else str(cfg.market.market_type)
+    direction = cfg.futures.direction if cfg.futures else "both"
+    if market_type == "spot":
+        direction = "long_only"
+    
     validator = ConsistencyValidator(
         strategy_name=cfg.strategy.name,
         params=cfg.strategy.params,
         interval=cfg.market.interval,
+        market_type=market_type,
+        direction=direction,
     )
     
     for symbol in symbols:

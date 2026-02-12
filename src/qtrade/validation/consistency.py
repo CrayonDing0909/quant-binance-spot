@@ -211,6 +211,8 @@ class ConsistencyValidator:
         interval: str = "1h",
         signal_threshold: float = 0.05,  # 信號差異容忍度
         include_details: bool = True,  # 是否包含詳細比較（可能很大）
+        market_type: str = "spot",
+        direction: str = "both",
     ):
         """
         Args:
@@ -219,12 +221,16 @@ class ConsistencyValidator:
             interval: K 線週期
             signal_threshold: 信號差異容忍度，|diff| <= threshold 視為一致
             include_details: 是否在報告中包含每個時間點的詳細比較
+            market_type: 市場類型 "spot" 或 "futures"
+            direction: 交易方向 "both", "long_only", "short_only"
         """
         self.strategy_name = strategy_name
         self.params = params
         self.interval = interval
         self.signal_threshold = signal_threshold
         self.include_details = include_details
+        self.market_type = market_type
+        self.direction = direction
         
         # 載入策略函數
         self._strategy_func = None
@@ -437,7 +443,12 @@ class ConsistencyValidator:
         """
         from ..strategy.base import StrategyContext
         
-        ctx = StrategyContext(symbol=symbol, interval=self.interval)
+        ctx = StrategyContext(
+            symbol=symbol,
+            interval=self.interval,
+            market_type=self.market_type,
+            direction=self.direction,
+        )
         strategy_func = self._get_strategy_func()
         positions = strategy_func(df, ctx, self.params)
         
@@ -470,7 +481,12 @@ class ConsistencyValidator:
             # 這是關鍵！live 不應該看到未來數據
             live_df = df.iloc[:i+1].copy()
             
-            ctx = StrategyContext(symbol=symbol, interval=self.interval)
+            ctx = StrategyContext(
+                symbol=symbol,
+                interval=self.interval,
+                market_type=self.market_type,
+                direction=self.direction,
+            )
             live_positions = strategy_func(live_df, ctx, self.params)
             live_signal = float(live_positions.iloc[-1])
             
@@ -661,10 +677,18 @@ def run_consistency_check(
     symbols = symbols or cfg.market.symbols
     params = cfg.strategy.params
     
+    # 從配置取得 market_type 和 direction
+    market_type = cfg.market.market_type.value if hasattr(cfg.market.market_type, 'value') else str(cfg.market.market_type)
+    direction = cfg.futures.direction if cfg.futures else "both"
+    if market_type == "spot":
+        direction = "long_only"
+    
     validator = ConsistencyValidator(
         strategy_name=cfg.strategy.name,
         params=params,
         interval=cfg.market.interval,
+        market_type=market_type,
+        direction=direction,
     )
     
     results = {}
