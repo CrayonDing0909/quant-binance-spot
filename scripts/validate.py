@@ -510,18 +510,12 @@ def run_consistency_check(
     
     results = {}
     
-    # 從配置取得 market_type 和 direction
-    market_type = cfg.market.market_type.value if hasattr(cfg.market.market_type, 'value') else str(cfg.market.market_type)
-    direction = cfg.futures.direction if cfg.futures else "both"
-    if market_type == "spot":
-        direction = "long_only"
-    
     validator = ConsistencyValidator(
         strategy_name=cfg.strategy.name,
         params=cfg.strategy.params,
         interval=cfg.market.interval,
-        market_type=market_type,
-        direction=direction,
+        market_type=cfg.market_type_str,
+        direction=cfg.direction,
     )
     
     for symbol in symbols:
@@ -795,14 +789,8 @@ def main():
         print("❌ 沒有可用的數據文件，請先下載數據")
         return 1
     
-    # 準備回測配置
-    backtest_cfg = {
-        "strategy_name": cfg.strategy.name,
-        "strategy_params": cfg.strategy.params,
-        "initial_cash": cfg.backtest.initial_cash,
-        "fee_bps": cfg.backtest.fee_bps,
-        "slippage_bps": cfg.backtest.slippage_bps,
-    }
+    # 使用 AppConfig 集中方法產生回測配置（包含 market_type / direction）
+    backtest_cfg = cfg.to_backtest_dict()
     
     # 執行驗證
     walk_forward_results = {}

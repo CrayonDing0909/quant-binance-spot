@@ -119,7 +119,7 @@ def cmd_run(args, cfg) -> None:
     """運行即時交易"""
     strategy_name = args.strategy or cfg.strategy.name
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
-    market_type = cfg.market.market_type.value  # "spot" or "futures"
+    market_type = cfg.market_type_str  # "spot" or "futures"
 
     # 覆蓋 config 中的 symbols
     if args.symbol:
@@ -294,7 +294,7 @@ def cmd_run(args, cfg) -> None:
 
 def cmd_check(args, cfg) -> None:
     """檢查 Binance API 連線"""
-    market_type = cfg.market.market_type.value  # "spot" or "futures"
+    market_type = cfg.market_type_str  # "spot" or "futures"
     market_emoji = "🟢" if market_type == "spot" else "🔴"
     market_label = "SPOT" if market_type == "spot" else "FUTURES"
 

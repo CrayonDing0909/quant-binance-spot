@@ -370,7 +370,7 @@ def main() -> None:
     # 載入配置
     cfg = load_config(args.config)
     m = cfg.market
-    market_type = m.market_type.value  # "spot" or "futures"
+    market_type = cfg.market_type_str  # "spot" or "futures"
     
     # 使用命令行參數覆蓋配置
     start_date = args.start or m.start

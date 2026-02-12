@@ -26,6 +26,7 @@ from qtrade.data.storage import load_klines
 from qtrade.data.quality import validate_data_quality, clean_data
 from qtrade.strategy.base import StrategyContext
 from qtrade.strategy import get_strategy
+from qtrade.backtest.run_backtest import to_vbt_direction, clip_positions_by_direction
 
 
 def run_portfolio_backtest(
@@ -33,6 +34,7 @@ def run_portfolio_backtest(
     weights: list[float],
     cfg,
     output_dir: Path,
+    direction: str | None = None,
 ) -> dict:
     """
     執行組合回測
@@ -42,6 +44,7 @@ def run_portfolio_backtest(
         weights: 權重列表（與 symbols 對應）
         cfg: 配置對象
         output_dir: 輸出目錄
+        direction: 交易方向覆蓋（None 則自動從 config 判斷）
     
     Returns:
         組合回測結果
@@ -58,8 +61,15 @@ def run_portfolio_backtest(
     print()
     
     # 載入所有數據
-    market_type = cfg.market.market_type.value
+    market_type = cfg.market_type_str
     interval = cfg.market.interval
+    
+    # 交易方向（參數優先 → config 自動判斷）
+    direction = direction or cfg.direction
+    vbt_direction = to_vbt_direction(direction)
+    
+    print(f"📈 交易方向: {direction} (vbt: {vbt_direction})")
+    print(f"🏷️  市場類型: {market_type}")
     
     all_data = {}
     min_start = None
@@ -109,12 +119,15 @@ def run_portfolio_backtest(
             symbol=symbol,
             interval=interval,
             market_type=market_type,
-            direction="long_only",
+            direction=direction,
         )
         
         # 生成持倉信號
         pos = strategy_func(df, ctx, params)
-        pos = pos.clip(lower=0.0)  # Spot 只做多
+        
+        # 根據 direction 過濾信號（使用共用函數）
+        pos = clip_positions_by_direction(pos, market_type, direction)
+        
         all_positions[symbol] = pos
         
         # 用 vectorbt 計算（使用 open 價格執行，與 run_backtest.py 一致）
@@ -127,7 +140,7 @@ def run_portfolio_backtest(
             slippage=slippage,
             init_cash=initial_cash,
             freq="1h",
-            direction="longonly",
+            direction=vbt_direction,
         )
         
         equity_curves[symbol] = pf.value()
@@ -308,6 +321,8 @@ def main():
     parser.add_argument("-c", "--config", type=str, default="config/rsi_adx_atr.yaml", help="配置檔案")
     parser.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"], help="交易對列表")
     parser.add_argument("--weights", nargs="+", type=float, default=None, help="權重列表（與 symbols 對應）")
+    parser.add_argument("--direction", "-d", type=str, choices=["both", "long_only", "short_only"], default=None,
+                        help="交易方向（預設從 config 讀取）")
     parser.add_argument("--output-dir", type=str, default=None, help="輸出目錄")
     
     args = parser.parse_args()
@@ -335,7 +350,7 @@ def main():
     print(f"📁 輸出目錄: {output_dir}")
     
     # 執行回測
-    run_portfolio_backtest(args.symbols, weights, cfg, output_dir)
+    run_portfolio_backtest(args.symbols, weights, cfg, output_dir, direction=args.direction)
 
 
 if __name__ == "__main__":

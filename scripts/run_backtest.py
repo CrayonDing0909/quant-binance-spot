@@ -90,7 +90,7 @@ def main() -> None:
 
     # 載入配置
     cfg = load_config(args.config)
-    market_type = cfg.market.market_type.value  # "spot" or "futures"
+    market_type = cfg.market_type_str  # "spot" or "futures"
 
     # 確定使用的策略
     strategy_name = args.strategy or cfg.strategy.name
@@ -99,13 +99,8 @@ def main() -> None:
         print("   請在配置檔中設定 strategy.name，或使用 -s/--strategy 參數")
         return
     
-    # 交易方向（命令列參數優先）
-    if args.direction:
-        direction = args.direction
-    elif cfg.futures and cfg.futures.direction:
-        direction = cfg.futures.direction
-    else:
-        direction = "both" if market_type == "futures" else "long_only"
+    # 交易方向（命令列參數優先 → config 自動判斷）
+    direction = args.direction or cfg.direction
     
     # 市場類型標籤
     market_emoji = "🟢" if market_type == "spot" else "🔴"
@@ -161,17 +156,11 @@ def main() -> None:
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
 
     for sym in symbols:
-        # 準備回測配置（每個幣種使用合併後的參數）
-        bt_cfg = {
-            "initial_cash": cfg.backtest.initial_cash,
-            "fee_bps": cfg.backtest.fee_bps,
-            "slippage_bps": cfg.backtest.slippage_bps,
-            "strategy_params": cfg.strategy.get_params(sym),
-            "strategy_name": strategy_name,
-            "validate_data": cfg.backtest.validate_data,
-            "clean_data_before": cfg.backtest.clean_data,
-            "interval": cfg.market.interval,
-        }
+        # 準備回測配置（使用 AppConfig 集中方法，避免手動拼裝遺漏欄位）
+        bt_cfg = cfg.to_backtest_dict(symbol=sym)
+        # 命令列 --direction 覆蓋
+        if args.direction:
+            bt_cfg["direction"] = args.direction
         # 根據 market_type 選擇數據路徑
         data_path = cfg.data_dir / "binance" / market_type / cfg.market.interval / f"{sym}.parquet"
 
@@ -184,7 +173,7 @@ def main() -> None:
         print(f"回測: {strategy_name} - {sym} {market_emoji} [{market_label}] {direction_label}")
         print(f"{'='*60}")
 
-        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name, market_type=market_type, direction=direction)
+        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name)
         pf = res["pf"]
         pf_bh = res["pf_bh"]
 

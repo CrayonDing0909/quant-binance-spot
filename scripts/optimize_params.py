@@ -270,18 +270,13 @@ def main() -> None:
     
     for sym in symbols:
         # 準備回測配置（每個幣種使用合併後的參數）
-        bt_cfg = {
-            "initial_cash": cfg.backtest.initial_cash,
-            "fee_bps": cfg.backtest.fee_bps,
-            "slippage_bps": cfg.backtest.slippage_bps,
-            "strategy_params": cfg.strategy.get_params(sym),
-            "strategy_name": args.strategy,
-        }
+        bt_cfg = cfg.to_backtest_dict(symbol=sym)
+        
         print(f"\n{'='*60}")
-        print(f"優化策略: {args.strategy} - {sym}")
+        print(f"優化策略: {args.strategy} - {sym} [{cfg.market_type_str.upper()}] [{cfg.direction}]")
         print(f"{'='*60}")
         
-        data_path = cfg.data_dir / "binance" / "spot" / cfg.market.interval / f"{sym}.parquet"
+        data_path = cfg.data_dir / "binance" / cfg.market_type_str / cfg.market.interval / f"{sym}.parquet"
         
         if not data_path.exists():
             print(f"⚠️  數據檔案不存在: {data_path}")

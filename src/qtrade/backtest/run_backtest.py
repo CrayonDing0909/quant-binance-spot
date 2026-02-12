@@ -12,9 +12,66 @@ from ..risk.risk_limits import RiskLimits, apply_risk_limits
 from .metrics import benchmark_buy_and_hold
 
 
+# ══════════════════════════════════════════════════════════════
+# Shared constants — 所有回測相關模組共用
+# ══════════════════════════════════════════════════════════════
+
+# 我們的 direction → vectorbt direction 映射
+VBT_DIRECTION_MAP: dict[str, str] = {
+    "both": "both",
+    "long_only": "longonly",
+    "short_only": "shortonly",
+}
+
+
+def to_vbt_direction(direction: str) -> str:
+    """將我們的 direction 字串轉為 vectorbt 接受的格式"""
+    return VBT_DIRECTION_MAP.get(direction, "longonly")
+
+
+def clip_positions_by_direction(
+    pos: pd.Series,
+    market_type: str,
+    direction: str,
+) -> pd.Series:
+    """
+    根據 market_type / direction 過濾持倉信號
+    
+    - spot / long_only  → clip 掉做空信號
+    - short_only        → 轉換符號讓 vectorbt shortonly 正確運作
+    - both              → 不做處理
+    """
+    if market_type == "spot" or direction == "long_only":
+        return pos.clip(lower=0.0)
+    elif direction == "short_only":
+        # vectorbt shortonly: size>0 = 開空, size<0 = 平空
+        # 策略的 pos=-1 表示做空 → 轉換為 +1
+        return (-pos).clip(lower=0.0)
+    return pos  # "both": 保留 [-1, 1]
+
+
 def _bps_to_pct(bps: float) -> float:
     return bps / 10_000.0
 
+
+def _resolve_backtest_params(cfg: dict, **kwargs) -> dict:
+    """
+    從 cfg dict + explicit kwargs 解析回測參數
+    
+    explicit kwargs 優先（如果傳入非 None 值），否則 fallback 到 cfg dict。
+    這樣無論呼叫者是用 explicit args 還是 cfg dict 都能正確運作。
+    """
+    return {
+        "market_type": kwargs.get("market_type") or cfg.get("market_type", "spot"),
+        "direction": kwargs.get("direction") or cfg.get("direction", "both"),
+        "validate_data": kwargs.get("validate_data") if kwargs.get("validate_data") is not None else cfg.get("validate_data", True),
+        "clean_data_before": kwargs.get("clean_data_before") if kwargs.get("clean_data_before") is not None else cfg.get("clean_data_before", True),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 核心回測函數
+# ══════════════════════════════════════════════════════════════
 
 def run_symbol_backtest(
     symbol: str,
@@ -24,8 +81,8 @@ def run_symbol_backtest(
     validate_data: Optional[bool] = None,
     clean_data_before: Optional[bool] = None,
     risk_limits: Optional[RiskLimits] = None,
-    market_type: str = "spot",
-    direction: str = "both",
+    market_type: str | None = None,
+    direction: str | None = None,
 ) -> dict:
     """
     運行單個交易對的回測
@@ -33,16 +90,13 @@ def run_symbol_backtest(
     Args:
         symbol: 交易對
         data_path: K 線數據路徑
-        cfg: 配置字典
+        cfg: 配置字典（可包含 market_type / direction，作為 fallback）
         strategy_name: 策略名稱
         validate_data: 是否驗證數據
         clean_data_before: 是否清洗數據
         risk_limits: 風險限制
-        market_type: "spot" 或 "futures"（futures 支援做空）
-        direction: 交易方向
-            - "both": 多空都做（預設）
-            - "long_only": 只做多
-            - "short_only": 只做空
+        market_type: "spot" 或 "futures"（None → 從 cfg 讀取，預設 "spot"）
+        direction: "both" / "long_only" / "short_only"（None → 從 cfg 讀取）
 
     Returns:
         {
@@ -55,9 +109,19 @@ def run_symbol_backtest(
     """
     df = load_klines(data_path)
 
+    # 解析參數（explicit args 優先，fallback 到 cfg dict）
+    resolved = _resolve_backtest_params(
+        cfg,
+        market_type=market_type,
+        direction=direction,
+        validate_data=validate_data,
+        clean_data_before=clean_data_before,
+    )
+    mt = resolved["market_type"]
+    dr = resolved["direction"]
+
     # 數據質量檢查
-    should_validate = validate_data if validate_data is not None else cfg.get("validate_data", True)
-    if should_validate:
+    if resolved["validate_data"]:
         quality_report = validate_data_quality(df)
         if not quality_report.is_valid:
             print(f"⚠️  警告: {symbol} 數據質量問題")
@@ -67,15 +131,14 @@ def run_symbol_backtest(
                 print(f"  - {warning}")
 
     # 數據清洗
-    should_clean = clean_data_before if clean_data_before is not None else cfg.get("clean_data_before", True)
-    if should_clean:
+    if resolved["clean_data_before"]:
         df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
 
     ctx = StrategyContext(
         symbol=symbol,
         interval=cfg.get("interval", "1h"),
-        market_type=market_type,
-        direction=direction,
+        market_type=mt,
+        direction=dr,
     )
 
     # 獲取策略函數
@@ -85,15 +148,8 @@ def run_symbol_backtest(
     # positions: [-1, 1] (Futures) 或 [0, 1] (Spot)
     pos = strategy_func(df, ctx, cfg["strategy_params"])
     
-    # 根據 direction 過濾信號
-    if market_type == "spot" or direction == "long_only":
-        # Spot 模式或 long_only：將做空信號 clip 到 0
-        pos = pos.clip(lower=0.0)
-    elif direction == "short_only":
-        # short_only：只保留做空信號，並轉換符號讓 vectorbt 正確解讀
-        # 策略的 pos=-1 表示做空，但 vectorbt shortonly 需要 size>0 才開空
-        # 轉換：-1 → 1 (開空), 1 → -1 → clip → 0 (過濾掉做多)
-        pos = (-pos).clip(lower=0.0)
+    # 根據 direction 過濾信號（使用共用函數）
+    pos = clip_positions_by_direction(pos, mt, dr)
 
     # 應用風險限制（如果提供）
     if risk_limits is not None:
@@ -115,16 +171,7 @@ def run_symbol_backtest(
     slippage = _bps_to_pct(cfg["slippage_bps"])
 
     # ── 策略 Portfolio ─────────────────────────────
-    # vectorbt direction 參數：
-    # - "longonly": 只做多
-    # - "shortonly": 只做空
-    # - "both": 多空都做
-    vbt_direction_map = {
-        "both": "both",
-        "long_only": "longonly",
-        "short_only": "shortonly",
-    }
-    vbt_direction = vbt_direction_map.get(direction, "longonly")
+    vbt_direction = to_vbt_direction(dr)
     
     pf = vbt.Portfolio.from_orders(
         close=close,

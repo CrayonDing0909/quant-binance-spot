@@ -319,7 +319,11 @@ class PaperBroker:
 
         # 滑點：賣出價格更低
         exec_price = price * (1 - self.account.slippage_pct)
-        qty = min(value / exec_price, pos.qty)  # 不能賣超過持倉
+        raw_qty = value / exec_price
+        qty = min(raw_qty, pos.qty)  # 不能賣超過持倉
+        # 浮點精度修正：如果要平的量 ≥ 98% 持倉，視為全平
+        if raw_qty >= pos.qty * 0.98:
+            qty = pos.qty
 
         if qty < 1e-10:
             return None
@@ -331,7 +335,7 @@ class PaperBroker:
         pnl = (exec_price - pos.avg_entry) * qty - fee
 
         pos.qty -= qty
-        if pos.qty < 1e-10:
+        if pos.qty < 1e-8:
             pos.qty = 0.0
             pos.avg_entry = 0.0
 
@@ -437,7 +441,11 @@ class PaperBroker:
 
         # 滑點：買入價格更高（平空是買）
         exec_price = price * (1 + self.account.slippage_pct)
-        qty = min(value / exec_price, abs(pos.qty))  # 不能平超過持倉
+        raw_qty = value / exec_price
+        qty = min(raw_qty, abs(pos.qty))  # 不能平超過持倉
+        # 浮點精度修正：如果要平的量 ≥ 98% 持倉，視為全平
+        if raw_qty >= abs(pos.qty) * 0.98:
+            qty = abs(pos.qty)
 
         if qty < 1e-10:
             return None
@@ -453,7 +461,7 @@ class PaperBroker:
         self.account.cash += margin_release + pnl
 
         pos.qty += qty  # qty 是正數，pos.qty 是負數，相加後絕對值變小
-        if abs(pos.qty) < 1e-10:
+        if abs(pos.qty) < 1e-8:
             pos.qty = 0.0
             pos.avg_entry = 0.0
 

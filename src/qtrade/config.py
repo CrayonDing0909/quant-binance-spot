@@ -214,6 +214,44 @@ class AppConfig:
         """是否支援做空（合約模式才支援）"""
         return self.is_futures
 
+    @property
+    def market_type_str(self) -> str:
+        """市場類型字串 ('spot' / 'futures')"""
+        return self.market.market_type.value
+
+    @property
+    def direction(self) -> str:
+        """
+        交易方向 ('both' / 'long_only' / 'short_only')
+        
+        - Spot → 強制 'long_only'
+        - Futures → 從 FuturesConfig 讀取，預設 'both'
+        """
+        if not self.is_futures:
+            return "long_only"
+        if self.futures and self.futures.direction:
+            return self.futures.direction
+        return "both"
+
+    def to_backtest_dict(self, symbol: str | None = None) -> dict:
+        """
+        產生標準回測配置 dict（供 run_symbol_backtest / validation / optimize 使用）
+        
+        集中管理，避免各 script 重複建構。
+        """
+        return {
+            "strategy_name": self.strategy.name,
+            "strategy_params": self.strategy.get_params(symbol),
+            "initial_cash": self.backtest.initial_cash,
+            "fee_bps": self.backtest.fee_bps,
+            "slippage_bps": self.backtest.slippage_bps,
+            "interval": self.market.interval,
+            "market_type": self.market_type_str,
+            "direction": self.direction,
+            "validate_data": self.backtest.validate_data,
+            "clean_data_before": self.backtest.clean_data,
+        }
+
 
 def _resolve_env_var(value: str | None) -> str | None:
     """

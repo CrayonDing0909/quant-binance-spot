@@ -245,7 +245,13 @@ class TestPaperBrokerShort:
         assert -0.55 < pct < -0.45  # 考慮一些誤差
 
     def test_leverage(self):
-        """測試槓桿功能"""
+        """測試槓桿功能
+        
+        target_pct=-1.0 代表 notional = 100% equity（與 binance_futures_broker 一致）
+        槓桿只影響保證金需求，不放大 target_pct：
+        - position_value ≈ equity (10000)
+        - margin_used ≈ equity / leverage (3333)
+        """
         broker = PaperBroker(
             initial_cash=10000,
             fee_bps=0,
@@ -256,7 +262,7 @@ class TestPaperBrokerShort:
         
         assert broker.leverage == 3
         
-        # 開 3 倍槓桿空倉
+        # 開空倉 target=-1.0 → notional = 100% equity
         broker.execute_target_position(
             symbol="BTCUSDT",
             target_pct=-1.0,
@@ -264,9 +270,12 @@ class TestPaperBrokerShort:
         )
         
         pos = broker.get_position("BTCUSDT")
-        # 使用槓桿，倉位價值應該約等於 cash * leverage
+        assert pos.is_short
         position_value = abs(pos.qty) * pos.avg_entry
-        assert position_value > 10000 * 2  # 至少 2 倍（考慮保證金扣除）
+        # notional ≈ equity (10000)，槓桿只降低保證金需求
+        assert 9000 < position_value < 11000
+        # 保證金 = notional / leverage，所以剩餘 cash 應該約 10000 - 3333 ≈ 6666
+        assert broker.account.cash > 5000  # 有槓桿所以不會用掉全部 cash
 
 
 class TestSymbolPosition:

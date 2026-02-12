@@ -395,6 +395,10 @@ def kelly_backtest_comparison(
     slippage = cfg.get("slippage_bps", 5) / 10_000.0
     initial_cash = cfg.get("initial_cash", 10000)
     
+    # 從 cfg 取得 direction，使用共用映射函數
+    from .run_backtest import to_vbt_direction
+    kelly_vbt_direction = to_vbt_direction(cfg.get("direction", "long_only"))
+    
     for fraction in kelly_fractions:
         effective_kelly = kelly_stats.kelly_pct * fraction
         
@@ -422,7 +426,7 @@ def kelly_backtest_comparison(
                     slippage=slippage,
                     init_cash=initial_cash,
                     freq="1h",
-                    direction="longonly",
+                    direction=kelly_vbt_direction,
                 )
                 stats = test_pf.stats()
             else:

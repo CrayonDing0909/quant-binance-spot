@@ -66,7 +66,7 @@ class LiveRunner:
         self.strategy_name = cfg.strategy.name
         self.symbols = cfg.market.symbols
         self.interval = cfg.market.interval
-        self.market_type = cfg.market.market_type.value  # "spot" or "futures"
+        self.market_type = cfg.market_type_str  # "spot" or "futures"
         self.is_running = False
 
         # 多幣種倉位分配權重
@@ -338,12 +338,8 @@ class LiveRunner:
         for symbol in self.symbols:
             params = self.cfg.strategy.get_params(symbol)
 
-            # 生成信號（傳入 market_type 和 direction，確保 Futures 模式能做空）
-            direction = "both"
-            if self.cfg.futures and self.cfg.futures.direction:
-                direction = self.cfg.futures.direction
-            elif self.market_type == "spot":
-                direction = "long_only"
+            # 生成信號（使用 AppConfig 集中屬性，確保 Futures 模式能做空）
+            direction = self.cfg.direction
 
             try:
                 sig = generate_signal(
