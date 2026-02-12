@@ -15,10 +15,11 @@
 7. [第六步：風險管理](#第六步風險管理)
 8. [第七步：即時交易](#第七步即時交易)
 9. [第八步：監控與維運](#第八步監控與維運)
-10. [合約交易教學](#合約交易教學) ⭐ NEW
-11. [多數據源與長期歷史數據](#多數據源與長期歷史數據) ⭐ NEW
-12. [組合回測](#組合回測) ⭐ NEW
-13. [完整範例：RSI 策略](#完整範例rsi策略)
+10. [合約交易教學](#合約交易教學)
+11. [多數據源與長期歷史數據](#多數據源與長期歷史數據)
+12. [組合回測](#組合回測)
+13. [RSI Exit 策略配置](#rsi-exit-策略配置) ⭐ NEW（經驗證的最佳配置）
+14. [完整範例：RSI 策略](#完整範例rsi策略)
 
 ---
 
@@ -101,6 +102,7 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
 4. **策略優化**
    - 參數網格搜尋
    - 多指標優化
+   - **綜合回測**（市場階段 + 倉位管理 + 出場策略）⭐ NEW
 
 5. **策略驗證**
    - 過擬合檢測
@@ -510,17 +512,17 @@ python scripts/optimize_params.py --strategy my_rsi_strategy --metric "Total Ret
 
 ```bash
 # 執行標準驗證套件（Walk-Forward + Monte Carlo + Cross-Asset + Kelly）
-python scripts/validate.py -c config/rsi_adx_atr.yaml
+python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml
 
 # 快速驗證（跳過耗時測試）
-python scripts/validate.py -c config/rsi_adx_atr.yaml --quick
+python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml --quick
 
 # 完整驗證（包括一致性檢查）
-python scripts/validate.py -c config/rsi_adx_atr.yaml --full
+python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml --full
 
 # 只執行特定驗證
-python scripts/validate.py -c config/rsi_adx_atr.yaml --only walk_forward
-python scripts/validate.py -c config/rsi_adx_atr.yaml --only walk_forward,monte_carlo
+python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml --only walk_forward
+python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml --only walk_forward,monte_carlo
 ```
 
 **可用的驗證類型**：
@@ -727,17 +729,17 @@ position_sizing:
 **推薦先用 Paper Trading 觀察策略表現至少 1-2 週**。
 
 ```bash
-# 啟動 Paper Trading
-python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper
+# 啟動 Paper Trading（推薦使用經驗證的 RSI Exit 配置）
+python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper
 
 # 只交易 BTCUSDT
-python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --symbol BTCUSDT
+python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --symbol BTCUSDT
 
 # 立即執行一次（不等待 K 線收盤）
-python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once
+python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --once
 
 # 查看帳戶狀態
-python scripts/run_live.py -c config/rsi_adx_atr.yaml --status
+python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --status
 ```
 
 **Paper Trading 特點**：
@@ -795,10 +797,10 @@ crontab -e
 
 # 每小時第 5 分鐘執行（配合 1h K 線）
 # ⭐ 建議在 :05 而非 :00 執行，讓 K 線數據穩定
-5 * * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
+5 * * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --once >> logs/live.log 2>&1
 
 # 每 4 小時執行（配合 4h K 線）
-5 */4 * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
+5 */4 * * * cd /path/to/quant-binance-spot && python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --once >> logs/live.log 2>&1
 ```
 
 **重要**：
@@ -869,9 +871,9 @@ python scripts/daily_report.py -c config/rsi_adx_atr.yaml --print-only
 # 編輯 crontab
 crontab -e
 
-# === 交易執行 ===
+# === 交易執行（使用經驗證的 RSI Exit 配置）===
 # 每小時第 5 分鐘執行（讓 K 線數據穩定）
-5 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr.yaml --paper --once >> logs/live.log 2>&1
+5 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --once >> logs/live.log 2>&1
 
 # === 監控 ===
 # 每 30 分鐘健康檢查
@@ -879,11 +881,11 @@ crontab -e
 
 # === 報表 ===
 # 每天 00:05 UTC 發送日報
-5 0 * * * cd /opt/qtrade && python scripts/daily_report.py -c config/rsi_adx_atr.yaml >> logs/daily_report.log 2>&1
+5 0 * * * cd /opt/qtrade && python scripts/daily_report.py -c config/rsi_adx_atr_rsi_exit.yaml >> logs/daily_report.log 2>&1
 
 # === 驗證 ===
 # 每週日 01:00 執行一致性驗證
-0 1 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency >> logs/consistency.log 2>&1
+0 1 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml --only consistency >> logs/consistency.log 2>&1
 ```
 
 **⚠️ 常見錯誤**：
@@ -1219,6 +1221,91 @@ reports/portfolio/BTCUSDT+ETHUSDT_{timestamp}/
 ├── portfolio_equity.csv         # 組合淨值數據
 └── portfolio_stats.json         # 組合統計指標
 ```
+
+---
+
+## RSI Exit 策略配置 ⭐ NEW
+
+這是經過完整驗證的最佳策略配置，建議新手直接使用。
+
+### 13.1 策略特點
+
+**RSI Exit** 與標準 ATR TP 的區別：
+
+| 特性 | 標準配置 | RSI Exit |
+|------|----------|----------|
+| 止損 | ATR-based | ATR-based |
+| 止盈 | 固定 ATR 倍數 | **RSI overbought** |
+| 優點 | 明確目標 | 讓利潤奔跑 |
+| 適合 | 震盪市 | **趨勢市** |
+
+### 13.2 優化後的最佳參數
+
+```yaml
+# config/rsi_adx_atr_rsi_exit.yaml
+strategy:
+  name: "rsi_adx_atr"
+  params:
+    rsi_period: 10       # 更短週期，更快反應
+    oversold: 30         # 更早入場
+    overbought: 75       # 延後出場，讓利潤跑
+    min_adx: 15          # 降低趨勢門檻
+    adx_period: 14
+    stop_loss_atr: 1.5   # 更緊止損
+    take_profit_atr: null  # ⭐ 關鍵：null = RSI 出場
+    atr_period: 14
+    cooldown_bars: 4
+```
+
+### 13.3 驗證結果（2026-02-13）
+
+**Walk-Forward 驗證**：
+| 幣種 | Train Sharpe | Test Sharpe | 績效衰退 | 5-Fold |
+|------|-------------|-------------|----------|--------|
+| BTCUSDT | 3.00 | **3.43** | -14.5% | 5/5 ✅ |
+| ETHUSDT | 3.89 | **4.07** | -4.6% | 5/5 ✅ |
+
+**完整驗證摘要**：
+```
+Walk-Forward: ✅ PASS (平均衰退 -9.5%)
+Monte Carlo:  ✅ PASS (VaR 95%: 0.60%)
+DSR:          ✅ PASS (校正 SR: 3.75)
+PBO:          ✅ PASS (20%)
+Kelly:        ✅ PASS (2/2)
+```
+
+### 13.4 回測表現（2023-2026）
+
+| 幣種 | 策略收益 | Sharpe | Max DD | vs Buy&Hold |
+|------|----------|--------|--------|-------------|
+| BTCUSDT | +1,044% | 4.03 | -10.3% | 3.4x |
+| ETHUSDT | +1,663% | 3.72 | -10.4% | 23x |
+| SOLUSDT | +13,976% | 4.18 | -17.9% | - |
+
+### 13.5 快速開始
+
+```bash
+# 1. 下載數據
+python scripts/download_data.py -c config/rsi_adx_atr_rsi_exit.yaml
+
+# 2. 執行回測
+python scripts/run_backtest.py -c config/rsi_adx_atr_rsi_exit.yaml
+
+# 3. 驗證策略
+python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml
+
+# 4. Paper Trading
+python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --once
+```
+
+### 13.6 Kelly 倉位建議
+
+| 幣種 | 勝率 | 盈虧比 | 建議倉位 |
+|------|------|--------|----------|
+| BTCUSDT | 52.7% | 2.02 | **7.3%** (Quarter Kelly) |
+| ETHUSDT | 56.1% | 1.71 | **7.6%** (Quarter Kelly) |
+
+如果你有 4 個幣種 + 20% 現金儲備，每幣約 20% 權重，實際倉位 = 20% × 7.5% ≈ **1.5%** 總資金風險。
 
 ---
 
