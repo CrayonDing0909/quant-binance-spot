@@ -200,13 +200,29 @@ class TelegramNotifier:
         if liquidation_price:
             liq_str = f"\n  🚨 強平價: ${liquidation_price:,.2f}"
         
-        # 止損止盈
+        # 止損止盈（含預估盈虧）
+        is_long = side.upper() in {"BUY", "LONG"}
+        is_short = side.upper() in {"SELL", "SHORT"}
+
         sl_str = ""
         if stop_loss_price and stop_loss_price > 0:
+            sl_pnl = self._estimate_pnl(
+                entry=price, target=stop_loss_price,
+                qty=qty, is_long=is_long, is_short=is_short,
+            )
             sl_str = f"\n  🛡️ 止損: ${stop_loss_price:,.2f}"
+            if sl_pnl is not None:
+                sl_str += f" (<b>{sl_pnl:+.2f} USDT</b>)"
+
         tp_str = ""
         if take_profit_price and take_profit_price > 0:
+            tp_pnl = self._estimate_pnl(
+                entry=price, target=take_profit_price,
+                qty=qty, is_long=is_long, is_short=is_short,
+            )
             tp_str = f"\n  🎯 止盈: ${take_profit_price:,.2f}"
+            if tp_pnl is not None:
+                tp_str += f" (<b>{tp_pnl:+.2f} USDT</b>)"
 
         msg = (
             f"{emoji} <b>{side_label} {symbol}</b>{weight_str}{leverage_str}\n"
@@ -219,6 +235,23 @@ class TelegramNotifier:
             f"{pnl_str}"
         )
         return self.send(msg)
+
+    @staticmethod
+    def _estimate_pnl(
+        entry: float, target: float, qty: float,
+        is_long: bool = False, is_short: bool = False,
+    ) -> float | None:
+        """
+        估算 SL/TP 觸發時的盈虧
+
+        Returns:
+            預估 PnL (USDT)，無法判斷方向時回傳 None
+        """
+        if is_long:
+            return (target - entry) * abs(qty)
+        elif is_short:
+            return (entry - target) * abs(qty)
+        return None
 
     def send_signal_summary(
         self, 

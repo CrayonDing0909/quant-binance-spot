@@ -297,7 +297,7 @@ class TelegramBot:
             return f"❌ 獲取餘額失敗: {e}"
     
     def _cmd_positions(self, args: list[str], chat_id: str) -> str:
-        """當前持倉"""
+        """當前持倉（含 SL/TP 掛單與預估盈虧）"""
         if not self.broker:
             return "⚠️ Broker 未連接"
         
@@ -312,7 +312,27 @@ class TelegramBot:
             if not positions:
                 return "📭 目前沒有持倉"
             
-            return self._format_positions(positions)
+            # 查詢每個 symbol 的 SL/TP 掛單
+            sl_tp_map: dict[str, dict] = {}
+            if hasattr(self.broker, "get_all_conditional_orders"):
+                for pos in positions:
+                    sym = pos.symbol if hasattr(pos, "symbol") else pos.get("symbol", "")
+                    if not sym:
+                        continue
+                    try:
+                        orders = self.broker.get_all_conditional_orders(sym)
+                        sl_tp_map[sym] = {"sl": None, "tp": None}
+                        for o in orders:
+                            otype = o.get("type", "")
+                            trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
+                            if otype in {"STOP_MARKET", "STOP"} and trigger > 0:
+                                sl_tp_map[sym]["sl"] = trigger
+                            elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} and trigger > 0:
+                                sl_tp_map[sym]["tp"] = trigger
+                    except Exception:
+                        pass  # 查詢失敗不影響持倉顯示
+            
+            return self._format_positions(positions, sl_tp_map=sl_tp_map)
         except Exception as e:
             return f"❌ 獲取持倉失敗: {e}"
     
@@ -420,29 +440,84 @@ class TelegramBot:
                 lines.append(f"• {asset}: {amount:,.8f}")
         return "\n".join(lines)
     
-    def _format_positions(self, positions: dict | list) -> str:
-        """格式化持倉"""
+    def _format_positions(
+        self, positions: dict | list, sl_tp_map: dict | None = None,
+    ) -> str:
+        """格式化持倉（含 SL/TP 掛單與預估盈虧）"""
         lines = ["📊 <b>當前持倉</b>\n"]
+        sl_tp_map = sl_tp_map or {}
         
         if isinstance(positions, dict):
             positions = [{"symbol": k, **v} for k, v in positions.items()]
         
         for pos in positions:
-            symbol = pos.get("symbol", "?")
-            qty = pos.get("qty", pos.get("quantity", 0))
-            entry = pos.get("avg_entry", pos.get("entry_price", 0))
-            pnl = pos.get("unrealized_pnl", 0)
-            pnl_pct = pos.get("pnl_pct", 0)
+            # 支援 dataclass (FuturesPosition) 和 dict
+            if hasattr(pos, "symbol"):
+                symbol = pos.symbol
+                qty = pos.qty
+                entry = pos.entry_price
+                pnl = pos.unrealized_pnl
+                mark = getattr(pos, "mark_price", 0)
+                lev = getattr(pos, "leverage", 0)
+            else:
+                symbol = pos.get("symbol", "?")
+                qty = pos.get("qty", pos.get("quantity", 0))
+                entry = pos.get("avg_entry", pos.get("entry_price", 0))
+                pnl = pos.get("unrealized_pnl", 0)
+                mark = pos.get("mark_price", 0)
+                lev = pos.get("leverage", 0)
             
+            # 計算 PnL%
+            notional = abs(qty * entry) if entry else 0
+            pnl_pct = (pnl / notional * 100) if notional > 0 else 0
+            
+            is_long = qty > 0
+            side_label = "LONG" if is_long else "SHORT"
             emoji = "🟢" if pnl >= 0 else "🔴"
-            lines.append(
-                f"{emoji} <b>{symbol}</b>\n"
-                f"   數量: {qty:.6f}\n"
-                f"   入場: ${entry:,.2f}\n"
-                f"   盈虧: ${pnl:+,.2f} ({pnl_pct:+.2f}%)"
-            )
+            
+            pos_lines = [
+                f"{emoji} <b>{symbol}</b> [{side_label}]",
+                f"   數量: {abs(qty):.6f}",
+                f"   入場: ${entry:,.2f}",
+            ]
+            if mark > 0:
+                pos_lines.append(f"   現價: ${mark:,.2f}")
+            if lev and lev > 1:
+                pos_lines.append(f"   槓桿: {lev}x")
+            pos_lines.append(f"   盈虧: <b>${pnl:+,.2f}</b> ({pnl_pct:+.2f}%)")
+            
+            # SL/TP 掛單資訊
+            sl_tp = sl_tp_map.get(symbol, {})
+            sl_price = sl_tp.get("sl") if sl_tp else None
+            tp_price = sl_tp.get("tp") if sl_tp else None
+            
+            if sl_price:
+                sl_pnl = self._calc_pnl(entry, sl_price, abs(qty), is_long)
+                pnl_str = f" (<b>{sl_pnl:+.2f}</b>)" if sl_pnl is not None else ""
+                pos_lines.append(f"   🛡️ SL: ${sl_price:,.2f}{pnl_str}")
+            if tp_price:
+                tp_pnl = self._calc_pnl(entry, tp_price, abs(qty), is_long)
+                pnl_str = f" (<b>{tp_pnl:+.2f}</b>)" if tp_pnl is not None else ""
+                pos_lines.append(f"   🎯 TP: ${tp_price:,.2f}{pnl_str}")
+            
+            if not sl_price and not tp_price:
+                pos_lines.append("   ⚠️ 無 SL/TP 掛單")
+            
+            lines.append("\n".join(pos_lines))
         
-        return "\n".join(lines)
+        return "\n\n".join(lines)
+    
+    @staticmethod
+    def _calc_pnl(
+        entry: float, target: float, qty: float, is_long: bool,
+    ) -> float | None:
+        """估算觸發 SL/TP 時的盈虧 (USDT)"""
+        if entry <= 0 or qty <= 0:
+            return None
+        if is_long:
+            return (target - entry) * qty
+        else:
+            return (entry - target) * qty
     
     def _format_trades(self, trades: list) -> str:
         """格式化交易記錄"""
