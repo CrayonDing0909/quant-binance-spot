@@ -760,6 +760,37 @@ TELEGRAM_CHAT_ID=987654321
 1. 在 Telegram 搜尋 `@BotFather`，建立新 Bot 取得 Token
 2. 搜尋 `@userinfobot`，取得你的 Chat ID
 
+### 7.2.1 Telegram Command Bot ⭐ NEW
+
+除了被動通知，還支援**互動式指令**查詢帳戶狀態：
+
+```bash
+# 啟動 Telegram Bot（獨立模式）
+python scripts/run_telegram_bot.py -c config/rsi_adx_atr_rsi_exit.yaml
+```
+
+**可用指令**：
+| 指令 | 說明 |
+|------|------|
+| `/start` | 開始使用 |
+| `/help` | 查看所有指令 |
+| `/status` | 查看策略運行狀態 |
+| `/balance` | 查看帳戶餘額 |
+| `/positions` | 查看當前持倉 |
+| `/trades` | 查看最近交易記錄 |
+| `/pnl` | 查看今日 PnL |
+| `/ping` | 測試連線 |
+
+**通知內容範例**：
+```
+🟢 開倉 BTCUSDT
+方向: LONG
+數量: 0.015 BTC
+入場價: $67,500
+止損: $66,000 (-2.2%, -$22.50)
+止盈: $72,000 (+6.7%, +$67.50)
+```
+
 ### 7.3 Real Trading（真實交易）
 
 ⚠️ **警告：真實交易會使用真金白銀，請謹慎操作！**
@@ -827,6 +858,9 @@ python scripts/health_check.py --notify --notify-on-ok
 # 指定設定檔
 python scripts/health_check.py --config config/rsi_adx_atr.yaml
 
+# 檢查真實交易狀態（而非 Paper Trading）⭐ NEW
+python scripts/health_check.py --config config/rsi_adx_atr.yaml --real
+
 # 輸出 JSON 格式
 python scripts/health_check.py --json
 ```
@@ -834,7 +868,7 @@ python scripts/health_check.py --json
 **檢查項目**：
 - 📁 磁碟空間使用率
 - 💾 記憶體使用率
-- 📊 交易狀態檔案是否過期
+- 📊 交易狀態檔案是否過期（Paper 或 Real）
 - 🔄 系統執行狀態
 
 **建議 cron 設定**：
@@ -1057,7 +1091,61 @@ python scripts/test_futures_manual.py
 - `--once` 是必須的，否則會進入 daemon 模式
 - 現貨用 `--paper`，合約確認穩定後用 `--real`
 
-### 10.8 合約風險提醒 ⚠️
+### 10.8 自動止損止盈 (SL/TP) ⭐ NEW
+
+合約交易支援**自動掛止損止盈單**，不需手動監控：
+
+**工作原理**：
+1. 開倉時自動計算 SL/TP 價格（基於 ATR）
+2. 使用 Binance Algo Order API 掛條件單
+3. 每次 cron 執行時檢查並補掛遺漏的單
+
+**配置範例**：
+```yaml
+strategy:
+  params:
+    stop_loss_atr: 1.5    # 止損 = 入場價 ± 1.5×ATR
+    take_profit_atr: 4.0  # 止盈 = 入場價 ± 4.0×ATR
+```
+
+**Telegram 通知範例**：
+```
+🟢 開倉 BTCUSDT
+方向: LONG
+入場價: $67,500
+止損: $66,000 (-2.2%, -$22.50)  ← 預估虧損
+止盈: $72,000 (+6.7%, +$67.50)  ← 預估盈利
+```
+
+**注意**：
+- 平倉/減倉時會自動取消對應的 SL/TP 單
+- 如果 SL/TP 單被取消，下次 cron 會自動補掛
+- Paper Trading 不會真的掛單，只是模擬
+
+### 10.9 熔斷機制 (Circuit Breaker) ⭐ NEW
+
+當回撤超過設定閾值時，系統會自動停止交易：
+
+```yaml
+risk:
+  max_drawdown_pct: 0.65  # 65% 回撤觸發熔斷（5x 槓桿建議）
+```
+
+**工作原理**：
+1. 每次 cron 執行時計算當前回撤
+2. 如果回撤 > `max_drawdown_pct`，停止開新倉
+3. 發送 Telegram 警告通知
+4. 可手動重置或等待回撤恢復
+
+**槓桿與熔斷建議**：
+| 槓桿 | 建議熔斷線 | 說明 |
+|------|-----------|------|
+| 1x | 30% | 現貨保守 |
+| 3x | 45% | 低槓桿 |
+| 5x | 65% | 中槓桿 |
+| 10x+ | 不建議 | 風險極高 |
+
+### 10.9.1 合約風險提醒 ⚠️
 
 1. **槓桿風險**：高槓桿會放大盈虧，建議新手用 1-3 倍
 2. **強平風險**：價格劇烈波動可能觸發強制平倉
@@ -1067,7 +1155,7 @@ python scripts/test_futures_manual.py
    - 合約 max_drawdown_pct 設定更保守（如 10-15%）
    - 保留較多現金作為保證金緩衝（cash_reserve: 0.3）
 
-### 10.9 Binance 帳戶模式說明 ⭐ NEW
+### 10.10 Binance 帳戶模式說明
 
 Binance Futures 有兩種持倉模式：
 
@@ -1081,7 +1169,7 @@ Binance Futures 有兩種持倉模式：
 
 **注意**：如果你的帳戶是 **Hedge Mode**，本專案已自動支援，無需額外設定。
 
-### 10.10 回測數字的現實預期 ⭐ NEW
+### 10.11 回測數字的現實預期
 
 ⚠️ **回測報酬不等於實際報酬！**
 
