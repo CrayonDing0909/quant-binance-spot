@@ -921,11 +921,12 @@ class BinanceFuturesBroker:
     def get_open_algo_orders(self, symbol: str | None = None) -> list[dict]:
         """
         查詢 Algo Order API 的未成交條件單。
-        回傳的每筆 order 會自動補上 "stopPrice" 欄位（從 triggerPrice 映射），
-        以便上層統一用 stopPrice 讀取。
+        回傳的每筆 order 會自動補上 "stopPrice" 和 "type" 欄位，
+        以便上層統一用 stopPrice / type 讀取。
         """
         try:
-            params = {}
+            # Binance Algo Order API 必須傳 algoType
+            params: dict[str, str] = {"algoType": "CONDITIONAL"}
             if symbol:
                 params["symbol"] = symbol
             result = self.http.signed_get("/fapi/v1/algoOrder/openOrders", params)

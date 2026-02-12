@@ -269,12 +269,37 @@ class TelegramBot:
             return "⚠️ Broker 未連接"
         
         try:
-            # 嘗試獲取帳戶資訊
-            if hasattr(self.broker, "get_account_summary"):
-                summary = self.broker.get_account_summary()
-                return self._format_account_summary(summary)
+            # Futures broker: get_account_info() → raw Binance dict
+            if hasattr(self.broker, "get_account_info"):
+                info = self.broker.get_account_info()
+                if not info:
+                    return "⚠️ 無法獲取帳戶資訊（API 回傳空）"
+                equity = float(info.get("totalWalletBalance", 0)) + float(info.get("totalUnrealizedProfit", 0))
+                available = float(info.get("availableBalance", 0))
+                unrealized = float(info.get("totalUnrealizedProfit", 0))
+                margin = float(info.get("totalMarginBalance", 0))
+                can_trade = info.get("canTrade", False)
+                
+                positions = []
+                if hasattr(self.broker, "get_positions"):
+                    positions = self.broker.get_positions()
+                
+                pnl_emoji = "📈" if unrealized >= 0 else "📉"
+                status_emoji = "✅" if can_trade else "❌"
+                
+                lines = [
+                    f"💼 <b>帳戶狀態</b>\n",
+                    f"{status_emoji} 交易權限: {'開啟' if can_trade else '關閉'}",
+                    f"💰 總權益: <b>${equity:,.2f}</b>",
+                    f"💵 可用餘額: ${available:,.2f}",
+                    f"📊 保證金餘額: ${margin:,.2f}",
+                    f"{pnl_emoji} 未實現盈虧: ${unrealized:+,.2f}",
+                    f"📋 持倉數量: {len(positions)} 個",
+                ]
+                return "\n".join(lines)
+            # Paper broker
             elif hasattr(self.broker, "account"):
-                return self._format_account_summary(self.broker.account)
+                return self._format_account_summary(vars(self.broker.account) if hasattr(self.broker.account, '__dict__') else self.broker.account)
             else:
                 return "⚠️ 無法獲取帳戶資訊"
         except Exception as e:
@@ -317,20 +342,41 @@ class TelegramBot:
             if hasattr(self.broker, "get_all_conditional_orders"):
                 for pos in positions:
                     sym = pos.symbol if hasattr(pos, "symbol") else pos.get("symbol", "")
+                    entry = pos.entry_price if hasattr(pos, "entry_price") else pos.get("entry_price", 0)
+                    is_long = (pos.qty if hasattr(pos, "qty") else pos.get("qty", 0)) > 0
                     if not sym:
                         continue
                     try:
                         orders = self.broker.get_all_conditional_orders(sym)
                         sl_tp_map[sym] = {"sl": None, "tp": None}
                         for o in orders:
-                            otype = o.get("type", "")
                             trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
-                            if otype in {"STOP_MARKET", "STOP"} and trigger > 0:
+                            if trigger <= 0:
+                                continue
+                            otype = o.get("type", "")
+                            
+                            # 優先用 type 欄位判斷
+                            if otype in {"STOP_MARKET", "STOP"}:
                                 sl_tp_map[sym]["sl"] = trigger
-                            elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} and trigger > 0:
+                            elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
                                 sl_tp_map[sym]["tp"] = trigger
-                    except Exception:
-                        pass  # 查詢失敗不影響持倉顯示
+                            elif entry > 0:
+                                # Algo orders 可能沒有 type 欄位
+                                # 用觸發價 vs 入場價推斷 SL/TP
+                                if is_long:
+                                    # LONG: SL < entry, TP > entry
+                                    if trigger < entry:
+                                        sl_tp_map[sym]["sl"] = trigger
+                                    else:
+                                        sl_tp_map[sym]["tp"] = trigger
+                                else:
+                                    # SHORT: SL > entry, TP < entry
+                                    if trigger > entry:
+                                        sl_tp_map[sym]["sl"] = trigger
+                                    else:
+                                        sl_tp_map[sym]["tp"] = trigger
+                    except Exception as e:
+                        logger.debug(f"查詢 {sym} SL/TP 失敗: {e}")
             
             return self._format_positions(positions, sl_tp_map=sl_tp_map)
         except Exception as e:
@@ -338,24 +384,26 @@ class TelegramBot:
     
     def _cmd_trades(self, args: list[str], chat_id: str) -> str:
         """最近交易"""
-        n = int(args[0]) if args else 5
+        n = int(args[0]) if args else 10
         n = min(n, 20)  # 最多顯示 20 筆
         
         if not self.broker:
             return "⚠️ Broker 未連接"
         
         try:
-            if hasattr(self.broker, "get_recent_trades"):
-                trades = self.broker.get_recent_trades(n)
-            elif hasattr(self.broker, "trade_history"):
+            # 方式 1: Futures broker — get_trade_history()
+            if hasattr(self.broker, "get_trade_history"):
+                trades = self.broker.get_trade_history(limit=n)
+                if trades:
+                    return self._format_exchange_trades(trades)
+            
+            # 方式 2: Paper broker
+            if hasattr(self.broker, "trade_history"):
                 trades = list(self.broker.trade_history)[-n:]
-            else:
-                return "⚠️ 無法獲取交易記錄"
+                if trades:
+                    return self._format_trades(trades)
             
-            if not trades:
-                return "📭 沒有交易記錄"
-            
-            return self._format_trades(trades)
+            return "📭 沒有交易記錄"
         except Exception as e:
             return f"❌ 獲取交易失敗: {e}"
     
@@ -520,7 +568,7 @@ class TelegramBot:
             return (entry - target) * qty
     
     def _format_trades(self, trades: list) -> str:
-        """格式化交易記錄"""
+        """格式化交易記錄（Paper Broker 格式）"""
         lines = ["📜 <b>最近交易</b>\n"]
         
         for trade in trades:
@@ -528,11 +576,42 @@ class TelegramBot:
             side = trade.get("side", "?")
             qty = trade.get("qty", trade.get("quantity", 0))
             price = trade.get("price", 0)
-            time_str = trade.get("time", "")
             
             emoji = "🟢" if side.upper() in ["BUY", "LONG"] else "🔴"
             lines.append(
                 f"{emoji} {side} {symbol} @ ${price:,.2f} x {qty:.6f}"
+            )
+        
+        return "\n".join(lines)
+    
+    def _format_exchange_trades(self, trades: list[dict]) -> str:
+        """格式化交易所交易記錄（Binance Futures 格式）"""
+        lines = ["📜 <b>最近交易</b>\n"]
+        
+        for t in trades:
+            symbol = t.get("symbol", "?")
+            side = t.get("side", "?")
+            pos_side = t.get("position_side", "")
+            qty = t.get("qty", 0)
+            price = t.get("price", 0)
+            pnl = t.get("realized_pnl", 0)
+            commission = t.get("commission", 0)
+            ts = t.get("time", 0)
+            
+            # 格式化時間
+            if isinstance(ts, (int, float)) and ts > 1e12:
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                time_str = dt.strftime("%m-%d %H:%M")
+            else:
+                time_str = str(ts)[:16] if ts else "?"
+            
+            emoji = "🟢" if side == "BUY" else "🔴"
+            pnl_str = f" 📈 ${pnl:+,.2f}" if abs(pnl) > 0.001 else ""
+            fee_str = f" (fee: ${commission:.4f})" if commission > 0 else ""
+            
+            lines.append(
+                f"{emoji} {time_str} {side}/{pos_side} {symbol}\n"
+                f"   {qty:.6f} @ ${price:,.2f}{pnl_str}{fee_str}"
             )
         
         return "\n".join(lines)
@@ -688,21 +767,36 @@ class TelegramCommandBot(TelegramBot):
                 return "📊 <b>交易統計</b>\n\n📭 尚無交易記錄"
 
             total = len(trades)
-            wins = sum(1 for t in trades if t.get("pnl", 0) > 0)
-            losses = sum(1 for t in trades if t.get("pnl", 0) < 0)
-            win_rate = (wins / total * 100) if total > 0 else 0
-            total_pnl = sum(t.get("pnl", 0) for t in trades)
-            total_fee = sum(t.get("fee", 0) for t in trades)
+            # pnl 可能是 None（開倉時不計算 pnl），需要安全處理
+            wins = sum(1 for t in trades if (t.get("pnl") or 0) > 0)
+            losses = sum(1 for t in trades if (t.get("pnl") or 0) < 0)
+            flat = total - wins - losses  # pnl=0 或 pnl=None 的交易
+            trades_with_pnl = wins + losses
+            win_rate = (wins / trades_with_pnl * 100) if trades_with_pnl > 0 else 0
+            total_pnl = sum(t.get("pnl") or 0 for t in trades)
+            total_fee = sum(t.get("fee") or 0 for t in trades)
 
-            return (
-                f"📊 <b>交易統計</b>\n\n"
-                f"📝 總交易: {total} 筆\n"
-                f"✅ 獲勝: {wins} 筆\n"
-                f"❌ 虧損: {losses} 筆\n"
-                f"🎯 勝率: {win_rate:.1f}%\n"
-                f"💰 累積 PnL: <b>${total_pnl:+,.2f}</b>\n"
-                f"💸 總手續費: ${total_fee:,.2f}"
-            )
+            # 額外統計：使用 state 自帶的累積值（更準確）
+            cum_pnl = state.cumulative_pnl if hasattr(state, "cumulative_pnl") else total_pnl
+            max_dd = getattr(state, "max_drawdown_pct", 0)
+
+            lines = [
+                f"📊 <b>交易統計</b>\n",
+                f"📝 總交易: {total} 筆",
+                f"✅ 獲勝: {wins} 筆",
+                f"❌ 虧損: {losses} 筆",
+            ]
+            if flat > 0:
+                lines.append(f"⚪ 持平/開倉: {flat} 筆")
+            lines.extend([
+                f"🎯 勝率: {win_rate:.1f}%（{trades_with_pnl} 筆有 PnL）",
+                f"💰 累積 PnL: <b>${cum_pnl:+,.2f}</b>",
+                f"💸 總手續費: ${total_fee:,.2f}",
+            ])
+            if max_dd > 0:
+                lines.append(f"📉 最大回撤: {max_dd:.2f}%")
+
+            return "\n".join(lines)
         except Exception as e:
             return f"❌ 獲取統計失敗: {e}"
 
