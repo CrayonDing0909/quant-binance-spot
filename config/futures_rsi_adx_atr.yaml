@@ -16,7 +16,7 @@ market:
 
 # 合約專屬配置
 futures:
-  leverage: 3             # 槓桿倍數（建議 1-5 倍）
+  leverage: 5             # 槓桿倍數（建議 1-5 倍）
   margin_type: "ISOLATED" # ISOLATED（逐倉）或 CROSSED（全倉）
   position_mode: "ONE_WAY" # ONE_WAY（單向）或 HEDGE（雙向）
   direction: "both"       # 交易方向: "both"=多空都做, "long_only"=只做多, "short_only"=只做空

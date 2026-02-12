@@ -1,0 +1,20 @@
+{
+  "best_sharpe": {
+    "config_name": "rsi_exit",
+    "config_type": "exit_strategy",
+    "sharpe_ratio": 2.39823068069958,
+    "total_return": 309475.9290388327
+  },
+  "best_return": {
+    "config_name": "rsi_exit",
+    "config_type": "exit_strategy",
+    "total_return": 309475.9290388327,
+    "sharpe_ratio": 2.39823068069958
+  },
+  "best_drawdown": {
+    "config_name": "trailing_2.5",
+    "config_type": "exit_strategy",
+    "max_drawdown": 48.17228898790581,
+    "total_return": 14517.606676323687
+  }
+}

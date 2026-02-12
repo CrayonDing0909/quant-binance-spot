@@ -56,7 +56,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from qtrade.backtest import run_symbol_backtest, pretty_stats
-from qtrade.data.storage import load_klines, find_klines_file
+from qtrade.data.storage import load_klines
 from qtrade.indicators import calculate_rsi, calculate_atr
 from qtrade.utils.log import get_logger
 
@@ -729,10 +729,22 @@ def main():
     
     # 載入數據
     data_dir = Path(__file__).parent.parent / "data"
-    data_path = find_klines_file(data_dir, args.symbol, args.interval)
+    # 嘗試不同的數據路徑
+    possible_paths = [
+        data_dir / "binance" / "spot" / args.interval / f"{args.symbol}.parquet",
+        data_dir / "binance" / "futures" / args.interval / f"{args.symbol}.parquet",
+        data_dir / f"{args.symbol}_{args.interval}.parquet",
+    ]
+    
+    data_path = None
+    for path in possible_paths:
+        if path.exists():
+            data_path = path
+            break
     
     if data_path is None:
         print(f"❌ 找不到 {args.symbol} {args.interval} 的數據文件")
+        print(f"   嘗試過的路徑: {possible_paths}")
         print(f"   請先運行: python scripts/download_data.py --symbol {args.symbol}")
         sys.exit(1)
     

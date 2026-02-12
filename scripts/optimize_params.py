@@ -171,6 +171,16 @@ def get_param_grid(strategy_name: str) -> dict:
             "stop_loss_atr": [1.0, 1.5, 2.0],
             "take_profit_atr": [4.0, 5.0, 6.0],
         },
+        # ⭐ RSI Exit 配置（不用固定 TP，由 RSI 出場）
+        "rsi_adx_atr_rsi_exit": {
+            "rsi_period": [10, 12, 14, 16],
+            "oversold": [30, 35, 40],
+            "overbought": [60, 65, 70, 75],
+            "min_adx": [15, 20, 25],
+            "adx_period": [10, 14, 18],
+            "stop_loss_atr": [1.5, 2.0, 2.5],
+            "atr_period": [10, 14, 18],
+        },
     }
     
     return grids.get(strategy_name, {})
