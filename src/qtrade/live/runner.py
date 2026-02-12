@@ -75,9 +75,10 @@ class LiveRunner:
         for sym in self.symbols:
             self._weights[sym] = cfg.portfolio.get_weight(sym, n)
 
-        # Drawdown 熔斷
+        # Drawdown 熔斷（Paper + Real 模式都生效）
         self.max_drawdown_pct = cfg.risk.max_drawdown_pct if cfg.risk else None
         self._circuit_breaker_triggered = False
+        self._initial_equity: float | None = None  # 首次 tick 時記錄基準權益
 
         # 運行統計
         self.tick_count = 0
@@ -232,11 +233,42 @@ class LiveRunner:
         # 限制在 [-1, 1]（Futures 可做空，Spot 的負信號已在 run_once 提前 clip）
         return max(-1.0, min(1.0, adjusted_signal))
 
+    def _get_equity(self) -> float | None:
+        """
+        取得當前權益（Paper / Real 通用）
+
+        Returns:
+            當前權益 (USDT)，失敗時回傳 None
+        """
+        try:
+            if isinstance(self.broker, PaperBroker):
+                # Paper: 需要傳入當前價格
+                prices: dict[str, float] = {}
+                for sym in self.symbols:
+                    pos = self.broker.get_position(sym)
+                    if pos.is_open:
+                        try:
+                            from .signal_generator import fetch_recent_klines
+                            df = fetch_recent_klines(sym, self.interval, 5)
+                            prices[sym] = float(df["close"].iloc[-1])
+                        except Exception:
+                            return None  # 拿不到價格就不檢查
+                return self.broker.get_equity(prices)
+            else:
+                # Real broker: 直接查 Binance API
+                if hasattr(self.broker, "get_equity"):
+                    return self.broker.get_equity()
+            return None
+        except Exception as e:
+            logger.debug(f"取得權益失敗: {e}")
+            return None
+
     def _check_circuit_breaker(self) -> bool:
         """
-        Drawdown 熔斷檢查
+        Drawdown 熔斷檢查（Paper + Real 模式通用）
 
-        如果當前權益低於 (1 - max_drawdown_pct) × 初始資金，
+        基準權益 = 首次 tick 時的權益快照。
+        如果當前權益低於 (1 - max_drawdown_pct) × 基準權益，
         平掉所有倉位並停止交易。
 
         Returns:
@@ -246,35 +278,20 @@ class LiveRunner:
             return True
         if not self.max_drawdown_pct:
             return False
-        # 熔斷只支援 Paper 模式（Real 模式靠手動管理）
-        if not isinstance(self.broker, PaperBroker):
+
+        equity = self._get_equity()
+        if equity is None or equity <= 0:
             return False
 
-        # 獲取當前價格
-        prices: dict[str, float] = {}
-        open_positions = []
-        for sym in self.symbols:
-            pos = self.broker.get_position(sym)
-            if pos.is_open:
-                open_positions.append(sym)
-                try:
-                    from .signal_generator import fetch_recent_klines
-                    df = fetch_recent_klines(sym, self.interval, 5)
-                    prices[sym] = float(df["close"].iloc[-1])
-                except Exception as e:
-                    logger.warning(f"⚠️  獲取 {sym} 價格失敗: {e}")
+        # 首次記錄基準權益
+        if self._initial_equity is None:
+            if isinstance(self.broker, PaperBroker):
+                self._initial_equity = self.broker.account.initial_cash
+            else:
+                self._initial_equity = equity
+            logger.info(f"📊 熔斷基準權益: ${self._initial_equity:,.2f}")
 
-        # 如果有持倉但抓不到價格，跳過熔斷檢查（避免假性觸發）
-        if open_positions and len(prices) < len(open_positions):
-            missing = set(open_positions) - set(prices.keys())
-            logger.warning(
-                f"⚠️  熔斷檢查跳過：無法獲取 {missing} 的價格，"
-                f"無法準確計算權益"
-            )
-            return False
-
-        equity = self.broker.get_equity(prices)
-        initial = self.broker.account.initial_cash
+        initial = self._initial_equity
         drawdown = 1.0 - (equity / initial)
 
         if drawdown >= self.max_drawdown_pct:
@@ -282,25 +299,38 @@ class LiveRunner:
             logger.warning(
                 f"🚨🚨🚨 CIRCUIT BREAKER 觸發！"
                 f"Drawdown={drawdown:.1%} >= {self.max_drawdown_pct:.0%} "
-                f"(權益 ${equity:,.2f} / 初始 ${initial:,.2f})"
+                f"(權益 ${equity:,.2f} / 基準 ${initial:,.2f})"
             )
 
             # 平掉所有倉位
-            for sym, price in prices.items():
-                pos = self.broker.get_position(sym)
-                if pos.is_open:
-                    trade = self.broker.execute_target_position(
-                        symbol=sym, target_pct=0.0, current_price=price,
-                        reason="CIRCUIT_BREAKER"
-                    )
-                    if trade:
-                        logger.warning(f"  🔴 強制平倉 {sym}: {trade.qty:.6f} @ {trade.price:.2f}")
+            for sym in self.symbols:
+                try:
+                    price = 0.0
+                    if hasattr(self.broker, "get_price"):
+                        price = self.broker.get_price(sym)
+                    if price <= 0:
+                        from .signal_generator import fetch_recent_klines
+                        df = fetch_recent_klines(sym, self.interval, 5)
+                        price = float(df["close"].iloc[-1])
+
+                    current_pct = self.broker.get_position_pct(sym, price)
+                    if abs(current_pct) > 0.01:
+                        trade = self.broker.execute_target_position(
+                            symbol=sym, target_pct=0.0, current_price=price,
+                            reason="CIRCUIT_BREAKER"
+                        )
+                        if trade:
+                            logger.warning(
+                                f"  🔴 強制平倉 {sym}: {trade.qty:.6f} @ {trade.price:.2f}"
+                            )
+                except Exception as e:
+                    logger.error(f"  ❌ 強制平倉 {sym} 失敗: {e}")
 
             # Telegram 告警
             self.notifier.send_error(
                 f"🚨 <b>CIRCUIT BREAKER 熔斷觸發!</b>\n\n"
                 f"  Drawdown: <b>{drawdown:.1%}</b> (閾值 {self.max_drawdown_pct:.0%})\n"
-                f"  權益: ${equity:,.2f} → 初始: ${initial:,.2f}\n"
+                f"  權益: ${equity:,.2f} → 基準: ${initial:,.2f}\n"
                 f"  ⚠️ 已強制平倉所有持倉，交易停止\n\n"
                 f"  請檢查策略後手動重啟"
             )
