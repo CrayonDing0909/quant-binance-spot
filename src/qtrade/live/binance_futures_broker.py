@@ -785,6 +785,16 @@ class BinanceFuturesBroker:
 
     # ── 條件單共用邏輯 ────────────────────────────────────────
 
+    @staticmethod
+    def _is_binance_error(exc: Exception, code: int) -> bool:
+        """檢查 Binance 異常是否為特定錯誤碼"""
+        try:
+            if hasattr(exc, 'response') and exc.response is not None:
+                return exc.response.json().get("code") == code
+        except Exception:
+            pass
+        return False
+
     def _place_conditional_order(
         self,
         symbol: str,
@@ -795,65 +805,58 @@ class BinanceFuturesBroker:
         order_kind: str,   # "STOP" or "TAKE_PROFIT"
     ) -> dict:
         """
-        掛條件單（止損/止盈），自動處理 Binance API 兼容性。
+        掛條件單（止損/止盈），自動處理 Binance API 端點兼容性。
 
-        策略：
-        1. 先嘗試 STOP_MARKET / TAKE_PROFIT_MARKET（市價，保證成交）
-        2. 若 Binance 回傳 -4120（已棄用），自動改用 STOP / TAKE_PROFIT
-           （限價 + 0.5% 滑價緩衝，確保極高成交率）
+        策略（按順序嘗試）：
+        1. Algo Order API — POST /fapi/v1/algoOrder (Binance 推薦)
+           使用 STOP_MARKET / TAKE_PROFIT_MARKET（市價，保證成交）
+        2. 普通 Order API — POST /fapi/v1/order
+           使用 STOP / TAKE_PROFIT（限價 + 0.5% 滑價緩衝）
 
         Args:
             order_kind: "STOP" → 止損, "TAKE_PROFIT" → 止盈
 
         Returns:
-            Binance order response dict
+            Binance order response dict（含 orderId 或 algoOrderId）
 
         Raises:
-            原始 Exception（若兩次都失敗）
+            原始 Exception（若所有方式都失敗）
         """
         sf = self._get_filter(symbol)
-
-        # ── 第一輪：嘗試 MARKET 類型 ──
         market_type = f"{order_kind}_MARKET"  # STOP_MARKET or TAKE_PROFIT_MARKET
-        params = {
+
+        # ── 方式 1：Algo Order API（Binance 官方推薦的條件單端點）──
+        params_algo = {
             "symbol": symbol,
             "side": side,
             "positionSide": position_side,
             "type": market_type,
             "stopPrice": f"{stop_price}",
             "quantity": f"{qty}",
+            "algoType": "CONDITIONAL",
         }
         try:
-            return self.http.signed_post("/fapi/v1/order", params)
-        except Exception as e:
-            # 檢查是否為 -4120（order type not supported）
-            is_4120 = False
-            try:
-                if hasattr(e, 'response') and e.response is not None:
-                    err_body = e.response.json()
-                    if err_body.get("code") == -4120:
-                        is_4120 = True
-            except Exception:
-                pass
-
-            if not is_4120:
-                raise  # 非 -4120 → 原樣拋出
-
+            result = self.http.signed_post("/fapi/v1/algoOrder", params_algo)
+            # 統一 key：algoOrderId → orderId（供上層使用）
+            if "algoOrderId" in result and "orderId" not in result:
+                result["orderId"] = result["algoOrderId"]
+            result["_via"] = "algoOrder"
+            logger.info(f"✅ {symbol}: 條件單已掛 via Algo Order API ({market_type})")
+            return result
+        except Exception as e_algo:
             logger.info(
-                f"ℹ️  {symbol}: {market_type} 不支援 (-4120)，改用 {order_kind} 限價單"
+                f"ℹ️  {symbol}: Algo Order API ({market_type}) 失敗，嘗試限價條件單"
             )
+            logger.debug(f"  Algo Order error: {e_algo}")
 
-        # ── 第二輪：改用限價條件單 ──
-        # 計算限價：給 0.5% 滑價緩衝確保成交
+        # ── 方式 2：普通 Order API + 限價條件單 ──
+        # 計算限價：0.5% 滑價緩衝確保觸發後成交
         slippage = 0.005
         if side == "BUY":
-            # 買入平倉 → 限價略高於觸發價
             limit_price = stop_price * (1 + slippage)
         else:
-            # 賣出平倉 → 限價略低於觸發價
             limit_price = stop_price * (1 - slippage)
 
-        # 價格精度處理
         if sf.tick_size > 0:
             precision = max(0, -int(math.log10(sf.tick_size)))
             limit_price = round(limit_price, precision)
@@ -862,13 +865,69 @@ class BinanceFuturesBroker:
             "symbol": symbol,
             "side": side,
             "positionSide": position_side,
-            "type": order_kind,           # STOP or TAKE_PROFIT
+            "type": order_kind,           # STOP or TAKE_PROFIT (限價版)
             "stopPrice": f"{stop_price}",
             "price": f"{limit_price}",
             "quantity": f"{qty}",
             "timeInForce": "GTC",
         }
-        return self.http.signed_post("/fapi/v1/order", params_limit)
+        result = self.http.signed_post("/fapi/v1/order", params_limit)
+        result["_via"] = "order"
+        return result
+
+    # ── Algo Order 查詢 / 取消 ────────────────────────────────
+
+    def get_open_algo_orders(self, symbol: str | None = None) -> list[dict]:
+        """查詢 Algo Order API 的未成交條件單"""
+        try:
+            params = {}
+            if symbol:
+                params["symbol"] = symbol
+            result = self.http.signed_get("/fapi/v1/algoOrder/openOrders", params)
+            # 回傳可能是 {"orders": [...]} 或直接 [...]
+            if isinstance(result, dict) and "orders" in result:
+                return result["orders"]
+            return result if isinstance(result, list) else []
+        except Exception as e:
+            logger.debug(f"查詢 algo open orders 失敗: {e}")
+            return []
+
+    def cancel_algo_order(self, algo_order_id: str | int) -> bool:
+        """取消 Algo Order"""
+        if self.dry_run:
+            logger.debug(f"🧪 [DRY-RUN] 取消 algo order {algo_order_id}")
+            return True
+        try:
+            self.http.signed_delete("/fapi/v1/algoOrder", {
+                "algoOrderId": str(algo_order_id),
+            })
+            logger.info(f"🗑️  Algo 訂單已取消 algoOrderId={algo_order_id}")
+            return True
+        except Exception as e:
+            if "Unknown" in str(e):
+                return True
+            logger.warning(f"⚠️  取消 algo 訂單失敗 {algo_order_id}: {e}")
+            return False
+
+    def get_all_conditional_orders(self, symbol: str) -> list[dict]:
+        """
+        查詢所有條件單（合併 regular + algo orders），用於 SL/TP 檢查。
+        統一回傳格式：每筆都有 "type" 欄位。
+        """
+        orders = []
+        # 1) Regular open orders（/fapi/v1/openOrders）
+        for o in self.get_open_orders(symbol):
+            if o.get("type") in self._SL_TP_TYPES:
+                o["_source"] = "order"
+                orders.append(o)
+        # 2) Algo open orders（/fapi/v1/algoOrder/openOrders）
+        for o in self.get_open_algo_orders(symbol):
+            o["_source"] = "algoOrder"
+            # algo order 回傳的 id 欄位可能是 algoOrderId
+            if "algoOrderId" in o and "orderId" not in o:
+                o["orderId"] = o["algoOrderId"]
+            orders.append(o)
+        return orders
 
     # ── 止損單 ──────────────────────────────────────────────
 
@@ -1093,66 +1152,63 @@ class BinanceFuturesBroker:
     _SL_TYPES = {"STOP_MARKET", "STOP"}
     _SL_TP_TYPES = _TP_TYPES | _SL_TYPES
 
-    def cancel_take_profit(self, symbol: str, position_side: str | None = None) -> bool:
+    def _cancel_conditional_orders(
+        self, symbol: str, target_types: set[str],
+        position_side: str | None, label: str,
+    ) -> bool:
         """
-        取消該交易對的止盈單（TAKE_PROFIT / TAKE_PROFIT_MARKET）
-        
+        取消條件單（同時搜尋 regular + algo orders）
+
         Args:
-            symbol: 交易對
-            position_side: 持倉方向 ("LONG" / "SHORT")，若 None 則取消所有
+            target_types: 要取消的 order type 集合
+            label: 用於 log 的名稱（"止損" / "止盈"）
         """
         if self.dry_run:
-            logger.debug(f"🧪 [DRY-RUN] 取消止盈單 {symbol} [{position_side or 'ALL'}]")
+            logger.debug(f"🧪 [DRY-RUN] 取消{label}單 {symbol} [{position_side or 'ALL'}]")
             return True
 
         try:
-            orders = self.get_open_orders(symbol)
-            for order in orders:
-                if order.get("type") in self._TP_TYPES:
+            # 1) Regular orders
+            for order in self.get_open_orders(symbol):
+                if order.get("type") in target_types:
                     if position_side and order.get("positionSide") != position_side:
                         continue
                     self.cancel_order(symbol, str(order["orderId"]))
-                    logger.info(f"🗑️  止盈單已取消 {symbol} [{order.get('positionSide')}] orderId={order['orderId']}")
+                    logger.info(
+                        f"🗑️  {label}單已取消 {symbol} [{order.get('positionSide')}] "
+                        f"orderId={order['orderId']}"
+                    )
+            # 2) Algo orders
+            for order in self.get_open_algo_orders(symbol):
+                if order.get("type") in target_types:
+                    if position_side and order.get("positionSide") != position_side:
+                        continue
+                    oid = order.get("algoOrderId") or order.get("orderId")
+                    if oid:
+                        self.cancel_algo_order(oid)
+                        logger.info(
+                            f"🗑️  {label}單已取消 (algo) {symbol} [{order.get('positionSide')}] "
+                            f"algoOrderId={oid}"
+                        )
             return True
         except Exception as e:
-            logger.warning(f"⚠️  取消止盈單失敗 {symbol}: {e}")
+            logger.warning(f"⚠️  取消{label}單失敗 {symbol}: {e}")
             return False
+
+    def cancel_take_profit(self, symbol: str, position_side: str | None = None) -> bool:
+        """取消該交易對的止盈單（regular + algo orders）"""
+        return self._cancel_conditional_orders(symbol, self._TP_TYPES, position_side, "止盈")
 
     def cancel_stop_loss(self, symbol: str, position_side: str | None = None) -> bool:
-        """
-        取消該交易對的止損單（STOP / STOP_MARKET）
-        
-        Args:
-            symbol: 交易對
-            position_side: 持倉方向 ("LONG" / "SHORT")，若 None 則取消所有
-        """
-        if self.dry_run:
-            logger.debug(f"🧪 [DRY-RUN] 取消止損單 {symbol} [{position_side or 'ALL'}]")
-            return True
-
-        try:
-            orders = self.get_open_orders(symbol)
-            for order in orders:
-                if order.get("type") in self._SL_TYPES:
-                    if position_side and order.get("positionSide") != position_side:
-                        continue
-                    self.cancel_order(symbol, str(order["orderId"]))
-                    logger.info(f"🗑️  止損單已取消 {symbol} [{order.get('positionSide')}] orderId={order['orderId']}")
-            return True
-        except Exception as e:
-            logger.warning(f"⚠️  取消止損單失敗 {symbol}: {e}")
-            return False
+        """取消該交易對的止損單（regular + algo orders）"""
+        return self._cancel_conditional_orders(symbol, self._SL_TYPES, position_side, "止損")
 
     def get_active_stop_order(self, symbol: str) -> dict | None:
-        """查詢該交易對的止損單"""
-        try:
-            orders = self.get_open_orders(symbol)
-            for order in orders:
-                if order.get("type") in self._SL_TYPES:
-                    return order
-            return None
-        except Exception:
-            return None
+        """查詢該交易對的止損單（包含 regular + algo orders）"""
+        for order in self.get_all_conditional_orders(symbol):
+            if order.get("type") in self._SL_TYPES:
+                return order
+        return None
 
     # ── 目標倉位執行 ────────────────────────────────────────
 

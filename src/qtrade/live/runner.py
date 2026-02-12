@@ -395,9 +395,13 @@ class LiveRunner:
                 and hasattr(self.broker, "get_trade_history")
             ):
                 try:
-                    open_orders = self.broker.get_open_orders(symbol)
+                    # 合併 regular + algo orders 檢查 SL/TP
+                    if hasattr(self.broker, "get_all_conditional_orders"):
+                        cond_orders = self.broker.get_all_conditional_orders(symbol)
+                    else:
+                        cond_orders = self.broker.get_open_orders(symbol)
                     sl_tp_types = {"STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"}
-                    has_sl_tp = any(o.get("type") in sl_tp_types for o in open_orders)
+                    has_sl_tp = any(o.get("type") in sl_tp_types for o in cond_orders)
 
                     if not has_sl_tp:
                         # 無 SL/TP 掛單 → 可能剛被觸發，查最近成交
@@ -516,9 +520,13 @@ class LiveRunner:
 
                 if (stop_loss_atr or take_profit_atr) and atr_value:
                     try:
-                        open_orders = self.broker.get_open_orders(symbol)
-                        has_sl = any(o.get("type") in {"STOP_MARKET", "STOP"} for o in open_orders)
-                        has_tp = any(o.get("type") in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} for o in open_orders)
+                        # 合併 regular + algo orders 檢查
+                        if hasattr(self.broker, "get_all_conditional_orders"):
+                            cond_orders = self.broker.get_all_conditional_orders(symbol)
+                        else:
+                            cond_orders = self.broker.get_open_orders(symbol)
+                        has_sl = any(o.get("type") in {"STOP_MARKET", "STOP"} for o in cond_orders)
+                        has_tp = any(o.get("type") in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} for o in cond_orders)
 
                         position_side = "LONG" if current_pct > 0 else "SHORT"
 

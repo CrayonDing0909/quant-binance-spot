@@ -21,6 +21,16 @@ from .metrics import (
     trade_summary,
 )
 from .plotting import plot_equity_curve
+from .hyperopt_engine import (
+    HyperoptEngine,
+    ParamSpace,
+    ParamDef,
+    OptimizationResult,
+    WalkForwardValidator,
+    RSI_ADX_ATR_PARAM_SPACE,
+    EMA_CROSS_PARAM_SPACE,
+    OBJECTIVES,
+)
 
 # 向後相容: 從新的 validation 模組導入
 # 建議直接使用 from qtrade.validation import ...
@@ -64,6 +74,15 @@ __all__ = [
     "trade_summary",
     # Plotting
     "plot_equity_curve",
+    # Hyperopt
+    "HyperoptEngine",
+    "ParamSpace",
+    "ParamDef",
+    "OptimizationResult",
+    "WalkForwardValidator",
+    "RSI_ADX_ATR_PARAM_SPACE",
+    "EMA_CROSS_PARAM_SPACE",
+    "OBJECTIVES",
     # Validation (backwards compatible, prefer qtrade.validation)
     "walk_forward_analysis",
     "parameter_sensitivity_analysis",
