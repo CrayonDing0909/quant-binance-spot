@@ -125,10 +125,29 @@ class TelegramBot:
             logger.warning("Telegram Bot 已在運行中")
             return
         
+        # 向 Telegram 註冊命令選單（輸入 / 時會出現提示）
+        self._set_bot_commands()
+        
         self._running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
         logger.info("🤖 Telegram Bot 已啟動，等待命令...")
+    
+    def _set_bot_commands(self):
+        """向 Telegram 註冊命令選單，讓使用者輸入 / 時看到命令提示"""
+        try:
+            commands = [
+                {"command": name, "description": info["description"] or name}
+                for name, info in self._commands.items()
+            ]
+            url = f"https://api.telegram.org/bot{self.bot_token}/setMyCommands"
+            resp = requests.post(url, json={"commands": commands}, timeout=10)
+            if resp.status_code == 200 and resp.json().get("ok"):
+                logger.info(f"✅ 已註冊 {len(commands)} 個命令到 Telegram 選單")
+            else:
+                logger.warning(f"⚠️ 註冊命令選單失敗: {resp.text}")
+        except Exception as e:
+            logger.warning(f"⚠️ 註冊命令選單異常: {e}")
     
     def stop(self):
         """停止 Bot"""
@@ -722,6 +741,7 @@ class TelegramCommandBot(TelegramBot):
             raise ValueError(
                 "Telegram Bot 未啟用（缺少 BOT_TOKEN 或 CHAT_ID）"
             )
+        self._set_bot_commands()
         self._running = True
         logger.info("🤖 Telegram Bot 已啟動（阻塞模式），等待命令...")
         try:
