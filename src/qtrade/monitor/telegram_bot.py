@@ -554,6 +554,160 @@ class TelegramBot:
 
 
 # ══════════════════════════════════════════════════════════════
+# TelegramCommandBot — 整合 LiveRunner 的進階版
+# ══════════════════════════════════════════════════════════════
+
+class TelegramCommandBot(TelegramBot):
+    """
+    進階 Telegram Bot，整合 LiveRunner 和 TradingStateManager。
+
+    額外支援：
+        /signals - 即時生成交易信號
+        /stats   - 查看交易統計（勝率、PnL 等）
+
+    使用方式：
+        bot = TelegramCommandBot(live_runner=runner, broker=broker)
+        bot.start_background()  # 非阻塞
+    """
+
+    def __init__(
+        self,
+        live_runner: Any = None,
+        broker: Any = None,
+        state_manager: Any = None,
+        notifier: "TelegramNotifier | None" = None,
+        **kwargs,
+    ):
+        # 嘗試從 live_runner 推斷缺少的參數
+        if live_runner and not broker:
+            broker = getattr(live_runner, "broker", None)
+        if live_runner and not notifier:
+            notifier = getattr(live_runner, "notifier", None)
+        if live_runner and not state_manager:
+            state_manager = getattr(live_runner, "state_manager", None)
+
+        super().__init__(broker=broker, notifier=notifier, **kwargs)
+
+        self.live_runner = live_runner
+        self.state_manager = state_manager
+
+        # 註冊額外命令
+        self.register_command("signals", self._cmd_signals, "即時信號")
+        self.register_command("stats", self._cmd_stats, "交易統計")
+
+    # ── 別名方法，與 run_live.py 期望的介面一致 ──
+
+    def start_background(self):
+        """啟動 Bot（非阻塞，背景執行）— start() 的別名"""
+        self.start()
+
+    def run_polling(self):
+        """阻塞式輪詢（用於獨立運行模式）"""
+        if not self.enabled:
+            raise ValueError(
+                "Telegram Bot 未啟用（缺少 BOT_TOKEN 或 CHAT_ID）"
+            )
+        self._running = True
+        logger.info("🤖 Telegram Bot 已啟動（阻塞模式），等待命令...")
+        try:
+            self._poll_loop()
+        except KeyboardInterrupt:
+            logger.info("🛑 收到停止信號")
+        finally:
+            self._running = False
+            logger.info("🛑 Telegram Bot 已停止")
+
+    # ── /signals ──
+
+    def _cmd_signals(self, args: list[str], chat_id: str) -> str:
+        """即時生成交易信號"""
+        if not self.live_runner:
+            return "⚠️ LiveRunner 未連接，無法生成信號"
+
+        try:
+            from ..live.signal_generator import generate_signal
+
+            runner = self.live_runner
+            cfg = runner.cfg
+            symbols = cfg.market.symbols
+            strategy_name = cfg.strategy.name
+            interval = cfg.market.interval
+            market_type = cfg.market_type_str
+            direction = cfg.direction
+            params = dict(cfg.strategy.params) if cfg.strategy.params else {}
+
+            lines = ["📡 <b>最新信號</b>\n"]
+
+            for symbol in symbols:
+                try:
+                    sig = generate_signal(
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        params=params,
+                        interval=interval,
+                        market_type=market_type,
+                        direction=direction,
+                    )
+                    signal_pct = sig["signal"]
+                    price = sig["price"]
+                    ind = sig.get("indicators", {})
+
+                    if signal_pct > 0.5:
+                        emoji = "🟢"
+                        label = f"LONG {signal_pct:.0%}"
+                    elif signal_pct < -0.5:
+                        emoji = "🔴"
+                        label = f"SHORT {abs(signal_pct):.0%}"
+                    else:
+                        emoji = "⚪"
+                        label = f"FLAT {signal_pct:.0%}"
+
+                    lines.append(
+                        f"{emoji} <b>{symbol}</b>: {label} @ ${price:,.2f}\n"
+                        f"   RSI={ind.get('rsi', '?')} | ADX={ind.get('adx', '?')}"
+                    )
+                except Exception as e:
+                    lines.append(f"❌ {symbol}: {e}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ 信號生成失敗: {e}"
+
+    # ── /stats ──
+
+    def _cmd_stats(self, args: list[str], chat_id: str) -> str:
+        """交易統計"""
+        if not self.state_manager:
+            return "⚠️ 交易狀態管理器未連接"
+
+        try:
+            state = self.state_manager.state
+            trades = state.trades or []
+
+            if not trades:
+                return "📊 <b>交易統計</b>\n\n📭 尚無交易記錄"
+
+            total = len(trades)
+            wins = sum(1 for t in trades if t.get("pnl", 0) > 0)
+            losses = sum(1 for t in trades if t.get("pnl", 0) < 0)
+            win_rate = (wins / total * 100) if total > 0 else 0
+            total_pnl = sum(t.get("pnl", 0) for t in trades)
+            total_fee = sum(t.get("fee", 0) for t in trades)
+
+            return (
+                f"📊 <b>交易統計</b>\n\n"
+                f"📝 總交易: {total} 筆\n"
+                f"✅ 獲勝: {wins} 筆\n"
+                f"❌ 虧損: {losses} 筆\n"
+                f"🎯 勝率: {win_rate:.1f}%\n"
+                f"💰 累積 PnL: <b>${total_pnl:+,.2f}</b>\n"
+                f"💸 總手續費: ${total_fee:,.2f}"
+            )
+        except Exception as e:
+            return f"❌ 獲取統計失敗: {e}"
+
+
+# ══════════════════════════════════════════════════════════════
 # 快捷函數
 # ══════════════════════════════════════════════════════════════
 
