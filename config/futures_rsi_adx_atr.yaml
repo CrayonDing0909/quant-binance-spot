@@ -60,7 +60,7 @@ backtest:
 
 # 風控（合約建議更保守）
 risk:
-  max_drawdown_pct: 0.15  # 15% 熔斷（合約風險較高）
+  max_drawdown_pct: 0.65  # 65% 熔斷（5x 槓桿下 1x MDD≈14% → 5x≈57%，留緩衝）
 
 # 倉位計算
 position_sizing:

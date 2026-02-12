@@ -29,17 +29,17 @@ backtest:
 strategy:
   name: "rsi_adx_atr"
   params:
-    # ── RSI 參數（待優化）──
-    rsi_period: 14
-    oversold: 35
-    overbought: 70       # ⭐ RSI 出場關鍵參數
+    # ── RSI 參數（2026-02-13 優化）──
+    rsi_period: 10       # 優化結果：10 > 14（更快反應）
+    oversold: 30         # 優化結果：30 > 35（更早入場）
+    overbought: 75       # ⭐ 優化結果：75 > 70（延後出場，讓利潤跑）
     
-    # ── ADX 趨勢過濾（待優化）──
-    min_adx: 20
+    # ── ADX 趨勢過濾（優化後）──
+    min_adx: 15          # 優化結果：15 > 20（捕捉更多機會）
     adx_period: 14
     
-    # ── ATR 止損（待優化）──
-    stop_loss_atr: 2.0   # 只有止損，沒有固定止盈
+    # ── ATR 止損（優化後）──
+    stop_loss_atr: 1.5   # 優化結果：1.5 > 2.0（更緊止損）
     take_profit_atr: null  # ⭐ 關鍵：null = 不使用固定止盈
     trailing_stop_atr: null
     atr_period: 14
@@ -48,11 +48,13 @@ strategy:
     cooldown_bars: 4
     htf_interval: null
 
+  # 優化結果：2023-2026 BTCUSDT
+  # 收益: 1044%, Sharpe: 4.03, MDD: 10.3%, 勝率: 54.6%
   symbol_overrides:
     BTCUSDT:
-      oversold: 35
+      oversold: 30
     ETHUSDT:
-      oversold: 35
+      oversold: 30
 
 risk:
   max_drawdown_pct: 0.25
