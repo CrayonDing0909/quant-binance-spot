@@ -13,9 +13,9 @@
 5. [第四步：優化參數](#第四步優化參數)
 6. [第五步：驗證策略](#第五步驗證策略)
 7. [第六步：風險管理](#第六步風險管理)
-8. [第七步：即時交易](#第七步即時交易)
+8. [第七步：即時交易](#第七步即時交易)（含 Telegram Bot、雲端部署）
 9. [第八步：監控與維運](#第八步監控與維運)
-10. [合約交易教學](#合約交易教學)
+10. [合約交易教學](#合約交易教學)（含 SL/TP Algo Order）
 11. [多數據源與長期歷史數據](#多數據源與長期歷史數據)
 12. [組合回測](#組合回測)
 13. [RSI Exit 策略配置](#rsi-exit-策略配置) ⭐ NEW（經驗證的最佳配置）
@@ -120,13 +120,24 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
 7. **即時交易** ⭐ NEW
    - Paper Trading（模擬交易）
    - Real Trading（真實交易）
-   - Telegram 通知
+   - **自動 SL/TP 掛單**（Algo Order API）⭐ NEW
+   - **SL/TP 自動補掛**（reconciliation）⭐ NEW
+   - **SL/TP 觸發冷卻機制**（cooldown）⭐ NEW
    - **支援現貨 🟢 和合約 🔴** ⭐ NEW
 
-8. **監控與維運** ⭐ NEW
+8. **Telegram Bot 互動** ⭐ NEW
+   - **命令選單提示**（輸入 `/` 直接選）⭐ NEW
+   - 帳戶狀態、持倉、交易記錄查詢
+   - **SL/TP 摘要 + 預估盈虧**（`/status`）⭐ NEW
+   - 即時信號生成（`/signals`）
+   - 今日盈虧明細（`/pnl`）⭐ NEW
+   - 交易統計（`/stats`）⭐ NEW
+
+9. **監控與維運** ⭐ NEW
    - 系統健康檢查
    - 每日績效報表
    - 心跳監控
+   - **雲端部署教學**（Oracle Cloud）⭐ NEW
 
 ---
 
@@ -762,26 +773,67 @@ TELEGRAM_CHAT_ID=987654321
 
 ### 7.2.1 Telegram Command Bot ⭐ NEW
 
-除了被動通知，還支援**互動式指令**查詢帳戶狀態：
+除了被動通知，還支援**互動式指令**查詢帳戶狀態。Bot 啟動時會自動向 Telegram 註冊命令選單，輸入 `/` 即可看到命令提示直接點選。
+
+#### 啟動方式
+
+Telegram Bot 是一個**常駐服務**，與 cron 定時交易搭配使用：
+- **cron** 負責每小時跑一次交易（`run_live.py --once`）
+- **Telegram Bot** 負責 24/7 接收你的查詢命令
 
 ```bash
-# 啟動 Telegram Bot（獨立模式）
-python scripts/run_telegram_bot.py -c config/rsi_adx_atr_rsi_exit.yaml
+# 啟動 Telegram Bot（需要 Binance API Key 才能查詢帳戶）
+python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real
+
+# 背景運行（正式環境，SSH 斷線也不會停）
+nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
+
+# 純測試（不連 Binance，只測 /ping /help）
+python scripts/run_telegram_bot.py
 ```
 
-**可用指令**：
-| 指令 | 說明 |
-|------|------|
-| `/start` | 開始使用 |
-| `/help` | 查看所有指令 |
-| `/status` | 查看策略運行狀態 |
-| `/balance` | 查看帳戶餘額 |
-| `/positions` | 查看當前持倉 |
-| `/trades` | 查看最近交易記錄 |
-| `/pnl` | 查看今日 PnL |
-| `/ping` | 測試連線 |
+> 💡 **說明**：`--real` 不代表會下單。Telegram Bot 永遠是 **dry-run 模式**（只查詢、不下單），`--real` 只是讓它連接 Binance API 來讀取帳戶資訊。
 
-**通知內容範例**：
+#### 可用指令
+
+| 指令 | 說明 | 需要 Broker |
+|------|------|:-----------:|
+| `/help` | 查看所有指令 | ❌ |
+| `/ping` | 測試 Bot 連線 | ❌ |
+| `/status` | 帳戶總覽 + 持倉 + SL/TP 摘要 | ✅ |
+| `/balance` | 查看帳戶餘額 | ✅ |
+| `/positions` | 當前持倉詳細資訊（含 SL/TP 價格與預估盈虧）| ✅ |
+| `/trades` | 最近 10 筆成交記錄 | ✅ |
+| `/pnl` | 今日盈虧（已實現 + 資金費率 + 手續費）| ✅ |
+| `/signals` | 即時生成交易信號（需要 LiveRunner）| ✅ |
+| `/stats` | 交易統計（勝率、累積 PnL）| ✅ |
+
+#### 指令輸出範例
+
+**`/status`** — 一眼看清帳戶狀態：
+```
+💼 帳戶狀態
+💰 總權益: $1,472.36
+💵 可用餘額: $1,219.80
+📈 未實現盈虧: $+12.07
+
+📋 持倉 (1)
+🟢 ETHUSDT [SHORT] +12.03
+   🛡️ SL: $2,050.00 (-$48.20)
+   🎯 TP: $1,780.00 (+$45.60)
+```
+
+**`/pnl`** — 今日盈虧明細：
+```
+📈 今日盈虧 (02-12 UTC)
+💰 總計: $+87.55
+✅ 已實現: $+89.96
+🧑‍💼 未實現: $+0.00
+💸 手續費: $-2.38
+🔄 資金費率: $-0.02
+```
+
+**通知內容範例**（自動推播）：
 ```
 🟢 開倉 BTCUSDT
 方向: LONG
@@ -838,6 +890,85 @@ crontab -e
 - `--once`：執行一次後立即退出，**cron 必須加這個參數**
 - 不加 `--once` 會進入 daemon 模式，持續等待下一根 K 線
 - 設在 `:05` 而非 `:00`：讓 K 線數據穩定，避免假信號
+
+### 7.5 部署到雲端伺服器（Oracle Cloud）⭐ NEW
+
+建議使用 Oracle Cloud 免費方案跑 Bot，24 小時不間斷。
+
+#### 7.5.1 首次部署
+
+```bash
+# 1. SSH 連進伺服器
+ssh ubuntu@<你的 Oracle Cloud IP>
+
+# 2. 安裝 Python 環境
+sudo apt update && sudo apt install -y python3.11 python3.11-venv git
+
+# 3. 拉專案
+git clone https://github.com/<你的帳號>/quant-binance-spot.git
+cd quant-binance-spot
+
+# 4. 建立虛擬環境並安裝依賴
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 5. 設定環境變數
+cp .env.example .env   # 或手動建立
+nano .env              # 填入 API Key、Telegram Token 等
+
+# 6. 設定 cron（自動交易）
+crontab -e
+# 加入：
+# 5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/live.log 2>&1
+
+# 7. 啟動 Telegram Bot（背景常駐）
+mkdir -p logs
+nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
+```
+
+#### 7.5.2 更新代碼 & 重啟
+
+當你在本機改完 code 並 `git push` 後，在伺服器上執行：
+
+```bash
+# SSH 連進伺服器
+ssh ubuntu@<你的 Oracle Cloud IP>
+
+# 進入專案
+cd ~/quant-binance-spot
+source .venv/bin/activate
+
+# 拉最新代碼
+git pull
+
+# 找到舊的 bot 進程並停掉
+ps aux | grep run_telegram_bot
+kill <PID>
+
+# 重新啟動
+nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
+
+# 確認有跑起來
+tail -f logs/telegram_bot.log
+# 看到「✅ 已註冊 X 個命令到 Telegram 選單」就代表成功
+# 按 Ctrl+C 退出 tail（bot 繼續在背景跑）
+```
+
+> 💡 **小技巧**：cron 交易不需要重啟，`git pull` 後下一輪 cron 自動用新代碼。只有 Telegram Bot 常駐服務需要手動重啟。
+
+#### 7.5.3 查看 Log
+
+```bash
+# 查看 Telegram Bot log
+tail -100 logs/telegram_bot.log
+
+# 查看交易 log（cron 輸出）
+tail -100 logs/live.log
+
+# 即時追蹤
+tail -f logs/telegram_bot.log
+```
 
 ---
 
@@ -899,33 +1030,47 @@ python scripts/daily_report.py -c config/rsi_adx_atr.yaml --print-only
 5 0 * * * cd /path/to/quant-binance-spot && python scripts/daily_report.py -c config/rsi_adx_atr.yaml >> logs/daily_report.log 2>&1
 ```
 
-### 8.3 完整 Cron 設定範例
+### 8.3 完整生產環境設定範例
+
+一台雲端伺服器上，你需要跑兩個東西：
+
+| 元件 | 執行方式 | 說明 |
+|------|---------|------|
+| **交易引擎** | cron 定時 | 每小時跑一次 `run_live.py --once` |
+| **Telegram Bot** | nohup 常駐 | 24/7 接收命令查詢 |
+
+#### Cron Jobs 設定
 
 ```bash
 # 編輯 crontab
 crontab -e
 
-# === 交易執行（使用經驗證的 RSI Exit 配置）===
-# 每小時第 5 分鐘執行（讓 K 線數據穩定）
-5 * * * * cd /opt/qtrade && python scripts/run_live.py -c config/rsi_adx_atr_rsi_exit.yaml --paper --once >> logs/live.log 2>&1
+# === 交易執行 ===
+# 每小時第 5 分鐘（讓 K 線數據穩定）
+5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/live.log 2>&1
 
 # === 監控 ===
 # 每 30 分鐘健康檢查
-*/30 * * * * cd /opt/qtrade && python scripts/health_check.py --notify >> logs/health.log 2>&1
+*/30 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/health_check.py --config config/futures_rsi_adx_atr.yaml --real --notify >> logs/health.log 2>&1
 
 # === 報表 ===
 # 每天 00:05 UTC 發送日報
-5 0 * * * cd /opt/qtrade && python scripts/daily_report.py -c config/rsi_adx_atr_rsi_exit.yaml >> logs/daily_report.log 2>&1
+5 0 * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/daily_report.py -c config/futures_rsi_adx_atr.yaml >> logs/daily_report.log 2>&1
+```
 
-# === 驗證 ===
-# 每週日 01:00 執行一致性驗證
-0 1 * * 0 cd /opt/qtrade && python scripts/validate.py -c config/rsi_adx_atr_rsi_exit.yaml --only consistency >> logs/consistency.log 2>&1
+#### Telegram Bot 常駐
+
+```bash
+# 背景啟動（SSH 斷線也不會停）
+cd ~/quant-binance-spot && source .venv/bin/activate
+nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
 ```
 
 **⚠️ 常見錯誤**：
-- ❌ 忘記加 `--once`，導致多個 daemon 同時運行
-- ❌ 設在 `:00` 整點，K 線數據可能還不穩定
-- ❌ 路徑錯誤，建議使用絕對路徑
+- ❌ cron 忘記加 `--once`，導致多個 daemon 同時運行
+- ❌ cron 設在 `:00` 整點，K 線數據可能還不穩定
+- ❌ cron 忘記 `source .venv/bin/activate`，找不到 Python 套件
+- ❌ `git pull` 後忘記重啟 Telegram Bot（cron 會自動用新代碼，但 Bot 不會）
 
 ---
 
@@ -1093,14 +1238,31 @@ python scripts/test_futures_manual.py
 
 ### 10.8 自動止損止盈 (SL/TP) ⭐ NEW
 
-合約交易支援**自動掛止損止盈單**，不需手動監控：
+合約交易支援**自動掛止損止盈單**，不需手動監控。
 
-**工作原理**：
-1. 開倉時自動計算 SL/TP 價格（基於 ATR）
-2. 使用 Binance Algo Order API 掛條件單
-3. 每次 cron 執行時檢查並補掛遺漏的單
+#### 工作原理
 
-**配置範例**：
+```
+開倉 → 自動計算 SL/TP 價格（基於 ATR）
+     → 透過 Binance Algo Order API 掛條件單
+     → 每次 cron 執行時檢查並補掛遺漏的單（reconciliation）
+```
+
+**為什麼用 Algo Order API？**
+
+Binance 有兩種條件單 API：
+
+| API | 端點 | 說明 |
+|-----|------|------|
+| 一般條件單 | `POST /fapi/v1/order` | `STOP_MARKET`、`TAKE_PROFIT_MARKET`，部分帳戶可能遇到 `-4120` 錯誤 |
+| **Algo Order** | `POST /fapi/v1/algo/futures/newOrderVp` | ⭐ 更穩定，支援 `CONDITIONAL` 類型，本專案使用此 API |
+
+查詢 SL/TP 掛單時用 `GET /fapi/v1/algoOrder/openOrders?algoType=CONDITIONAL`。
+
+> ⚠️ **注意**：Algo Order API 的回傳欄位與一般訂單不同，觸發價在 `triggerPrice`（不是 `stopPrice`），訂單 ID 在 `algoId`（不是 `orderId`）。
+
+#### 配置範例
+
 ```yaml
 strategy:
   params:
@@ -1108,13 +1270,48 @@ strategy:
     take_profit_atr: 4.0  # 止盈 = 入場價 ± 4.0×ATR
 ```
 
-**Telegram 通知範例**：
+| 方向 | 止損 (SL) | 止盈 (TP) |
+|------|-----------|-----------|
+| LONG | 入場價 - 1.5×ATR | 入場價 + 4.0×ATR |
+| SHORT | 入場價 + 1.5×ATR | 入場價 - 4.0×ATR |
+
+#### SL/TP 自動補掛（Reconciliation）
+
+每次 cron 執行時，系統會：
+1. 查詢目前的 Algo Order 掛單
+2. 如果有持倉但沒有 SL → 自動補掛 SL
+3. 如果有持倉但沒有 TP → 自動補掛 TP
+4. 如果已平倉但還有 SL/TP → 自動取消
+
+這確保了即使 SL/TP 被手動取消或意外遺失，系統也會在下一輪自動修復。
+
+#### Telegram 通知範例
+
+開倉時自動推播：
 ```
 🟢 開倉 BTCUSDT
 方向: LONG
 入場價: $67,500
 止損: $66,000 (-2.2%, -$22.50)  ← 預估虧損
 止盈: $72,000 (+6.7%, +$67.50)  ← 預估盈利
+```
+
+用 `/status` 命令也能看到每個持倉的 SL/TP 和預估盈虧：
+```
+📋 持倉 (1)
+🟢 ETHUSDT [SHORT] +12.03
+   🛡️ SL: $2,050.00 (-$48.20)
+   🎯 TP: $1,780.00 (+$45.60)
+```
+
+#### SL/TP 觸發後的冷卻機制
+
+當 SL/TP 被觸發後，系統有**冷卻機制**（cooldown）防止立即反向開倉：
+
+```yaml
+strategy:
+  params:
+    cooldown_bars: 4  # SL/TP 觸發後等待 4 根 K 線才能重新開倉
 ```
 
 **注意**：
