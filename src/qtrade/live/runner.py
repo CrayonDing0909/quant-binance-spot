@@ -588,26 +588,49 @@ class LiveRunner:
                         logger.warning(f"⚠️  {symbol}: SL/TP 補掛檢查失敗: {e}")
 
             # 附加持倉 + SL/TP 資訊到 signal dict（供 Telegram 摘要使用）
-            sig["_position"] = {"pct": current_pct}
-            if abs(current_pct) > 0.01 and not isinstance(self.broker, PaperBroker):
+            # 注意：需要查詢交易後的最新持倉，而非交易前的 current_pct
+            if not isinstance(self.broker, PaperBroker) and hasattr(self.broker, "get_position"):
                 try:
-                    pos_obj = self.broker.get_position(symbol) if hasattr(self.broker, "get_position") else None
-                    if pos_obj and hasattr(pos_obj, "entry_price"):
-                        sig["_position"]["entry"] = pos_obj.entry_price
-                        sig["_position"]["qty"] = abs(pos_obj.qty)
-                        sig["_position"]["side"] = "LONG" if pos_obj.qty > 0 else "SHORT"
-
-                    if hasattr(self.broker, "get_all_conditional_orders"):
-                        orders = self.broker.get_all_conditional_orders(symbol)
-                        for o in orders:
-                            otype = o.get("type", "")
-                            trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
-                            if otype in {"STOP_MARKET", "STOP"} and trigger > 0:
-                                sig["_position"]["sl"] = trigger
-                            elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} and trigger > 0:
-                                sig["_position"]["tp"] = trigger
+                    pos_obj = self.broker.get_position(symbol)
+                    if pos_obj and abs(pos_obj.qty) > 1e-10:
+                        live_pct = self.broker.get_position_pct(symbol, price)
+                        sig["_position"] = {
+                            "pct": live_pct,
+                            "entry": pos_obj.entry_price,
+                            "qty": abs(pos_obj.qty),
+                            "side": "LONG" if pos_obj.qty > 0 else "SHORT",
+                        }
+                        # 查詢 SL/TP 掛單
+                        if hasattr(self.broker, "get_all_conditional_orders"):
+                            orders = self.broker.get_all_conditional_orders(symbol)
+                            for o in orders:
+                                otype = o.get("type", "")
+                                trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
+                                if trigger <= 0:
+                                    continue
+                                if otype in {"STOP_MARKET", "STOP"}:
+                                    sig["_position"]["sl"] = trigger
+                                elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
+                                    sig["_position"]["tp"] = trigger
+                                elif pos_obj.entry_price > 0:
+                                    # Algo orders fallback: 用觸發價 vs 入場價推斷
+                                    is_long = pos_obj.qty > 0
+                                    if is_long:
+                                        if trigger < pos_obj.entry_price:
+                                            sig["_position"]["sl"] = trigger
+                                        else:
+                                            sig["_position"]["tp"] = trigger
+                                    else:
+                                        if trigger > pos_obj.entry_price:
+                                            sig["_position"]["sl"] = trigger
+                                        else:
+                                            sig["_position"]["tp"] = trigger
+                    else:
+                        sig["_position"] = {"pct": 0}  # 已平倉
                 except Exception:
-                    pass  # 查詢失敗不影響主流程
+                    sig["_position"] = {"pct": current_pct}  # 查詢失敗用舊值
+            else:
+                sig["_position"] = {"pct": current_pct}
 
         # 發送信號摘要到 Telegram
         # --once 模式（cron）：每次都發，讓每小時都能看到信號狀態

@@ -449,14 +449,44 @@ class TelegramBot:
             return f"❌ 獲取交易失敗: {e}"
     
     def _cmd_pnl(self, args: list[str], chat_id: str) -> str:
-        """今日盈虧"""
+        """今日盈虧（已實現 + 未實現 + 資金費率）"""
         if not self.broker:
             return "⚠️ Broker 未連接"
         
         try:
-            if hasattr(self.broker, "get_daily_pnl"):
-                pnl = self.broker.get_daily_pnl()
-                return self._format_pnl(pnl)
+            # Futures broker: 用 get_income_history 查詢今日收益
+            if hasattr(self.broker, "get_income_history"):
+                # 今天 00:00 UTC 的毫秒時間戳
+                now = datetime.now(timezone.utc)
+                start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                start_ms = int(start_of_day.timestamp() * 1000)
+                
+                # 查詢今日所有收益記錄
+                incomes = self.broker.get_income_history(limit=200)
+                today_incomes = [i for i in incomes if i.get("time", 0) >= start_ms]
+                
+                realized = sum(i["income"] for i in today_incomes if i["income_type"] == "REALIZED_PNL")
+                commission = sum(i["income"] for i in today_incomes if i["income_type"] == "COMMISSION")
+                funding = sum(i["income"] for i in today_incomes if i["income_type"] == "FUNDING_FEE")
+                
+                # 未實現盈虧
+                unrealized = 0.0
+                if hasattr(self.broker, "get_positions"):
+                    for pos in self.broker.get_positions():
+                        unrealized += pos.unrealized_pnl if hasattr(pos, "unrealized_pnl") else 0
+                
+                total = realized + commission + funding + unrealized
+                emoji = "📈" if total >= 0 else "📉"
+                
+                lines = [
+                    f"{emoji} <b>今日盈虧</b> ({now.strftime('%m-%d')} UTC)\n",
+                    f"💰 總計: <b>${total:+,.2f}</b>",
+                    f"✅ 已實現: ${realized:+,.2f}",
+                    f"⏳ 未實現: ${unrealized:+,.2f}",
+                    f"💸 手續費: ${commission:+,.2f}",
+                    f"🔄 資金費率: ${funding:+,.2f}",
+                ]
+                return "\n".join(lines)
             else:
                 return "⚠️ 無法獲取盈虧資訊"
         except Exception as e:
