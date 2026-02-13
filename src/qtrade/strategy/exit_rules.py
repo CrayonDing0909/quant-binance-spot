@@ -10,6 +10,10 @@
     - 止盈：用 K 棒「最高價」檢查
     - 這比用「收盤價」更真實，與實盤預掛單行為一致
 
+入場價格（v2.1 更新）：
+    - 入場價使用 open（開盤價），與 vectorbt from_orders(price=open_) 一致
+    - 這確保 SL/TP 計算基於實際入場價，不存在收盤價 look-ahead
+
 用法：
     from qtrade.strategy.exit_rules import apply_exit_rules
 
@@ -59,6 +63,7 @@ def apply_exit_rules(
     Returns:
         調整後的持倉序列 [-1, 1]
     """
+    open_ = df["open"].values
     close = df["close"].values
     high = df["high"].values
     low = df["low"].values
@@ -80,6 +85,7 @@ def apply_exit_rules(
     cooldown_remaining = 0
 
     for i in range(n):
+        current_open = open_[i]
         current_close = close[i]
         current_high = high[i]
         current_low = low[i]
@@ -116,9 +122,9 @@ def apply_exit_rules(
             if triggered_exit:
                 # 平倉後是否反手做空
                 if raw[i] < 0:
-                    # 反手做空
+                    # 反手做空（入場價 = open，與 VBT 一致）
                     position_state = -1
-                    entry_price = current_close
+                    entry_price = current_open
                     extreme_since_entry = current_low
                     if stop_loss_atr is not None and current_atr > 0:
                         sl_price = entry_price + stop_loss_atr * current_atr
@@ -166,9 +172,9 @@ def apply_exit_rules(
             if triggered_exit:
                 # 平倉後是否反手做多
                 if raw[i] > 0:
-                    # 反手做多
+                    # 反手做多（入場價 = open，與 VBT 一致）
                     position_state = 1
-                    entry_price = current_close
+                    entry_price = current_open
                     extreme_since_entry = current_high
                     if stop_loss_atr is not None and current_atr > 0:
                         sl_price = entry_price - stop_loss_atr * current_atr
@@ -194,9 +200,9 @@ def apply_exit_rules(
         # ── 空倉中：檢查是否該進場 ──
         else:
             if raw[i] > 0:
-                # 開多
+                # 開多（入場價 = open，與 VBT 一致）
                 position_state = 1
-                entry_price = current_close
+                entry_price = current_open
                 extreme_since_entry = current_high
 
                 if stop_loss_atr is not None and current_atr > 0:
@@ -215,9 +221,9 @@ def apply_exit_rules(
 
                 result[i] = 1.0
             elif raw[i] < 0:
-                # 開空
+                # 開空（入場價 = open，與 VBT 一致）
                 position_state = -1
-                entry_price = current_close
+                entry_price = current_open
                 extreme_since_entry = current_low
 
                 if stop_loss_atr is not None and current_atr > 0:
