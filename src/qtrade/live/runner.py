@@ -88,7 +88,7 @@ class LiveRunner:
         # 狀態管理器（用於 Real Trading 持久化）
         self.state_manager: Optional[TradingStateManager] = None
         if state_path or mode == "real":
-            default_state_path = Path(f"reports/live/{self.strategy_name}/{mode}_state.json")
+            default_state_path = cfg.get_report_dir("live") / f"{mode}_state.json"
             self.state_manager = TradingStateManager(
                 state_path=state_path or default_state_path,
                 strategy_name=self.strategy_name,
