@@ -1,0 +1,101 @@
+# 多因子組合策略 — 合約版
+#
+# 結合趨勢、動量、均值回歸、成交量四個因子
+# 加權評分決定持倉方向，最穩健但可能最慢
+#
+# 使用方式：
+#   python scripts/download_data.py -c config/futures_multi_factor.yaml
+#   python scripts/run_backtest.py -c config/futures_multi_factor.yaml
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "multi_factor"
+  params:
+    # 因子權重（總和自動正規化）
+    w_trend: 0.35               # 趨勢因子（EMA + ADX）
+    w_momentum: 0.30            # 動量因子（MACD Histogram）
+    w_mean_reversion: 0.15      # 均值回歸因子（Bollinger %B）
+    w_volume: 0.20              # 成交量因子（OBV）
+
+    # 開平倉閾值
+    entry_threshold: 0.30       # composite > 0.3 → 開倉
+    exit_threshold: 0.10        # |composite| < 0.1 → 平倉
+
+    # 趨勢因子參數
+    ema_fast: 20
+    ema_slow: 50
+    min_adx: 15
+    adx_period: 14
+
+    # 動量因子參數
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+
+    # 均值回歸因子參數
+    bb_period: 20
+    bb_std: 2.0
+
+    # 成交量因子參數
+    obv_ema: 20
+
+    # ATR 止損止盈
+    stop_loss_atr: 2.0
+    take_profit_atr: 3.5
+    trailing_stop_atr: null     # 設 2.5 啟用移動止損
+    atr_period: 14
+    cooldown_bars: 3
+
+  symbol_overrides:
+    ETHUSDT:
+      entry_threshold: 0.25     # ETH 訊號稍弱，降低門檻
+      min_adx: 12
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: true
+    base_bps: 2
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.50
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.00
+    ETHUSDT: 1.00
+
+output:
+  report_dir: "./reports"

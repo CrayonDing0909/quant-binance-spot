@@ -27,7 +27,7 @@ strategy:
     # RSI 參數
     rsi_period: 10
     oversold: 30           # RSI < 30 → 做多
-    overbought: 70         # RSI > 70 → 做空（合約專用）
+    overbought: 80         # RSI > 80 → 做空（掃描最佳：Sharpe 2.42→3.59）
     
     # ADX 過濾器
     min_adx: 15
@@ -45,18 +45,37 @@ strategy:
   symbol_overrides:
     BTCUSDT:
       oversold: 30
-      overbought: 70
+      overbought: 80       # 掃描最佳：S_PF 1.23→1.35, Sharpe 2.42→3.59
     ETHUSDT:
       oversold: 35
-      overbought: 65
+      overbought: 78       # 掃描最佳：S_PF 1.74→2.03, Sharpe 3.33→4.03
 
 backtest:
   initial_cash: 10000
   fee_bps: 4              # 合約手續費較低（Maker 0.02%, Taker 0.04%）
-  slippage_bps: 3
+  slippage_bps: 3         # 固定滑點（slippage_model.enabled=true 時被覆蓋）
   trade_on: "next_open"
   validate_data: true
   clean_data: true
+
+  # 🔴 Funding Rate 成本模型（永續合約持倉成本）
+  # 每 8 小時結算，多頭在 rate>0 時付費，空頭收費
+  # 開啟後回測會顯示「調整後績效」，更貼近真實收益
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001   # 0.01% per 8h（無歷史資料時的預設值）
+    use_historical: true      # 嘗試載入歷史 funding rate（需先 download_data.py --funding-rate）
+
+  # 🔴 Volume-based 滑點模型（Square-Root Market Impact）
+  # slippage = base_spread + k × (trade_value / ADV)^0.5
+  # 開啟後取代固定 slippage_bps，大資金時滑點會顯著增加
+  slippage_model:
+    enabled: true
+    base_bps: 2               # 最低買賣價差 (bps)
+    impact_coefficient: 0.1   # 衝擊係數 k（0.05~0.20，越大=流動性越差）
+    impact_power: 0.5         # 衝擊指數（0.5 = 平方根模型，學術標準）
+    adv_lookback: 20          # 計算平均成交量的回看 bar 數
+    participation_rate: 0.10  # 市場佔比上限（10%）
 
 # 風控（合約建議更保守）
 risk:

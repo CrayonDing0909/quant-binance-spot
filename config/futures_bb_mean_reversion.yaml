@@ -1,0 +1,88 @@
+# 布林帶均值回歸策略 — 合約版
+#
+# 均值回歸策略：Bollinger Bands + Stochastic + ATR 止損
+# 適合震盪/區間行情，與趨勢策略互補
+#
+# 使用方式：
+#   python scripts/download_data.py -c config/futures_bb_mean_reversion.yaml
+#   python scripts/run_backtest.py -c config/futures_bb_mean_reversion.yaml
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 2                   # 均值回歸槓桿不宜太高
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "bb_mean_reversion"
+  params:
+    # 布林帶參數
+    bb_period: 20
+    bb_std: 2.0
+    lower_threshold: 0.05       # %B < 0.05 → 做多（價格在下軌附近）
+    upper_threshold: 0.95       # %B > 0.95 → 做空（價格在上軌附近）
+    exit_threshold_low: 0.45    # %B 回到中軌附近 → 平空
+    exit_threshold_high: 0.55   # %B 回到中軌附近 → 平多
+    min_bandwidth: 0.02         # 帶寬太窄 → 不交易
+
+    # Stochastic 參數
+    stoch_k: 14
+    stoch_d: 3
+    stoch_smooth: 3             # 3 = Slow Stochastic
+    stoch_oversold: 20
+    stoch_overbought: 80
+
+    # ATR 止損止盈（均值回歸止損要嚴格）
+    stop_loss_atr: 1.5
+    take_profit_atr: 2.0
+    atr_period: 14
+    cooldown_bars: 4
+
+  symbol_overrides:
+    ETHUSDT:
+      bb_std: 2.2               # ETH 波動更大，布林帶稍寬
+      stop_loss_atr: 1.8
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: true
+    base_bps: 2
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.40        # 均值回歸更保守
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.00
+    ETHUSDT: 1.00
+
+output:
+  report_dir: "./reports"
