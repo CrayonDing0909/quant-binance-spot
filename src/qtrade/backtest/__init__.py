@@ -21,6 +21,16 @@ from .metrics import (
     trade_summary,
 )
 from .plotting import plot_equity_curve
+from .costs import (
+    compute_funding_costs,
+    adjust_equity_for_funding,
+    compute_adjusted_stats,
+    compute_volume_slippage,
+    capacity_analysis,
+    FundingCostResult,
+    SlippageResult,
+    CapacityResult,
+)
 from .hyperopt_engine import (
     HyperoptEngine,
     ParamSpace,
@@ -74,6 +84,15 @@ __all__ = [
     "trade_summary",
     # Plotting
     "plot_equity_curve",
+    # Cost Models
+    "compute_funding_costs",
+    "adjust_equity_for_funding",
+    "compute_adjusted_stats",
+    "compute_volume_slippage",
+    "capacity_analysis",
+    "FundingCostResult",
+    "SlippageResult",
+    "CapacityResult",
     # Hyperopt
     "HyperoptEngine",
     "ParamSpace",

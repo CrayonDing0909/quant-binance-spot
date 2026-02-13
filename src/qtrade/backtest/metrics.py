@@ -202,3 +202,160 @@ def _max_consecutive(mask: pd.Series) -> int:
     groups = (~mask).cumsum()
     counts = mask.groupby(groups).sum()
     return int(counts.max()) if len(counts) > 0 else 0
+
+
+# ══════════════════════════════════════════════════════════════
+# Long / Short 分開統計
+# ══════════════════════════════════════════════════════════════
+
+
+def long_short_split_analysis(
+    pf: vbt.Portfolio,
+    pos: pd.Series,
+) -> dict:
+    """
+    Long / Short 分開統計分析
+
+    從 portfolio 的交易記錄中，根據持倉方向分類，
+    分別計算 Long 和 Short 的績效指標。
+
+    Args:
+        pf:  vectorbt Portfolio 物件
+        pos: 持倉信號 Series（[-1, 1]）
+
+    Returns:
+        dict with keys:
+            "long":    Long 交易統計 dict
+            "short":   Short 交易統計 dict
+            "summary": 人類可讀的摘要字串
+            "df":      DataFrame (Long vs Short 對比表)
+    """
+    trades_df = trade_analysis(pf)
+    if trades_df.empty:
+        return {
+            "long": {},
+            "short": {},
+            "summary": "無交易記錄",
+            "df": pd.DataFrame(),
+        }
+
+    closed = trades_df[trades_df["Status"] == "Closed"].copy()
+    if closed.empty:
+        return {
+            "long": {},
+            "short": {},
+            "summary": "無已平倉交易",
+            "df": pd.DataFrame(),
+        }
+
+    # 判斷交易方向：
+    # 如果入場價 < 出場價 且 PnL > 0 → 做多盈利
+    # 使用持倉信號來判斷更精確
+    # 在入場時間點查看 pos 的值
+    trade_directions = []
+    for _, trade in closed.iterrows():
+        entry_time = trade["Entry Time"]
+        # 查找入場時間附近的持倉信號
+        if entry_time in pos.index:
+            p = pos.loc[entry_time]
+        else:
+            # 找最近的時間點
+            idx = pos.index.get_indexer([entry_time], method="nearest")[0]
+            p = pos.iloc[idx] if idx >= 0 else 0
+
+        if p > 0:
+            trade_directions.append("Long")
+        elif p < 0:
+            trade_directions.append("Short")
+        else:
+            # 用價格推斷：如果入場 < 出場且 PnL > 0，是做多
+            if trade["PnL"] > 0:
+                is_long = trade["Exit Price"] > trade["Entry Price"]
+            else:
+                is_long = trade["Exit Price"] < trade["Entry Price"]
+            trade_directions.append("Long" if is_long else "Short")
+
+    closed["Direction"] = trade_directions
+
+    long_trades = closed[closed["Direction"] == "Long"]
+    short_trades = closed[closed["Direction"] == "Short"]
+
+    def _calc_side_stats(side_trades: pd.DataFrame, side_name: str) -> dict:
+        """計算單邊統計"""
+        n = len(side_trades)
+        if n == 0:
+            return {
+                "Total Trades": 0,
+                "Winning Trades": 0,
+                "Losing Trades": 0,
+                "Win Rate [%]": 0.0,
+                "Total PnL": 0.0,
+                "Avg PnL": 0.0,
+                "Avg Return [%]": 0.0,
+                "Best Trade [%]": 0.0,
+                "Worst Trade [%]": 0.0,
+                "Profit Factor": 0.0,
+                "Avg Duration": "N/A",
+            }
+
+        winners = side_trades[side_trades["PnL"] > 0]
+        losers = side_trades[side_trades["PnL"] < 0]
+
+        gross_profit = winners["PnL"].sum() if len(winners) > 0 else 0
+        gross_loss = abs(losers["PnL"].sum()) if len(losers) > 0 else 0
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+
+        return {
+            "Total Trades": n,
+            "Winning Trades": len(winners),
+            "Losing Trades": len(losers),
+            "Win Rate [%]": round(len(winners) / n * 100, 1),
+            "Total PnL": round(side_trades["PnL"].sum(), 2),
+            "Avg PnL": round(side_trades["PnL"].mean(), 2),
+            "Avg Return [%]": round(side_trades["Return [%]"].mean(), 2),
+            "Best Trade [%]": round(side_trades["Return [%]"].max(), 2),
+            "Worst Trade [%]": round(side_trades["Return [%]"].min(), 2),
+            "Profit Factor": round(profit_factor, 2) if profit_factor != float("inf") else "∞",
+            "Avg Duration": str(side_trades["Duration"].mean()).split(".")[0] if n > 0 else "N/A",
+        }
+
+    long_stats = _calc_side_stats(long_trades, "Long")
+    short_stats = _calc_side_stats(short_trades, "Short")
+
+    # 建立對比 DataFrame
+    comparison_df = pd.DataFrame({
+        "Long": long_stats,
+        "Short": short_stats,
+    }).T
+
+    # 生成摘要文字
+    lines = [
+        "📊 Long / Short 分開統計",
+        f"   Long  交易: {long_stats['Total Trades']} 筆, "
+        f"勝率 {long_stats['Win Rate [%]']}%, "
+        f"總 PnL ${long_stats['Total PnL']:,.2f}, "
+        f"平均報酬 {long_stats['Avg Return [%]']}%",
+        f"   Short 交易: {short_stats['Total Trades']} 筆, "
+        f"勝率 {short_stats['Win Rate [%]']}%, "
+        f"總 PnL ${short_stats['Total PnL']:,.2f}, "
+        f"平均報酬 {short_stats['Avg Return [%]']}%",
+    ]
+
+    # 判斷哪邊更好
+    long_pnl = long_stats["Total PnL"]
+    short_pnl = short_stats["Total PnL"]
+    if long_pnl > short_pnl and long_pnl > 0:
+        lines.append(f"   → Long 側貢獻更多利潤 (+${long_pnl:,.2f})")
+    elif short_pnl > long_pnl and short_pnl > 0:
+        lines.append(f"   → Short 側貢獻更多利潤 (+${short_pnl:,.2f})")
+    elif long_pnl <= 0 and short_pnl <= 0:
+        lines.append("   ⚠️ 兩側都在虧損")
+
+    summary = "\n".join(lines)
+
+    return {
+        "long": long_stats,
+        "short": short_stats,
+        "summary": summary,
+        "df": comparison_df,
+    }

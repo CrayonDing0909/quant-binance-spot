@@ -11,6 +11,19 @@ from ..data.storage import load_klines
 from ..data.quality import validate_data_quality, clean_data
 from ..risk.risk_limits import RiskLimits, apply_risk_limits
 from .metrics import benchmark_buy_and_hold
+from .costs import (
+    compute_funding_costs,
+    adjust_equity_for_funding,
+    compute_adjusted_stats,
+    compute_volume_slippage,
+    FundingCostResult,
+    SlippageResult,
+)
+from ..data.funding_rate import (
+    load_funding_rates,
+    get_funding_rate_path,
+    align_funding_to_klines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +144,7 @@ def run_symbol_backtest(
     risk_limits: Optional[RiskLimits] = None,
     market_type: str | None = None,
     direction: str | None = None,
+    data_dir: Path | None = None,
 ) -> dict:
     """
     運行單個交易對的回測
@@ -145,6 +159,7 @@ def run_symbol_backtest(
         risk_limits: 風險限制
         market_type: "spot" 或 "futures"（None → 從 cfg 讀取，預設 "spot"）
         direction: "both" / "long_only" / "short_only"（None → 從 cfg 讀取）
+        data_dir: 數據根目錄（用於載入 funding rate 等輔助數據）
 
     Returns:
         {
@@ -153,6 +168,11 @@ def run_symbol_backtest(
             "stats":    策略原始 stats,
             "df":       K線 DataFrame,
             "pos":      持倉序列,
+            # ── 成本模型（如果啟用）──
+            "funding_cost":       FundingCostResult | None,
+            "slippage_result":    SlippageResult | None,
+            "adjusted_stats":     dict | None,
+            "adjusted_equity":    Series | None,
         }
     """
     df = load_klines(data_path)
@@ -221,7 +241,33 @@ def run_symbol_backtest(
     close = df["close"]
     open_ = df["open"]
     fee = _bps_to_pct(cfg["fee_bps"])
-    slippage = _bps_to_pct(cfg["slippage_bps"])
+
+    # ── 滑點模型 ──────────────────────────────────────
+    sm_cfg = cfg.get("slippage_model", {})
+    slippage_result: SlippageResult | None = None
+
+    if sm_cfg.get("enabled", False):
+        leverage = cfg.get("leverage", 1)
+        slippage_result = compute_volume_slippage(
+            pos=pos,
+            df=df,
+            capital=cfg["initial_cash"],
+            base_bps=sm_cfg.get("base_bps", 2.0),
+            impact_coefficient=sm_cfg.get("impact_coefficient", 0.1),
+            impact_power=sm_cfg.get("impact_power", 0.5),
+            adv_lookback=sm_cfg.get("adv_lookback", 20),
+            participation_rate=sm_cfg.get("participation_rate", 0.10),
+            leverage=leverage,
+        )
+        slippage = slippage_result.slippage_array
+        logger.info(
+            f"📊 {symbol} Volume slippage: "
+            f"avg={slippage_result.avg_slippage_bps:.1f}bps, "
+            f"max={slippage_result.max_slippage_bps:.1f}bps, "
+            f"high_impact={slippage_result.high_impact_bars} bars"
+        )
+    else:
+        slippage = _bps_to_pct(cfg["slippage_bps"])
 
     # ── 策略 Portfolio ─────────────────────────────
     vbt_direction = to_vbt_direction(dr)
@@ -247,4 +293,62 @@ def run_symbol_backtest(
     )
 
     stats = pf.stats()
-    return {"pf": pf, "pf_bh": pf_bh, "stats": stats, "df": df, "pos": pos}
+
+    # ── Funding Rate 成本模型 ──────────────────────
+    fr_cfg = cfg.get("funding_rate", {})
+    funding_cost: FundingCostResult | None = None
+    adjusted_stats: dict | None = None
+    adjusted_equity: pd.Series | None = None
+
+    if fr_cfg.get("enabled", False) and mt == "futures":
+        # 嘗試載入歷史 funding rate
+        funding_df = None
+        if fr_cfg.get("use_historical", True) and data_dir is not None:
+            fr_path = get_funding_rate_path(data_dir, symbol)
+            funding_df = load_funding_rates(fr_path)
+            if funding_df is not None:
+                logger.info(f"📥 {symbol} 載入歷史 funding rate: {len(funding_df)} records")
+            else:
+                logger.info(f"ℹ️  {symbol} 無歷史 funding rate，使用預設費率")
+
+        # 對齊到 kline 時間軸
+        funding_rates = align_funding_to_klines(
+            funding_df,
+            df.index,
+            default_rate_8h=fr_cfg.get("default_rate_8h", 0.0001),
+        )
+
+        # 計算 funding 成本
+        leverage = cfg.get("leverage", 1)
+        equity = pf.value()
+        funding_cost = compute_funding_costs(
+            pos=pos,
+            equity=equity,
+            funding_rates=funding_rates,
+            leverage=leverage,
+        )
+
+        # 調整後的資金曲線和統計
+        adjusted_equity = adjust_equity_for_funding(equity, funding_cost)
+        adjusted_stats = compute_adjusted_stats(adjusted_equity, cfg["initial_cash"])
+
+        logger.info(
+            f"💰 {symbol} Funding cost: "
+            f"total=${funding_cost.total_cost:,.2f} "
+            f"({funding_cost.total_cost_pct*100:.2f}%), "
+            f"annualized={funding_cost.annualized_cost_pct*100:.2f}%/yr, "
+            f"settlements={funding_cost.n_settlements}"
+        )
+
+    return {
+        "pf": pf,
+        "pf_bh": pf_bh,
+        "stats": stats,
+        "df": df,
+        "pos": pos,
+        # 成本模型
+        "funding_cost": funding_cost,
+        "slippage_result": slippage_result,
+        "adjusted_stats": adjusted_stats,
+        "adjusted_equity": adjusted_equity,
+    }

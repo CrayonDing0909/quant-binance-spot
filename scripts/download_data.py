@@ -348,6 +348,13 @@ def main() -> None:
         help="覆蓋配置檔案中的 K 線週期"
     )
     
+    # Funding rate 下載
+    parser.add_argument(
+        "--funding-rate",
+        action="store_true",
+        help="同時下載 Futures 歷史 Funding Rate（合約模式自動啟用）"
+    )
+    
     # 資訊查詢選項
     parser.add_argument(
         "--list-sources",
@@ -455,6 +462,39 @@ def main() -> None:
     
     print("-" * 60)
     print(f"🎉 完成！共新增 {total_new} 筆數據")
+
+    # ── Funding Rate 下載 ──────────────────────────
+    # 合約模式下 --funding-rate 或 config 啟用時自動下載
+    should_download_fr = (
+        args.funding_rate
+        or (market_type == "futures" and getattr(cfg.backtest.funding_rate, 'enabled', False))
+    )
+    if should_download_fr and market_type == "futures":
+        from qtrade.data.funding_rate import (
+            download_funding_rates,
+            save_funding_rates,
+            get_funding_rate_path,
+            load_funding_rates,
+        )
+        print(f"\n📥 下載 Futures Funding Rate...")
+        print("-" * 60)
+        for sym in symbols:
+            fr_path = get_funding_rate_path(cfg.data_dir, sym)
+            try:
+                existing = load_funding_rates(fr_path)
+                if existing is not None and not args.full:
+                    print(f"  {sym} Funding rate 已有 {len(existing)} 筆")
+                    # TODO: 增量更新
+                else:
+                    fr_df = download_funding_rates(sym, start_date, end_date)
+                    if not fr_df.empty:
+                        save_funding_rates(fr_df, fr_path)
+                        print(f"  ✅ {sym} Funding rate: {len(fr_df)} 筆 → {fr_path}")
+                    else:
+                        print(f"  ⚠️  {sym} 無 funding rate 資料")
+            except Exception as e:
+                print(f"  ❌ {sym} Funding rate 下載失敗: {e}")
+        print("-" * 60)
 
 
 if __name__ == "__main__":

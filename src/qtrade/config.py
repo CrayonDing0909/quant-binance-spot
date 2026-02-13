@@ -23,6 +23,42 @@ class MarketConfig:
 
 
 @dataclass(frozen=True)
+class FundingRateModelConfig:
+    """
+    回測用 Funding Rate 成本模型
+
+    enabled: 是否啟用 funding rate 扣除
+    default_rate_8h: 無歷史資料時的預設 8h 費率（0.0001 = 0.01%）
+    use_historical: 是否嘗試載入歷史資料（需先用 download_data.py --funding-rate）
+    """
+    enabled: bool = False
+    default_rate_8h: float = 0.0001  # 0.01% per 8h (Binance 預設)
+    use_historical: bool = True
+
+
+@dataclass(frozen=True)
+class SlippageModelConfig:
+    """
+    Volume-based 滑點模型（Square-Root Market Impact）
+
+    slippage = base_spread + k × (trade_value / ADV)^power
+
+    enabled: 啟用後取代固定 slippage_bps
+    base_bps: 最低買賣價差 (bps)
+    impact_coefficient: 衝擊係數 k（經驗值 0.05~0.20）
+    impact_power: 衝擊指數（0.5 = 平方根模型）
+    adv_lookback: 計算 ADV 的回看 bar 數
+    participation_rate: 最大市場佔比上限（clip 用）
+    """
+    enabled: bool = False
+    base_bps: float = 2.0
+    impact_coefficient: float = 0.1
+    impact_power: float = 0.5
+    adv_lookback: int = 20
+    participation_rate: float = 0.10
+
+
+@dataclass(frozen=True)
 class BacktestConfig:
     initial_cash: float
     fee_bps: float
@@ -30,6 +66,8 @@ class BacktestConfig:
     trade_on: str  # "next_open"
     validate_data: bool = True
     clean_data: bool = True
+    funding_rate: FundingRateModelConfig = FundingRateModelConfig()
+    slippage_model: SlippageModelConfig = SlippageModelConfig()
 
 
 @dataclass(frozen=True)
@@ -255,7 +293,7 @@ class AppConfig:
         集中管理，避免各 script 重複建構。
         包含 start / end 日期，讓回測引擎可以過濾數據範圍。
         """
-        return {
+        d = {
             "strategy_name": self.strategy.name,
             "strategy_params": self.strategy.get_params(symbol),
             "initial_cash": self.backtest.initial_cash,
@@ -268,7 +306,25 @@ class AppConfig:
             "clean_data_before": self.backtest.clean_data,
             "start": self.market.start,
             "end": self.market.end,
+            "leverage": self.futures.leverage if self.futures else 1,
         }
+        # 成本模型（新增）
+        fr = self.backtest.funding_rate
+        d["funding_rate"] = {
+            "enabled": fr.enabled,
+            "default_rate_8h": fr.default_rate_8h,
+            "use_historical": fr.use_historical,
+        }
+        sm = self.backtest.slippage_model
+        d["slippage_model"] = {
+            "enabled": sm.enabled,
+            "base_bps": sm.base_bps,
+            "impact_coefficient": sm.impact_coefficient,
+            "impact_power": sm.impact_power,
+            "adv_lookback": sm.adv_lookback,
+            "participation_rate": sm.participation_rate,
+        }
+        return d
 
 
 def _resolve_env_var(value: str | None) -> str | None:
@@ -355,9 +411,37 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     output_raw = raw.get("output", {})
     output = OutputConfig(**output_raw) if output_raw else OutputConfig()
 
+    # backtest 配置（含成本模型子項）
+    bt_raw = dict(raw["backtest"])
+    
+    # 解析 funding_rate 子配置
+    fr_raw = bt_raw.pop("funding_rate", {})
+    funding_rate_cfg = FundingRateModelConfig(
+        enabled=fr_raw.get("enabled", False),
+        default_rate_8h=fr_raw.get("default_rate_8h", 0.0001),
+        use_historical=fr_raw.get("use_historical", True),
+    )
+    
+    # 解析 slippage_model 子配置
+    sm_raw = bt_raw.pop("slippage_model", {})
+    slippage_model_cfg = SlippageModelConfig(
+        enabled=sm_raw.get("enabled", False),
+        base_bps=sm_raw.get("base_bps", 2.0),
+        impact_coefficient=sm_raw.get("impact_coefficient", 0.1),
+        impact_power=sm_raw.get("impact_power", 0.5),
+        adv_lookback=sm_raw.get("adv_lookback", 20),
+        participation_rate=sm_raw.get("participation_rate", 0.10),
+    )
+    
+    backtest_cfg = BacktestConfig(
+        **bt_raw,
+        funding_rate=funding_rate_cfg,
+        slippage_model=slippage_model_cfg,
+    )
+
     return AppConfig(
         market=market,
-        backtest=BacktestConfig(**raw["backtest"]),
+        backtest=backtest_cfg,
         strategy=StrategyConfig(
             name=raw["strategy"]["name"],
             params=raw["strategy"].get("params", {}),

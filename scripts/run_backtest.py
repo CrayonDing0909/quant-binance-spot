@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from qtrade.config import load_config
 from qtrade.backtest.run_backtest import run_symbol_backtest
-from qtrade.backtest.metrics import full_report, trade_summary, trade_analysis
+from qtrade.backtest.metrics import full_report, trade_summary, trade_analysis, long_short_split_analysis
 from qtrade.backtest.plotting import plot_backtest_summary
 
 
@@ -173,13 +173,30 @@ def main() -> None:
         print(f"回測: {strategy_name} - {sym} {market_emoji} [{market_label}] {direction_label}")
         print(f"{'='*60}")
 
-        res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name)
+        # leverage 已在 to_backtest_dict 中設定
+        res = run_symbol_backtest(
+            sym, data_path, bt_cfg, strategy_name,
+            data_dir=cfg.data_dir,
+        )
         pf = res["pf"]
         pf_bh = res["pf_bh"]
         
         # 顯示實際回測資料範圍
         df = res["df"]
         print(f"📅 資料範圍: {df.index[0].strftime('%Y-%m-%d %H:%M')} → {df.index[-1].strftime('%Y-%m-%d %H:%M')} ({len(df):,} bars)")
+
+        # ── 0. 成本模型摘要（如果啟用）────────────────
+        if res.get("slippage_result"):
+            sr = res["slippage_result"]
+            print(f"\n📊 滑點模型: avg={sr.avg_slippage_bps:.1f}bps, max={sr.max_slippage_bps:.1f}bps, 高衝擊bar={sr.high_impact_bars}")
+
+        if res.get("funding_cost"):
+            fc = res["funding_cost"]
+            if fc.total_cost >= 0:
+                print(f"💰 Funding 支出: ${fc.total_cost:,.2f} ({fc.total_cost_pct*100:.2f}%), 年化={fc.annualized_cost_pct*100:.2f}%/yr, 結算={fc.n_settlements}次")
+            else:
+                print(f"💰 Funding 收入: ${abs(fc.total_cost):,.2f} ({abs(fc.total_cost_pct)*100:.2f}%), 年化={abs(fc.annualized_cost_pct)*100:.2f}%/yr, 結算={fc.n_settlements}次")
+                print(f"   （策略淨持空時段多 → 在 rate>0 時收取 funding）")
 
         # ── 1. 策略 vs Buy & Hold 對比報告 ──────────────
         report = full_report(pf, pf_bh, strategy_name)
@@ -188,9 +205,34 @@ def main() -> None:
         print(f"{'─'*50}")
         print(report.to_string())
 
+        # 如果有 funding 調整，顯示調整後的核心指標
+        if res.get("adjusted_stats"):
+            adj = res["adjusted_stats"]
+            orig_stats = pf.stats()
+            print(f"\n{'─'*50}")
+            print(f"  {sym}  Funding Rate 調整後績效")
+            print(f"{'─'*50}")
+            print(f"  {'指標':<30} {'原始':>12} {'調整後':>12} {'差異':>12}")
+            print(f"  {'-'*66}")
+            for key in ["Total Return [%]", "Max Drawdown [%]", "Sharpe Ratio", "Sortino Ratio", "Calmar Ratio"]:
+                orig_val = orig_stats.get(key, adj.get(key, 0))
+                adj_val = adj.get(key, 0)
+                # orig_stats 的 key 可能格式不同
+                if key in orig_stats:
+                    orig_val = orig_stats[key]
+                diff = adj_val - orig_val
+                print(f"  {key:<30} {orig_val:>12.2f} {adj_val:>12.2f} {diff:>+12.2f}")
+
         stats_path = report_dir / f"stats_{sym}.csv"
         report.to_csv(stats_path)
         print(f"\n✅ 統計報告: {stats_path}")
+
+        # 儲存調整後的統計
+        if res.get("adjusted_stats"):
+            import pandas as _pd
+            adj_path = report_dir / f"stats_funding_adjusted_{sym}.csv"
+            _pd.Series(res["adjusted_stats"]).to_csv(adj_path)
+            print(f"✅ Funding 調整報告: {adj_path}")
 
         # ── 2. 交易摘要 ────────────────────────────────
         t_summary = trade_summary(pf)
@@ -204,14 +246,29 @@ def main() -> None:
             t_summary.to_csv(ts_path)
             print(f"\n✅ 交易摘要: {ts_path}")
 
-        # ── 3. 逐筆交易記錄 ────────────────────────────
+        # ── 3. Long / Short 分開統計（合約模式）────────
+        if market_type == "futures" and direction == "both":
+            ls_analysis = long_short_split_analysis(pf, res["pos"])
+            if ls_analysis["df"] is not None and not ls_analysis["df"].empty:
+                print(f"\n{'─'*50}")
+                print(f"  {sym}  Long / Short 分開統計")
+                print(f"{'─'*50}")
+                print(ls_analysis["summary"])
+                print()
+                print(ls_analysis["df"].to_string())
+
+                ls_path = report_dir / f"long_short_split_{sym}.csv"
+                ls_analysis["df"].to_csv(ls_path)
+                print(f"\n✅ Long/Short 統計: {ls_path}")
+
+        # ── 4. 逐筆交易記錄 ────────────────────────────
         trades_df = trade_analysis(pf)
         if not trades_df.empty:
             trades_path = report_dir / f"trades_{sym}.csv"
             trades_df.to_csv(trades_path, index=False)
             print(f"✅ 逐筆交易: {trades_path}  ({len(trades_df)} 筆)")
 
-        # ── 4. 資金曲線圖（含 Buy & Hold）───────────────
+        # ── 5. 資金曲線圖（含 Buy & Hold）───────────────
         plot_path = report_dir / f"equity_curve_{sym}.png"
         plot_backtest_summary(
             pf, res["df"], res["pos"], sym, plot_path,
