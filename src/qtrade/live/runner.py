@@ -449,13 +449,10 @@ class LiveRunner:
             current_pct = self.broker.get_position_pct(symbol, price)
             diff = abs(target_pct - current_pct)
 
-            # v2.4: SL/TP 冷卻檢查 — 防止交易所止損後立刻重新進場
-            # 場景：bar 開頭幾分鐘 SL/TP 被觸發 → 倉位歸零 → cron 用舊 bar 信號重新開倉
-            # 檢測邏輯：
-            #   1. 策略要求開倉（target ≠ 0）但 broker 無持倉（current ≈ 0）
-            #   2. 交易所沒有 SL/TP 掛單（已被消耗）
-            #   3. 最近 10 分鐘內有成交紀錄（= SL/TP 剛被觸發）
-            #   → 跳過本次開倉，等下根 bar 讓策略重新確認
+            # v2.4+v2.7.1: SL/TP 冷卻檢查 + 孤兒掛單清理
+            # 場景 A（v2.4）：SL/TP 觸發 → 倉位歸零 + 掛單消失 → 冷卻等下根 bar
+            # 場景 B（v2.7.1）：SL 觸發 → 倉位歸零 + TP 殘留 → 先清掃孤兒再冷卻
+            #   （Hedge Mode 下 SL 觸發平倉，但 TP 是獨立訂單不會自動取消）
             if (
                 abs(current_pct) < 0.01              # 目前幾乎無倉
                 and abs(target_pct) > 0.02            # 策略要求開倉
@@ -472,10 +469,31 @@ class LiveRunner:
                     sl_tp_types = {"STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"}
                     has_sl_tp = any(o.get("type") in sl_tp_types for o in cond_orders)
 
+                    # v2.7.1: 空倉 + 有殘留 SL/TP → 孤兒掛單
+                    # 典型場景：SL 觸發平倉後，TP 殘留在交易所。
+                    # 若不取消，開新倉位後舊 TP 可能干擾（同 positionSide）
+                    # 或造成顯示混亂（不同 positionSide）。
+                    if has_sl_tp:
+                        orphan_detail = [
+                            f"{o.get('type')}[{o.get('positionSide', '?')}] "
+                            f"@ ${float(o.get('stopPrice', 0) or o.get('triggerPrice', 0) or 0):,.2f}"
+                            for o in cond_orders if o.get("type") in sl_tp_types
+                        ]
+                        logger.warning(
+                            f"🧹 {symbol}: 無持倉但有殘留掛單 {orphan_detail} → 取消孤兒 SL/TP"
+                        )
+                        if hasattr(self.broker, "cancel_all_open_orders"):
+                            self.broker.cancel_all_open_orders(symbol)
+                        else:
+                            self.broker.cancel_stop_loss(symbol)
+                            self.broker.cancel_take_profit(symbol)
+                        if hasattr(self.broker, "_remove_algo_cache"):
+                            self.broker._remove_algo_cache(symbol)
+                        has_sl_tp = False  # 已清理，視為無掛單
+
                     if not has_sl_tp:
-                        # 無 SL/TP 掛單 → 可能剛被觸發，查最近成交
-                        # 只檢查 10 分鐘窗口：SL/TP 只會在 bar 開頭 (xx:00~xx:05) 觸發
-                        # 而上一次 cron 的平倉在 ~55 分鐘前，不會誤判
+                        # 無 SL/TP 掛單（或剛清理完孤兒） → 可能 SL/TP 剛觸發
+                        # 檢查 10 分鐘窗口：SL/TP 通常在 bar 開頭觸發
                         recent_trades = self.broker.get_trade_history(symbol=symbol, limit=5)
                         now_ms = int(time.time() * 1000)
                         cooldown_ms = 10 * 60 * 1000  # 10 分鐘
@@ -680,10 +698,15 @@ class LiveRunner:
                             cond_orders = self.broker.get_all_conditional_orders(symbol)
                         else:
                             cond_orders = self.broker.get_open_orders(symbol)
-                        has_sl = any(o.get("type") in {"STOP_MARKET", "STOP"} for o in cond_orders)
-                        has_tp = any(o.get("type") in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} for o in cond_orders)
-
                         position_side = "LONG" if actual_pct > 0 else "SHORT"
+
+                        # v2.7.1: 只看與當前持倉同方向的 SL/TP（Hedge Mode 下不同 positionSide 是獨立的）
+                        def _match_side(o: dict) -> bool:
+                            o_ps = o.get("positionSide", "")
+                            return not o_ps or o_ps == position_side or o_ps == "BOTH"
+
+                        has_sl = any(o.get("type") in {"STOP_MARKET", "STOP"} and _match_side(o) for o in cond_orders)
+                        has_tp = any(o.get("type") in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} and _match_side(o) for o in cond_orders)
 
                         # v2.7: 檢查殘留的方向錯誤 TP（翻倉後舊 TP 未取消）
                         # 例：LONG 持倉卻有 TP < entry → 觸發會虧損 → 必須取消
@@ -759,7 +782,12 @@ class LiveRunner:
                         # 查詢 SL/TP 掛單
                         if hasattr(self.broker, "get_all_conditional_orders"):
                             orders = self.broker.get_all_conditional_orders(symbol)
+                            pos_side_str = "LONG" if pos_obj.qty > 0 else "SHORT"
                             for o in orders:
+                                # v2.7.1: 只顯示與當前持倉同方向的 SL/TP
+                                o_ps = o.get("positionSide", "")
+                                if o_ps and o_ps != pos_side_str and o_ps != "BOTH":
+                                    continue
                                 otype = o.get("type", "")
                                 trigger = float(o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0)
                                 if trigger <= 0:

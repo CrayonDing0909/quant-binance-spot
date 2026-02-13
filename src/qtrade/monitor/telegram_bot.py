@@ -860,7 +860,12 @@ class TelegramCommandBot(TelegramBot):
                     if hasattr(self.broker, "get_all_conditional_orders"):
                         orders = self.broker.get_all_conditional_orders(symbol)
                         sl_price, tp_price = None, None
+                        pos_side_str = "LONG" if is_long else "SHORT"
                         for o in orders:
+                            # v2.7.1: 只顯示與當前持倉同方向的 SL/TP
+                            o_ps = o.get("positionSide", "")
+                            if o_ps and o_ps != pos_side_str and o_ps != "BOTH":
+                                continue
                             trigger = float(
                                 o.get("stopPrice", 0)
                                 or o.get("triggerPrice", 0)
