@@ -145,11 +145,13 @@ class BinanceFuturesBroker:
         dry_run: bool = False,
         leverage: int = 10,
         margin_type: Literal["ISOLATED", "CROSSED"] = "ISOLATED",
+        leverage_sizing: bool = False,
     ):
         self.http = BinanceFuturesHTTP()
         self.dry_run = dry_run
         self.default_leverage = leverage
         self.default_margin_type = margin_type
+        self.leverage_sizing = leverage_sizing
         
         self._filters: dict[str, FuturesSymbolFilter] = {}
         self._leverage_cache: dict[str, int] = {}
@@ -162,9 +164,11 @@ class BinanceFuturesBroker:
             )
 
         mode_str = "🧪 DRY-RUN（不會真的下單）" if dry_run else "💰 LIVE（真金白銀！）"
+        sizing_str = "槓桿放大" if leverage_sizing else "保守（不放大）"
         logger.info(
             f"✅ Binance Futures Broker 初始化完成 [{mode_str}]\n"
-            f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}"
+            f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}, "
+            f"倉位計算: {sizing_str}"
         )
 
     # ── 交易對規則 ────────────────────────────────────────
@@ -417,8 +421,16 @@ class BinanceFuturesBroker:
 
     def get_position_pct(self, symbol: str, current_price: float) -> float:
         """
-        獲取持倉佔權益比例 [-1, 1]
-        
+        獲取持倉佔比例 [-1, 1]
+
+        leverage_sizing=False（預設）：
+            pct = 名義價值 / 權益
+            例：$525 notional / $1,500 equity = 35%
+
+        leverage_sizing=True：
+            pct = 名義價值 / (權益 × 槓桿)
+            例：$2,625 notional / ($1,500 × 5) = 35%
+
         Returns:
             正數 = 多倉，負數 = 空倉
         """
@@ -430,8 +442,10 @@ class BinanceFuturesBroker:
         if equity <= 0:
             return 0.0
 
-        # 名義價值 / 權益
         notional = pos.qty * current_price
+        if self.leverage_sizing:
+            leverage = self._leverage_cache.get(symbol, self.default_leverage)
+            return notional / (equity * leverage)
         return notional / equity
 
     def get_price(self, symbol: str) -> float:
@@ -795,29 +809,6 @@ class BinanceFuturesBroker:
             pass
         return False
 
-    @staticmethod
-    def _normalize_algo_response(result: dict, order_type: str) -> dict:
-        """
-        統一 Algo Order API 回傳格式。
-
-        Binance Algo Order 回傳示例：
-            {"clientAlgoId": "...", "success": true, "code": 0, "msg": "OK", "algoId": 123}
-        而上層期待 "orderId" 欄位。
-        """
-        # algoId / algoOrderId → orderId
-        for key in ("algoId", "algoOrderId", "orderId"):
-            if key in result:
-                result["orderId"] = str(result[key])
-                break
-        else:
-            # 都沒有的話，用 clientAlgoId
-            if "clientAlgoId" in result:
-                result["orderId"] = result["clientAlgoId"]
-
-        result.setdefault("type", order_type)
-        result["_via"] = "algoOrder"
-        return result
-
     def _place_conditional_order(
         self,
         symbol: str,
@@ -828,22 +819,20 @@ class BinanceFuturesBroker:
         order_kind: str,   # "STOP" or "TAKE_PROFIT"
     ) -> dict:
         """
-        掛條件單（止損/止盈），全部使用 Algo Order API。
-
-        Binance 已將條件單遷移至 /fapi/v1/algoOrder 端點。
-        關鍵差異：
-        - 使用 triggerPrice（不是 stopPrice）
-        - 必須指定 algoType=CONDITIONAL
+        掛條件單（止損/止盈）。
 
         策略（按順序嘗試）：
-        1. STOP_MARKET / TAKE_PROFIT_MARKET（市價，保證成交）
-        2. STOP / TAKE_PROFIT（限價 + 0.5% 滑價緩衝）
+        1. 標準 Order API + MARKET 類型（STOP_MARKET / TAKE_PROFIT_MARKET）
+        2. 標準 Order API + LIMIT 類型（STOP / TAKE_PROFIT + 滑價緩衝）
+
+        標準 API 的條件單出現在 /fapi/v1/openOrders 中，
+        查詢和取消都走統一的 order 端點，不依賴 Algo Order API。
 
         Args:
             order_kind: "STOP" → 止損, "TAKE_PROFIT" → 止盈
 
         Returns:
-            Binance order response dict（含 orderId 或 algoOrderId）
+            Binance order response dict（含 orderId）
 
         Raises:
             原始 Exception（若所有方式都失敗）
@@ -851,26 +840,25 @@ class BinanceFuturesBroker:
         sf = self._get_filter(symbol)
         market_type = f"{order_kind}_MARKET"  # STOP_MARKET or TAKE_PROFIT_MARKET
 
-        # ── 方式 1：Algo Order API + MARKET 類型（保證成交）──
+        # ── 方式 1：標準 Order API + MARKET 類型（保證成交）──
         params_market = {
             "symbol": symbol,
             "side": side,
             "positionSide": position_side,
             "type": market_type,
-            "triggerPrice": f"{stop_price}",    # ← Algo API 用 triggerPrice
+            "stopPrice": f"{stop_price}",
             "quantity": f"{qty}",
-            "algoType": "CONDITIONAL",          # ← 必須指定
+            "newOrderRespType": "RESULT",
         }
         try:
-            result = self.http.signed_post("/fapi/v1/algoOrder", params_market)
-            result = self._normalize_algo_response(result, market_type)
+            result = self.http.signed_post("/fapi/v1/order", params_market)
             logger.info(
-                f"✅ {symbol}: 條件單已掛 via Algo Order API ({market_type}) "
+                f"✅ {symbol}: 條件單已掛 ({market_type}) "
+                f"trigger=${stop_price:,.2f} qty={qty} "
                 f"orderId={result.get('orderId')}"
             )
             return result
         except Exception as e_market:
-            # 記錄完整錯誤方便除錯
             err_detail = str(e_market)
             try:
                 if hasattr(e_market, 'response') and e_market.response is not None:
@@ -878,15 +866,14 @@ class BinanceFuturesBroker:
             except Exception:
                 pass
             logger.warning(
-                f"⚠️  {symbol}: Algo Order ({market_type}) 失敗: {err_detail}"
+                f"⚠️  {symbol}: 標準 Order ({market_type}) 失敗: {err_detail}"
             )
 
             # 若不是 -4120（order type not supported），不做 fallback
             if not self._is_binance_error(e_market, -4120):
                 raise
 
-        # ── 方式 2：Algo Order API + LIMIT 類型 ──
-        # 計算限價：0.5% 滑價緩衝確保觸發後成交
+        # ── 方式 2：標準 Order API + LIMIT 類型（帶滑價緩衝）──
         slippage = 0.005
         if side == "BUY":
             limit_price = stop_price * (1 + slippage)
@@ -902,18 +889,17 @@ class BinanceFuturesBroker:
             "side": side,
             "positionSide": position_side,
             "type": order_kind,               # STOP or TAKE_PROFIT (限價版)
-            "triggerPrice": f"{stop_price}",   # ← Algo API 用 triggerPrice
+            "stopPrice": f"{stop_price}",
             "price": f"{limit_price}",
             "quantity": f"{qty}",
             "timeInForce": "GTC",
-            "algoType": "CONDITIONAL",         # ← 必須指定
+            "newOrderRespType": "RESULT",
         }
         logger.info(
-            f"ℹ️  {symbol}: 改用 Algo Order API 限價條件單 ({order_kind}) "
-            f"trigger={stop_price}, limit={limit_price}"
+            f"ℹ️  {symbol}: 改用限價條件單 ({order_kind}) "
+            f"trigger=${stop_price:,.2f}, limit=${limit_price:,.2f}"
         )
-        result = self.http.signed_post("/fapi/v1/algoOrder", params_limit)
-        result = self._normalize_algo_response(result, order_kind)
+        result = self.http.signed_post("/fapi/v1/order", params_limit)
         return result
 
     # ── Algo Order 查詢 / 取消 ────────────────────────────────
@@ -973,25 +959,32 @@ class BinanceFuturesBroker:
 
     def get_all_conditional_orders(self, symbol: str) -> list[dict]:
         """
-        查詢所有條件單（合併 regular + algo orders），用於 SL/TP 檢查。
-        統一回傳格式：每筆都有 "type" 欄位。
+        查詢所有條件單，用於 SL/TP 檢查。
+
+        主要來源：標準 /fapi/v1/openOrders（條件單也出現在這裡）。
+        Algo Order API 作為可選補充（部分帳戶可能不支援）。
         """
         orders = []
-        # 1) Regular open orders（/fapi/v1/openOrders）
+        # 1) Regular open orders（/fapi/v1/openOrders）— 主要來源
         regular_orders = self.get_open_orders(symbol)
         for o in regular_orders:
             if o.get("type") in self._SL_TP_TYPES:
                 o["_source"] = "order"
                 orders.append(o)
-        # 2) Algo open orders（/fapi/v1/algoOrder/openOrders）
-        #    get_open_algo_orders 已統一 algoId→orderId, triggerPrice→stopPrice
+
+        n_regular_sltp = len(orders)
+
+        # 2) Algo open orders — 可選補充（404 不影響結果）
         algo_orders = self.get_open_algo_orders(symbol)
+        seen_ids = {str(o.get("orderId", "")) for o in orders}
         for o in algo_orders:
-            o["_source"] = "algoOrder"
-            orders.append(o)
+            oid = str(o.get("orderId", o.get("algoId", "")))
+            if oid not in seen_ids:  # 避免重複
+                o["_source"] = "algoOrder"
+                orders.append(o)
+
         logger.debug(
-            f"  {symbol}: 條件單查詢 → regular={len(regular_orders)} "
-            f"(SL/TP: {sum(1 for o in regular_orders if o.get('type') in self._SL_TP_TYPES)}), "
+            f"  {symbol}: 條件單查詢 → regular SL/TP={n_regular_sltp}, "
             f"algo={len(algo_orders)}, 合計={len(orders)}"
         )
         return orders
@@ -1224,7 +1217,7 @@ class BinanceFuturesBroker:
         position_side: str | None, label: str,
     ) -> bool:
         """
-        取消條件單（同時搜尋 regular + algo orders）
+        取消條件單（搜尋 regular open orders + algo orders）
 
         Args:
             target_types: 要取消的 order type 集合
@@ -1235,7 +1228,7 @@ class BinanceFuturesBroker:
             return True
 
         try:
-            # 1) Regular orders
+            # 1) Regular orders（標準條件單主要來源）
             for order in self.get_open_orders(symbol):
                 if order.get("type") in target_types:
                     if position_side and order.get("positionSide") != position_side:
@@ -1245,7 +1238,7 @@ class BinanceFuturesBroker:
                         f"🗑️  {label}單已取消 {symbol} [{order.get('positionSide')}] "
                         f"orderId={order['orderId']}"
                     )
-            # 2) Algo orders（已統一 algoId → orderId）
+            # 2) Algo orders（可選，部分帳戶無此 API）
             for order in self.get_open_algo_orders(symbol):
                 if order.get("type") in target_types:
                     if position_side and order.get("positionSide") != position_side:
@@ -1336,7 +1329,10 @@ class BinanceFuturesBroker:
         leverage = self._leverage_cache.get(symbol, self.default_leverage)
 
         # 計算需要變動的名義價值
-        change_notional = abs(diff) * equity
+        # leverage_sizing=True: 名義 = diff × equity × leverage（槓桿放大倉位）
+        # leverage_sizing=False: 名義 = diff × equity（保守，槓桿只影響保證金）
+        sizing_mult = leverage if self.leverage_sizing else 1
+        change_notional = abs(diff) * equity * sizing_mult
 
         if target_pct == 0:
             # 目標是空倉 → 全部平倉
@@ -1363,7 +1359,7 @@ class BinanceFuturesBroker:
 
             if close_result:
                 # 平倉成功，開新方向
-                open_notional = abs(target_pct) * equity
+                open_notional = abs(target_pct) * equity * sizing_mult
                 open_qty = open_notional / current_price
                 position_side = new_side
 

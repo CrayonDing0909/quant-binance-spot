@@ -20,6 +20,11 @@ futures:
   margin_type: "ISOLATED" # ISOLATED（逐倉）或 CROSSED（全倉）
   position_mode: "ONE_WAY" # ONE_WAY（單向）或 HEDGE（雙向）
   direction: "both"       # 交易方向: "both"=多空都做, "long_only"=只做多, "short_only"=只做空
+  leverage_sizing: false  # 槓桿是否放大倉位？
+                          #   false（預設）: 名義 = 權益 × 分配比 → 保守，槓桿只降保證金
+                          #     例: $1,500 × 35% = $525 名義, 5x 只需 $105 保證金
+                          #   true: 名義 = 權益 × 分配比 × 槓桿 → 充分利用槓桿
+                          #     例: $1,500 × 35% × 5 = $2,625 名義, $525 保證金
 
 strategy:
   name: "rsi_adx_atr"

@@ -160,11 +160,21 @@ class FuturesConfig:
         - "both": 多空都做（預設）
         - "long_only": 只做多（合約但不做空）
         - "short_only": 只做空
+    
+    leverage_sizing: 是否讓槓桿放大倉位名義價值
+        - False（預設）：倉位名義價值 = 權益 × 分配比例
+          ├── 優點：保守，未用完的槓桿是安全緩衝
+          └── 例子：$1,500 × 35% = $525 名義（5x 只需 $105 保證金）
+
+        - True：倉位名義價值 = 權益 × 分配比例 × 槓桿
+          ├── 優點：充分利用槓桿，回報與風險同步放大
+          └── 例子：$1,500 × 35% × 5 = $2,625 名義（$525 保證金）
     """
     leverage: int = 1
     margin_type: str = "ISOLATED"
     position_mode: str = "ONE_WAY"
     direction: str = "both"  # "both", "long_only", "short_only"
+    leverage_sizing: bool = False  # True = 槓桿放大倉位
 
 
 @dataclass(frozen=True)
@@ -338,6 +348,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
             margin_type=futures_raw.get("margin_type", "ISOLATED"),
             position_mode=futures_raw.get("position_mode", "ONE_WAY"),
             direction=futures_raw.get("direction", "both"),
+            leverage_sizing=futures_raw.get("leverage_sizing", False),
         )
 
     # notification 可選
