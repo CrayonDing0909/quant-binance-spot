@@ -62,4 +62,4 @@ portfolio:
   allocation: null
 
 output:
-  report_dir: "./reports/futures/full_history"
+  report_dir: "./reports"

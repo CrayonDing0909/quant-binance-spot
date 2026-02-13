@@ -197,7 +197,7 @@ def main() -> None:
     strategy_name = args.strategy or cfg.strategy.name
 
     # 載入狀態
-    state_path = Path(cfg.output.report_dir) / "live" / strategy_name / "paper_state.json"
+    state_path = cfg.get_report_dir("live") / "paper_state.json"
     state = load_paper_state(state_path)
 
     if state is None:

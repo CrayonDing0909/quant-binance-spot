@@ -81,4 +81,4 @@ notification:
   enabled: true
 
 output:
-  report_dir: "./reports/futures/rsi_adx_atr"
+  report_dir: "./reports"

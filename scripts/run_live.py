@@ -238,7 +238,7 @@ def cmd_run(args, cfg) -> None:
             print(f"   槓桿: {leverage}x")
         print()
 
-        state_dir = Path(cfg.output.report_dir) / "live" / strategy_name
+        state_dir = cfg.get_report_dir("live")
         state_dir.mkdir(parents=True, exist_ok=True)
 
         broker = PaperBroker(
@@ -396,7 +396,7 @@ def cmd_check(args, cfg) -> None:
 def cmd_status(args, cfg) -> None:
     """查看 Paper Trading 帳戶狀態"""
     strategy_name = args.strategy or cfg.strategy.name
-    state_path = Path(cfg.output.report_dir) / "live" / strategy_name / "paper_state.json"
+    state_path = cfg.get_report_dir("live") / "paper_state.json"
 
     if not state_path.exists():
         print(f"❌ 找不到狀態檔案: {state_path}")

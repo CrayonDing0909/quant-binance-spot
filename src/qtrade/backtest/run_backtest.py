@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
+import logging
 import pandas as pd
 import vectorbt as vbt
 
@@ -10,6 +11,8 @@ from ..data.storage import load_klines
 from ..data.quality import validate_data_quality, clean_data
 from ..risk.risk_limits import RiskLimits, apply_risk_limits
 from .metrics import benchmark_buy_and_hold
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -66,7 +69,52 @@ def _resolve_backtest_params(cfg: dict, **kwargs) -> dict:
         "direction": kwargs.get("direction") or cfg.get("direction", "both"),
         "validate_data": kwargs.get("validate_data") if kwargs.get("validate_data") is not None else cfg.get("validate_data", True),
         "clean_data_before": kwargs.get("clean_data_before") if kwargs.get("clean_data_before") is not None else cfg.get("clean_data_before", True),
+        "start": kwargs.get("start") or cfg.get("start"),
+        "end": kwargs.get("end") or cfg.get("end"),
     }
+
+
+def _apply_date_filter(
+    df: pd.DataFrame,
+    pos: pd.Series,
+    start: str | None,
+    end: str | None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    根據 start / end 日期過濾數據和持倉信號
+    
+    策略在完整數據上計算（確保指標 warmup 正確），
+    之後只截取 [start, end] 區間送入 VBT 回測。
+    
+    這樣做的好處：
+    1. 指標不會有 NaN warmup 問題
+    2. 回測結果只反映指定時間範圍
+    3. Total Return / Sharpe / MDD 等指標更精確
+    """
+    if start is None and end is None:
+        return df, pos
+    
+    original_len = len(df)
+    
+    if start is not None:
+        start_ts = pd.Timestamp(start, tz="UTC") if df.index.tz is not None else pd.Timestamp(start)
+        mask = df.index >= start_ts
+        df = df.loc[mask]
+        pos = pos.loc[mask]
+    
+    if end is not None:
+        end_ts = pd.Timestamp(end, tz="UTC") if df.index.tz is not None else pd.Timestamp(end)
+        mask = df.index <= end_ts
+        df = df.loc[mask]
+        pos = pos.loc[mask]
+    
+    if len(df) < original_len:
+        logger.info(
+            f"📅 日期過濾: {original_len} → {len(df)} bars "
+            f"({df.index[0].strftime('%Y-%m-%d')} → {df.index[-1].strftime('%Y-%m-%d')})"
+        )
+    
+    return df, pos
 
 
 # ══════════════════════════════════════════════════════════════
@@ -164,6 +212,11 @@ def run_symbol_backtest(
                 current_equity=current_equity
             )
         pos = adjusted_pos
+
+    # ── 日期過濾 ──────────────────────────────────────
+    # 策略已在完整數據上計算完畢（確保指標 warmup），
+    # 現在截取 [start, end] 區間送入 VBT 回測
+    df, pos = _apply_date_filter(df, pos, resolved.get("start"), resolved.get("end"))
 
     close = df["close"]
     open_ = df["open"]

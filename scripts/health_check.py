@@ -112,7 +112,7 @@ def main():
             cfg = load_config(args.config)
             # 根據模式決定 state 檔案名稱
             mode = "real" if args.real else "paper"
-            state_path = Path(f"reports/live/{cfg.strategy.name}/{mode}_state.json")
+            state_path = cfg.get_report_dir("live") / f"{mode}_state.json"
         except Exception:
             pass
     

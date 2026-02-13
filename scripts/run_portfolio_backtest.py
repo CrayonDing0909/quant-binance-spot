@@ -72,25 +72,9 @@ def run_portfolio_backtest(
     print(f"🏷️  市場類型: {market_type}")
     
     all_data = {}
+    all_positions = {}
     min_start = None
     max_end = None
-    
-    for symbol in symbols:
-        data_path = cfg.data_dir / "binance" / market_type / interval / f"{symbol}.parquet"
-        df = load_klines(data_path)
-        df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
-        all_data[symbol] = df
-        
-        if min_start is None or df.index[0] > min_start:
-            min_start = df.index[0]
-        if max_end is None or df.index[-1] < max_end:
-            max_end = df.index[-1]
-    
-    print(f"📅 共同時間範圍: {min_start} → {max_end}")
-    
-    # 對齊所有數據到共同時間範圍
-    for symbol in symbols:
-        all_data[symbol] = all_data[symbol].loc[min_start:max_end]
     
     # 獲取策略和參數
     strategy_name = cfg.strategy.name
@@ -98,19 +82,19 @@ def run_portfolio_backtest(
     base_params = cfg.strategy.params
     symbol_overrides = cfg.strategy.symbol_overrides or {}
     
-    # 回測參數
-    initial_cash = cfg.backtest.initial_cash
-    fee = cfg.backtest.fee_bps / 10000
-    slippage = cfg.backtest.slippage_bps / 10000
-    
-    # 使用 vectorbt 計算各幣種的淨值曲線
-    equity_curves = {}
-    all_positions = {}
+    # 設定目標時間範圍（從 config 讀取）
+    cfg_start = cfg.market.start
+    cfg_end = cfg.market.end
     
     for symbol in symbols:
+        data_path = cfg.data_dir / "binance" / market_type / interval / f"{symbol}.parquet"
+        df = load_klines(data_path)
+        df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
+        all_data[symbol] = df
+    
+    # 先在完整數據上計算策略信號（確保指標 warmup 正確）
+    for symbol in symbols:
         df = all_data[symbol]
-        
-        # 合併參數
         params = base_params.copy()
         if symbol in symbol_overrides:
             params.update(symbol_overrides[symbol])
@@ -121,14 +105,53 @@ def run_portfolio_backtest(
             market_type=market_type,
             direction=direction,
         )
-        
-        # 生成持倉信號
         pos = strategy_func(df, ctx, params)
-        
-        # 根據 direction 過濾信號（使用共用函數）
         pos = clip_positions_by_direction(pos, market_type, direction)
-        
         all_positions[symbol] = pos
+    
+    # 應用日期過濾
+    if cfg_start:
+        start_ts = pd.Timestamp(cfg_start, tz="UTC") if all_data[symbols[0]].index.tz is not None else pd.Timestamp(cfg_start)
+        for symbol in symbols:
+            mask = all_data[symbol].index >= start_ts
+            all_data[symbol] = all_data[symbol].loc[mask]
+            all_positions[symbol] = all_positions[symbol].loc[mask]
+    
+    if cfg_end:
+        end_ts = pd.Timestamp(cfg_end, tz="UTC") if all_data[symbols[0]].index.tz is not None else pd.Timestamp(cfg_end)
+        for symbol in symbols:
+            mask = all_data[symbol].index <= end_ts
+            all_data[symbol] = all_data[symbol].loc[mask]
+            all_positions[symbol] = all_positions[symbol].loc[mask]
+    
+    # 對齊所有數據到共同時間範圍
+    for symbol in symbols:
+        df = all_data[symbol]
+        if min_start is None or df.index[0] > min_start:
+            min_start = df.index[0]
+        if max_end is None or df.index[-1] < max_end:
+            max_end = df.index[-1]
+    
+    print(f"📅 共同時間範圍: {min_start} → {max_end}")
+    if cfg_start:
+        print(f"   (config start: {cfg_start})")
+    
+    # 對齊所有數據到共同時間範圍
+    for symbol in symbols:
+        all_data[symbol] = all_data[symbol].loc[min_start:max_end]
+        all_positions[symbol] = all_positions[symbol].loc[min_start:max_end]
+    
+    # 回測參數
+    initial_cash = cfg.backtest.initial_cash
+    fee = cfg.backtest.fee_bps / 10000
+    slippage = cfg.backtest.slippage_bps / 10000
+    
+    # 使用 vectorbt 計算各幣種的淨值曲線
+    equity_curves = {}
+    
+    for symbol in symbols:
+        df = all_data[symbol]
+        pos = all_positions[symbol]
         
         # 用 vectorbt 計算（使用 open 價格執行，與 run_backtest.py 一致）
         pf = vbt.Portfolio.from_orders(
@@ -343,7 +366,7 @@ def main():
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = Path("reports/portfolio") / f"{'+'.join(args.symbols)}_{timestamp}"
+        output_dir = cfg.get_report_dir("portfolio") / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"📊 組合回測: {' + '.join(args.symbols)}")

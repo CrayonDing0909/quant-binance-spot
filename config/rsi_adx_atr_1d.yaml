@@ -41,4 +41,4 @@ position_sizing:
   position_pct: 1.0
 
 output:
-  report_dir: "./reports/long_term_1d"
+  report_dir: "./reports"

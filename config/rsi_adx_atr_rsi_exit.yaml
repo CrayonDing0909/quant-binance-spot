@@ -68,4 +68,4 @@ portfolio:
   allocation: null
 
 output:
-  report_dir: "./reports/rsi_exit"
+  report_dir: "./reports"

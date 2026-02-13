@@ -703,7 +703,7 @@ def parse_args():
                        help="要測試的類型")
     parser.add_argument("--market-type", default="spot", choices=["spot", "futures"])
     parser.add_argument("--direction", default="both", choices=["both", "long_only", "short_only"])
-    parser.add_argument("--output-dir", default="reports/comprehensive", help="輸出目錄")
+    parser.add_argument("--output-dir", default=None, help="輸出目錄（預設: reports/{market-type}/comprehensive/）")
     return parser.parse_args()
 
 
@@ -763,7 +763,10 @@ def main():
     )
     
     # 生成報告
-    output_dir = Path(args.output_dir)
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    else:
+        output_dir = Path("reports") / args.market_type / "comprehensive"
     generate_report(results, output_dir, args.symbol)
     
     print("\n🎉 綜合回測完成！")

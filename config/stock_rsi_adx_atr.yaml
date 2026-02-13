@@ -74,4 +74,4 @@ portfolio:
   allocation: null        # 自動等權分配
 
 output:
-  report_dir: "./reports/stock"
+  report_dir: "./reports"

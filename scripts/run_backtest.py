@@ -123,11 +123,11 @@ def main() -> None:
         if use_timestamp:
             report_dir = report_dir / timestamp_str
     else:
-        base_report_dir = Path(cfg.output.report_dir)
+        base_report_dir = cfg.get_report_dir("backtest")
         if use_timestamp:
-            report_dir = base_report_dir / strategy_name / timestamp_str
+            report_dir = base_report_dir / timestamp_str
         else:
-            report_dir = base_report_dir / strategy_name
+            report_dir = base_report_dir
 
     report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -176,6 +176,10 @@ def main() -> None:
         res = run_symbol_backtest(sym, data_path, bt_cfg, strategy_name)
         pf = res["pf"]
         pf_bh = res["pf_bh"]
+        
+        # 顯示實際回測資料範圍
+        df = res["df"]
+        print(f"📅 資料範圍: {df.index[0].strftime('%Y-%m-%d %H:%M')} → {df.index[-1].strftime('%Y-%m-%d %H:%M')} ({len(df):,} bars)")
 
         # ── 1. 策略 vs Buy & Hold 對比報告 ──────────────
         report = full_report(pf, pf_bh, strategy_name)

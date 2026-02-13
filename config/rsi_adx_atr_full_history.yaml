@@ -44,4 +44,4 @@ position_sizing:
   position_pct: 1.0
 
 output:
-  report_dir: "./reports/full_history_1h"
+  report_dir: "./reports"

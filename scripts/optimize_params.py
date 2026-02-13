@@ -304,7 +304,7 @@ def main() -> None:
             return
         
         # 儲存結果
-        report_dir = Path(cfg.output.report_dir)
+        report_dir = cfg.get_report_dir("optimize")
         report_dir.mkdir(parents=True, exist_ok=True)
         
         output_file = report_dir / f"optimization_{args.strategy}_{sym}.csv"

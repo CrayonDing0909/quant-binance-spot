@@ -136,7 +136,7 @@ class PositionSizingConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    report_dir: str
+    report_dir: str = "./reports"
 
 
 @dataclass(frozen=True)
@@ -233,11 +233,27 @@ class AppConfig:
             return self.futures.direction
         return "both"
 
+    def get_report_dir(self, run_type: str = "backtest") -> Path:
+        """
+        自動計算標準報告路徑。
+        
+        結構: reports/{market_type}/{strategy_name}/{run_type}/
+        
+        Args:
+            run_type: "backtest" | "portfolio" | "validation" | "live"
+        
+        Returns:
+            Path 物件，不含時間戳（由呼叫者加）
+        """
+        base = Path(self.output.report_dir)
+        return base / self.market_type_str / self.strategy.name / run_type
+
     def to_backtest_dict(self, symbol: str | None = None) -> dict:
         """
         產生標準回測配置 dict（供 run_symbol_backtest / validation / optimize 使用）
         
         集中管理，避免各 script 重複建構。
+        包含 start / end 日期，讓回測引擎可以過濾數據範圍。
         """
         return {
             "strategy_name": self.strategy.name,
@@ -250,6 +266,8 @@ class AppConfig:
             "direction": self.direction,
             "validate_data": self.backtest.validate_data,
             "clean_data_before": self.backtest.clean_data,
+            "start": self.market.start,
+            "end": self.market.end,
         }
 
 
@@ -333,6 +351,10 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
             enabled=notif_raw.get("enabled", True),
         )
 
+    # output 可選（預設 ./reports）
+    output_raw = raw.get("output", {})
+    output = OutputConfig(**output_raw) if output_raw else OutputConfig()
+
     return AppConfig(
         market=market,
         backtest=BacktestConfig(**raw["backtest"]),
@@ -341,7 +363,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
             params=raw["strategy"].get("params", {}),
             symbol_overrides=raw["strategy"].get("symbol_overrides"),
         ),
-        output=OutputConfig(**raw["output"]),
+        output=output,
         data_dir=data_dir,
         portfolio=portfolio,
         risk=risk,
