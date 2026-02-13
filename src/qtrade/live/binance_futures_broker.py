@@ -941,6 +941,9 @@ class BinanceFuturesBroker:
                 # triggerPrice → stopPrice（上層用 stopPrice）
                 if "triggerPrice" in o and "stopPrice" not in o:
                     o["stopPrice"] = o["triggerPrice"]
+                # orderType → type（Algo API 回傳 orderType，上層統一用 type）
+                if "orderType" in o and "type" not in o:
+                    o["type"] = o["orderType"]
                 # algoId / algoOrderId → orderId
                 for key in ("algoId", "algoOrderId"):
                     if key in o and "orderId" not in o:

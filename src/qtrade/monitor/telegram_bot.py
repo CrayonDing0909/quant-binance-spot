@@ -797,10 +797,64 @@ class TelegramCommandBot(TelegramBot):
                         emoji = "⚪"
                         label = f"FLAT {signal_pct:.0%}"
 
-                    lines.append(
+                    sig_line = (
                         f"{emoji} <b>{symbol}</b>: {label} @ ${price:,.2f}\n"
                         f"   RSI={ind.get('rsi', '?')} | ADX={ind.get('adx', '?')}"
                     )
+
+                    # 附加即時持倉 + SL/TP 資訊
+                    if self.broker and hasattr(self.broker, "get_position"):
+                        try:
+                            pos_obj = self.broker.get_position(symbol)
+                            if pos_obj and abs(pos_obj.qty) > 1e-10:
+                                side = "LONG" if pos_obj.qty > 0 else "SHORT"
+                                is_long = pos_obj.qty > 0
+                                entry = pos_obj.entry_price
+                                qty = abs(pos_obj.qty)
+                                pnl = pos_obj.unrealized_pnl
+                                pnl_emoji = "📈" if pnl >= 0 else "📉"
+                                sig_line += (
+                                    f"\n   📦 {side} {qty:.6g} @ ${entry:,.2f}"
+                                    f"  {pnl_emoji} ${pnl:+,.2f}"
+                                )
+                                # 查詢 SL/TP
+                                if hasattr(self.broker, "get_all_conditional_orders"):
+                                    orders = self.broker.get_all_conditional_orders(symbol)
+                                    sl_price, tp_price = None, None
+                                    for o in orders:
+                                        trigger = float(
+                                            o.get("stopPrice", 0)
+                                            or o.get("triggerPrice", 0)
+                                            or 0
+                                        )
+                                        if trigger <= 0:
+                                            continue
+                                        otype = o.get("type", "")
+                                        if otype in {"STOP_MARKET", "STOP"}:
+                                            sl_price = trigger
+                                        elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
+                                            tp_price = trigger
+                                        elif entry > 0:
+                                            if is_long:
+                                                sl_price = trigger if trigger < entry else tp_price
+                                                tp_price = trigger if trigger >= entry else tp_price
+                                            else:
+                                                sl_price = trigger if trigger > entry else sl_price
+                                                tp_price = trigger if trigger <= entry else tp_price
+                                    if sl_price:
+                                        sl_pnl = self._calc_pnl(entry, sl_price, qty, is_long)
+                                        pnl_str = f" ({sl_pnl:+.2f})" if sl_pnl is not None else ""
+                                        sig_line += f"\n   🛡️ SL: ${sl_price:,.2f}{pnl_str}"
+                                    if tp_price:
+                                        tp_pnl = self._calc_pnl(entry, tp_price, qty, is_long)
+                                        pnl_str = f" ({tp_pnl:+.2f})" if tp_pnl is not None else ""
+                                        sig_line += f"\n   🎯 TP: ${tp_price:,.2f}{pnl_str}"
+                                    if not sl_price and not tp_price:
+                                        sig_line += "\n   ⚠️ 無 SL/TP 掛單"
+                        except Exception:
+                            pass  # 查詢失敗不影響信號顯示
+
+                    lines.append(sig_line)
                 except Exception as e:
                     lines.append(f"❌ {symbol}: {e}")
 
