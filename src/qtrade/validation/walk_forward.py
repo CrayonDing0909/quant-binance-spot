@@ -48,6 +48,9 @@ def walk_forward_analysis(
     df = load_klines(data_path)
     total_len = len(df)
 
+    # Walk-forward 自行管理數據切片，移除 cfg 中的 start/end 避免日期過濾衝突
+    wf_cfg = {k: v for k, v in cfg.items() if k not in ("start", "end")}
+
     # 等分成 n_splits+1 個區間
     n_segments = n_splits + 1
     seg_len = total_len // n_segments
@@ -77,7 +80,7 @@ def walk_forward_analysis(
         train_df.to_parquet(train_data_path)
 
         try:
-            train_res = run_symbol_backtest(symbol, train_data_path, cfg, cfg.get("strategy_name"))
+            train_res = run_symbol_backtest(symbol, train_data_path, wf_cfg, wf_cfg.get("strategy_name"))
             train_stats = train_res["stats"]
         except Exception as e:
             print(f" ❌ train failed: {e}")
@@ -90,7 +93,7 @@ def walk_forward_analysis(
         test_df.to_parquet(test_data_path)
 
         try:
-            test_res = run_symbol_backtest(symbol, test_data_path, cfg, cfg.get("strategy_name"))
+            test_res = run_symbol_backtest(symbol, test_data_path, wf_cfg, wf_cfg.get("strategy_name"))
             test_stats = test_res["stats"]
         except Exception as e:
             print(f" ❌ test failed: {e}")

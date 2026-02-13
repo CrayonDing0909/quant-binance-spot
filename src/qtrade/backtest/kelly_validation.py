@@ -359,13 +359,14 @@ def kelly_backtest_comparison(
     
     logger.info(f"📊 Kelly 驗證: {symbol}")
     
-    # 載入數據
-    df = load_klines(data_path)
+    # 先跑一次基礎回測，獲取交易紀錄和 position 訊號
+    # run_symbol_backtest 內部會做日期過濾，返回的 df/pos 是已過濾的
+    base_result = run_symbol_backtest(symbol, data_path, cfg, strategy_name)
+    
+    # 使用基礎回測返回的 df（已日期過濾），確保長度與 pos 一致
+    df = base_result["df"]
     period_start = df.index[0].strftime("%Y-%m-%d")
     period_end = df.index[-1].strftime("%Y-%m-%d")
-    
-    # 先跑一次基礎回測，獲取交易紀錄和 position 訊號
-    base_result = run_symbol_backtest(symbol, data_path, cfg, strategy_name)
     
     # 從 Portfolio 物件提取交易紀錄
     pf = base_result.get("pf")
@@ -388,7 +389,7 @@ def kelly_backtest_comparison(
     # 對每個 fraction 執行回測
     backtest_results = []
     
-    # 準備回測參數
+    # 準備回測參數（使用已日期過濾的 df）
     close = df["close"]
     open_ = df["open"]
     fee = cfg.get("fee_bps", 10) / 10_000.0
