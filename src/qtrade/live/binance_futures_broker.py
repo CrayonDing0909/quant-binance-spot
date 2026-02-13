@@ -951,7 +951,7 @@ class BinanceFuturesBroker:
                         break
             return orders
         except Exception as e:
-            logger.debug(f"查詢 algo open orders 失敗: {e}")
+            logger.warning(f"⚠️  查詢 algo open orders 失敗: {e}")
             return []
 
     def cancel_algo_order(self, algo_order_id: str | int) -> bool:
@@ -978,15 +978,22 @@ class BinanceFuturesBroker:
         """
         orders = []
         # 1) Regular open orders（/fapi/v1/openOrders）
-        for o in self.get_open_orders(symbol):
+        regular_orders = self.get_open_orders(symbol)
+        for o in regular_orders:
             if o.get("type") in self._SL_TP_TYPES:
                 o["_source"] = "order"
                 orders.append(o)
         # 2) Algo open orders（/fapi/v1/algoOrder/openOrders）
         #    get_open_algo_orders 已統一 algoId→orderId, triggerPrice→stopPrice
-        for o in self.get_open_algo_orders(symbol):
+        algo_orders = self.get_open_algo_orders(symbol)
+        for o in algo_orders:
             o["_source"] = "algoOrder"
             orders.append(o)
+        logger.debug(
+            f"  {symbol}: 條件單查詢 → regular={len(regular_orders)} "
+            f"(SL/TP: {sum(1 for o in regular_orders if o.get('type') in self._SL_TP_TYPES)}), "
+            f"algo={len(algo_orders)}, 合計={len(orders)}"
+        )
         return orders
 
     # ── 止損單 ──────────────────────────────────────────────
