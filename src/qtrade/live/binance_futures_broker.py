@@ -154,6 +154,9 @@ class BinanceFuturesBroker:
         self._filters: dict[str, FuturesSymbolFilter] = {}
         self._leverage_cache: dict[str, int] = {}
         self._margin_type_cache: dict[str, str] = {}
+        # Algo 條件單快取（防止 algo query 404 時重複掛單）
+        # key = f"{symbol}_{order_kind}", value = dict with orderId, stopPrice, etc.
+        self._algo_order_cache: dict[str, dict] = {}
 
         if not self.http.api_key or not self.http.api_secret:
             raise RuntimeError(
@@ -812,9 +815,10 @@ class BinanceFuturesBroker:
         策略（按順序嘗試）：
         1. 標準 Order API + MARKET 類型（STOP_MARKET / TAKE_PROFIT_MARKET）
         2. 標準 Order API + LIMIT 類型（STOP / TAKE_PROFIT + 滑價緩衝）
+        3. Algo Order API（部分帳戶/幣對的 STOP 類只能走此 API）
 
-        標準 API 的條件單出現在 /fapi/v1/openOrders 中，
-        查詢和取消都走統一的 order 端點，不依賴 Algo Order API。
+        方式 1/2 的條件單出現在 /fapi/v1/openOrders 中。
+        方式 3 的條件單出現在 /fapi/v1/algoOrder/openOrders 中。
 
         Args:
             order_kind: "STOP" → 止損, "TAKE_PROFIT" → 止盈
@@ -887,8 +891,134 @@ class BinanceFuturesBroker:
             f"ℹ️  {symbol}: 改用限價條件單 ({order_kind}) "
             f"trigger=${stop_price:,.2f}, limit=${limit_price:,.2f}"
         )
-        result = self.http.signed_post("/fapi/v1/order", params_limit)
+        try:
+            result = self.http.signed_post("/fapi/v1/order", params_limit)
+            logger.info(
+                f"✅ {symbol}: 條件單已掛 ({order_kind}) "
+                f"trigger=${stop_price:,.2f} qty={qty} "
+                f"orderId={result.get('orderId')}"
+            )
+            return result
+        except Exception as e_limit:
+            err_detail = str(e_limit)
+            try:
+                if hasattr(e_limit, 'response') and e_limit.response is not None:
+                    err_detail = f"{e_limit} | {e_limit.response.text}"
+            except Exception:
+                pass
+            logger.warning(
+                f"⚠️  {symbol}: 標準 Order ({order_kind}) 也失敗: {err_detail}"
+            )
+            if not self._is_binance_error(e_limit, -4120):
+                raise
+
+        # ── 方式 3：Algo Order API（Binance 明確要求用此 API）──
+        # 部分帳戶/幣對的 STOP/STOP_MARKET 類型已遷移至 Algo API
+        logger.info(
+            f"ℹ️  {symbol}: 標準 API 均不支援 {order_kind}，嘗試 Algo Order API"
+        )
+        result = self._place_algo_conditional_order(
+            symbol=symbol, side=side, position_side=position_side,
+            stop_price=stop_price, qty=qty, order_kind=order_kind,
+            limit_price=limit_price,
+        )
         return result
+
+    def _place_algo_conditional_order(
+        self,
+        symbol: str,
+        side: str,
+        position_side: str,
+        stop_price: float,
+        qty: float,
+        order_kind: str,
+        limit_price: float | None = None,
+    ) -> dict:
+        """
+        透過 Algo Order API 掛條件單。
+
+        Binance 正逐步將部分幣對的 STOP/STOP_MARKET 遷移至 Algo API。
+        嘗試多個可能的端點以確保兼容性。
+
+        Returns:
+            dict，包含 orderId（或 algoId）等欄位
+        """
+        # Algo API 參數（先試 MARKET 類型，再試 LIMIT）
+        algo_params_market = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "quantity": f"{qty}",
+            "type": order_kind,          # STOP or TAKE_PROFIT
+            "triggerPrice": f"{stop_price}",
+        }
+
+        # 可能的 Algo Order 端點（按優先級）
+        algo_endpoints = [
+            "/fapi/v1/algo/futures/newOrderCondition",
+            "/fapi/v1/algoOrder",
+        ]
+
+        last_exc: Exception | None = None
+        for endpoint in algo_endpoints:
+            try:
+                result = self.http.signed_post(endpoint, algo_params_market)
+                # Algo API 回傳可能用 algoId 而非 orderId
+                if "algoId" in result and "orderId" not in result:
+                    result["orderId"] = str(result["algoId"])
+                result["_via"] = "algo"
+                # 快取此 algo 單，以防 algo query 404 導致重複掛單
+                cache_key = f"{symbol}_{order_kind}"
+                self._algo_order_cache[cache_key] = {
+                    "orderId": result.get("orderId"),
+                    "type": order_kind,
+                    "stopPrice": str(stop_price),
+                    "side": side,
+                    "positionSide": position_side,
+                    "quantity": str(qty),
+                    "symbol": symbol,
+                    "_source": "algo_cache",
+                }
+                logger.info(
+                    f"✅ {symbol}: 條件單已掛 via Algo API ({order_kind}) "
+                    f"trigger=${stop_price:,.2f} qty={qty} "
+                    f"orderId={result.get('orderId')} endpoint={endpoint}"
+                )
+                return result
+            except Exception as e:
+                last_exc = e
+                status_code = None
+                try:
+                    if hasattr(e, 'response') and e.response is not None:
+                        status_code = e.response.status_code
+                except Exception:
+                    pass
+                # 404 = endpoint 不存在，嘗試下一個
+                if status_code == 404:
+                    logger.debug(
+                        f"  {symbol}: Algo 端點 {endpoint} 不可用 (404)，嘗試下一個"
+                    )
+                    continue
+                # 其他錯誤直接 raise
+                err_detail = str(e)
+                try:
+                    if hasattr(e, 'response') and e.response is not None:
+                        err_detail = f"{e} | {e.response.text}"
+                except Exception:
+                    pass
+                logger.warning(f"⚠️  {symbol}: Algo API ({endpoint}) 失敗: {err_detail}")
+                raise
+
+        # 所有端點都失敗
+        msg = (
+            f"❌ {symbol}: 無法掛 {order_kind} 條件單 — "
+            f"標準 API (MARKET/LIMIT) 和 Algo API 均失敗。"
+            f"可能需要手動在 Binance App/Web 設定 SL/TP。"
+        )
+        logger.error(msg)
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(msg)
 
     # ── Algo Order 查詢 / 取消 ────────────────────────────────
 
@@ -949,8 +1079,10 @@ class BinanceFuturesBroker:
         """
         查詢所有條件單，用於 SL/TP 檢查。
 
-        主要來源：標準 /fapi/v1/openOrders（條件單也出現在這裡）。
-        Algo Order API 作為可選補充（部分帳戶可能不支援）。
+        來源（按優先級）：
+        1. 標準 /fapi/v1/openOrders（條件單也出現在這裡）
+        2. Algo Order API（部分帳戶可能不支援，404 不影響結果）
+        3. 本地快取（algo query 404 時，用快取避免重複掛單）
         """
         orders = []
         # 1) Regular open orders（/fapi/v1/openOrders）— 主要來源
@@ -970,10 +1102,21 @@ class BinanceFuturesBroker:
             if oid not in seen_ids:  # 避免重複
                 o["_source"] = "algoOrder"
                 orders.append(o)
+                seen_ids.add(oid)
+
+        # 3) 本地 algo 快取 — 防止 algo query 404 時漏掉已掛的 algo 單
+        for cache_key, cached in self._algo_order_cache.items():
+            if cached.get("symbol") != symbol:
+                continue
+            cached_id = str(cached.get("orderId", ""))
+            if cached_id and cached_id not in seen_ids:
+                orders.append(cached)
+                seen_ids.add(cached_id)
 
         logger.debug(
             f"  {symbol}: 條件單查詢 → regular SL/TP={n_regular_sltp}, "
-            f"algo={len(algo_orders)}, 合計={len(orders)}"
+            f"algo={len(algo_orders)}, cache={len(self._algo_order_cache)}, "
+            f"合計={len(orders)}"
         )
         return orders
 
@@ -1205,7 +1348,7 @@ class BinanceFuturesBroker:
         position_side: str | None, label: str,
     ) -> bool:
         """
-        取消條件單（搜尋 regular open orders + algo orders）
+        取消條件單（搜尋 regular open orders + algo orders + 本地快取）
 
         Args:
             target_types: 要取消的 order type 集合
@@ -1238,6 +1381,13 @@ class BinanceFuturesBroker:
                             f"🗑️  {label}單已取消 (algo) {symbol} [{order.get('positionSide')}] "
                             f"algoId={oid}"
                         )
+            # 3) 清理本地 algo 快取
+            for kind in ("STOP", "TAKE_PROFIT"):
+                if kind in target_types:
+                    cache_key = f"{symbol}_{kind}"
+                    if cache_key in self._algo_order_cache:
+                        del self._algo_order_cache[cache_key]
+                        logger.debug(f"  清理 algo 快取: {cache_key}")
             return True
         except Exception as e:
             logger.warning(f"⚠️  取消{label}單失敗 {symbol}: {e}")
