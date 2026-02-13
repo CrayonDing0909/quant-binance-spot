@@ -457,19 +457,28 @@ class LiveRunner:
             # === 防止權益波動導致的不必要重平衡 ===
             # 多幣種同時持倉時，一幣的 PnL 波動會改變 equity，
             # 導致另一幣的 current_pct 漂移（如 -100% → -103%），觸發不必要的微調。
-            # 修正：只要持倉方向與信號方向一致（都做多或都做空），就不重平衡。
-            # 只有方向改變（空→平、空→多）或新開倉（平→空）才執行。
+            # 修正：方向一致且倉位已達目標的 80% 以上時，跳過重平衡。
+            # 大幅差距（如 -32% → -100%）仍會正常執行加倉。
             if target_pct != 0 and current_pct != 0:
                 same_direction = (
                     (target_pct > 0 and current_pct > 0) or
                     (target_pct < 0 and current_pct < 0)
                 )
                 if same_direction:
-                    diff = 0  # 強制跳過交易
-                    logger.debug(
-                        f"  {symbol}: 方向一致 ({current_pct:+.1%} → {target_pct:+.1%})，"
-                        f"跳過重平衡"
-                    )
+                    fill_ratio = abs(current_pct) / abs(target_pct)
+                    if fill_ratio >= 0.80:  # 已達目標 80% 以上 → 跳過微調
+                        diff = 0
+                        logger.debug(
+                            f"  {symbol}: 方向一致且倉位充足 "
+                            f"({current_pct:+.1%} / {target_pct:+.1%} = {fill_ratio:.0%})，"
+                            f"跳過重平衡"
+                        )
+                    else:
+                        logger.info(
+                            f"  {symbol}: 方向一致但倉位不足 "
+                            f"({current_pct:+.1%} / {target_pct:+.1%} = {fill_ratio:.0%})，"
+                            f"需要加倉"
+                        )
 
             if diff >= 0.02:
                 ps_method = self.cfg.position_sizing.method
