@@ -133,9 +133,10 @@ def run_walk_forward(
     """執行 Walk-Forward 分析"""
     from qtrade.validation import walk_forward_analysis
     
-    print("\n" + "=" * 70)
-    print("  📊 Walk-Forward Analysis")
-    print("=" * 70)
+    print("\n" + "=" * 72)
+    print("  📊 Walk-Forward Analysis（前瞻驗證）")
+    print("     用歷史訓練 → 在未來數據上測試，模擬真實使用場景")
+    print("=" * 72)
     
     results = {}
     for symbol in symbols:
@@ -162,9 +163,12 @@ def run_walk_forward(
                 avg_train = wf_result["train_sharpe"].mean()
                 avg_test = wf_result["test_sharpe"].mean()
                 degradation = (avg_train - avg_test) / max(abs(avg_train), 0.01)
+                deg_icon = "✅" if degradation < 0.5 else "⚠️"
                 print(f"    平均 Train Sharpe: {avg_train:.2f}")
                 print(f"    平均 Test Sharpe:  {avg_test:.2f}")
-                print(f"    績效衰退: {degradation:.1%}")
+                print(f"    {deg_icon} 績效衰退: {degradation:.1%}（< 50% 為佳）")
+            else:
+                print(f"    ⚠️  無有效結果（可能數據太短）")
         except Exception as e:
             print(f"    ❌ 失敗: {e}")
     
@@ -183,9 +187,10 @@ def run_monte_carlo(
     from qtrade.risk.monte_carlo import MonteCarloSimulator, MonteCarloConfig
     from qtrade.backtest.run_backtest import run_symbol_backtest
     
-    print("\n" + "=" * 70)
-    print("  🎲 Monte Carlo Simulation")
-    print("=" * 70)
+    print("\n" + "=" * 72)
+    print("  🎲 Monte Carlo Simulation（壓力測試）")
+    print("     隨機打亂收益順序模擬 10000 次，估計最壞情況")
+    print("=" * 72)
     
     results = {}
     for symbol in symbols:
@@ -255,9 +260,10 @@ def run_cross_asset(
         ValidationResultAnalyzer,
     )
     
-    print("\n" + "=" * 70)
-    print("  🔄 Cross-Asset Validation")
-    print("=" * 70)
+    print("\n" + "=" * 72)
+    print("  🔄 Cross-Asset Validation（跨資產驗證）")
+    print("     測試策略在不同幣種、不同市場環境下是否一致")
+    print("=" * 72)
     
     results = {}
     
@@ -330,9 +336,10 @@ def run_prado_methods(
         probability_of_backtest_overfitting,
     )
     
-    print("\n" + "=" * 70)
-    print("  🔬 Advanced Validation (Prado Methods)")
-    print("=" * 70)
+    print("\n" + "=" * 72)
+    print("  🔬 Advanced Validation（Marcos López de Prado 方法）")
+    print("     用學術方法檢測過擬合和 Sharpe Ratio 的真實性")
+    print("=" * 72)
     
     results = {}
     
@@ -406,9 +413,10 @@ def run_kelly_validation(
         is_strategy_suitable_for_kelly,
     )
     
-    print("\n" + "=" * 70)
-    print("  💰 Kelly Formula Validation")
-    print("=" * 70)
+    print("\n" + "=" * 72)
+    print("  💰 Kelly Formula Validation（最佳倉位驗證）")
+    print("     根據勝率和盈虧比計算最佳資金比例，檢驗穩定性")
+    print("=" * 72)
     
     results = {}
     all_suitable = True
@@ -502,9 +510,10 @@ def run_consistency_check(
     """
     from qtrade.validation import ConsistencyValidator
     
-    print("\n" + "=" * 70)
-    print("  🔍 Live/Backtest Consistency Check")
-    print("=" * 70)
+    print("\n" + "=" * 72)
+    print("  🔍 Live/Backtest Consistency Check（實盤一致性檢查）")
+    print("     比對實盤交易與回測信號，確認兩者邏輯一致")
+    print("=" * 72)
     print(f"  期間: 最近 {days} 天")
     print(f"  數據來源: {'Binance API' if use_binance_api else 'State 文件'}")
     
@@ -526,9 +535,10 @@ def run_consistency_check(
         print(f"\n  {symbol}:")
         try:
             # 找到對應的 state 文件
-            live_state_path = Path(f"reports/live/{cfg.strategy.name}/real_state.json")
+            live_dir = cfg.get_report_dir("live")
+            live_state_path = live_dir / "real_state.json"
             if not live_state_path.exists():
-                live_state_path = Path(f"reports/live/{cfg.strategy.name}/paper_state.json")
+                live_state_path = live_dir / "paper_state.json"
             
             report = validator.validate_recent(
                 symbol=symbol,
@@ -567,6 +577,17 @@ def run_consistency_check(
     return results
 
 
+def _to_native(obj):
+    """將 numpy 類型轉換為 Python 原生類型，避免 YAML 序列化問題"""
+    if isinstance(obj, (np.bool_, np.generic)):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_native(i) for i in obj]
+    return obj
+
+
 def generate_summary(
     walk_forward_results: Dict,
     monte_carlo_results: Dict,
@@ -575,10 +596,17 @@ def generate_summary(
     kelly_results: Dict,
     report_dir: Path,
 ):
-    """生成驗證摘要報告"""
-    print("\n" + "=" * 70)
-    print("  📋 Validation Summary")
-    print("=" * 70)
+    """生成驗證摘要報告（新手友善版）"""
+    
+    # ── 終端輸出 ──────────────────────────────────────
+    print("\n" + "=" * 72)
+    print("  📋 Validation Summary — 策略驗證總結")
+    print("=" * 72)
+    print()
+    print("  每項測試檢查策略的不同面向，幫助你判斷策略是否可以上線。")
+    print("  ✅ PASS = 通過   ⚠️ CHECK = 需注意   ❌ FAIL = 不建議上線")
+    print()
+    print("  ─────────────────────────────────────────────────────────────────")
     
     summary = {
         "timestamp": datetime.now().isoformat(),
@@ -588,40 +616,71 @@ def generate_summary(
     # Walk-Forward 摘要
     if walk_forward_results:
         all_degradations = []
+        per_symbol = {}
         for symbol, wf_df in walk_forward_results.items():
             if len(wf_df) > 0:
-                avg_train = wf_df["train_sharpe"].mean()
-                avg_test = wf_df["test_sharpe"].mean()
+                avg_train = float(wf_df["train_sharpe"].mean())
+                avg_test = float(wf_df["test_sharpe"].mean())
                 deg = (avg_train - avg_test) / max(abs(avg_train), 0.01)
                 all_degradations.append(deg)
+                per_symbol[symbol] = {
+                    "train_sharpe": round(avg_train, 2),
+                    "test_sharpe": round(avg_test, 2),
+                    "degradation": f"{deg:.1%}",
+                    "splits_completed": int(len(wf_df)),
+                }
         
-        avg_deg = np.mean(all_degradations) if all_degradations else 0
+        avg_deg = float(np.mean(all_degradations)) if all_degradations else 0
         passed = avg_deg < 0.5
         summary["tests"]["walk_forward"] = {
-            "passed": passed,
+            "passed": bool(passed),
             "avg_degradation": f"{avg_deg:.1%}",
+            "threshold": "< 50%",
+            "meaning": "訓練期→測試期的績效衰退幅度，越低代表策略越穩健",
+            "per_symbol": per_symbol,
         }
-        print(f"  Walk-Forward: {'✅ PASS' if passed else '❌ FAIL'} (平均衰退 {avg_deg:.1%})")
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        print(f"  {icon}  Walk-Forward（前瞻驗證）")
+        print(f"         測試方法: 用歷史訓練 → 在新數據上驗證，模擬真實使用場景")
+        print(f"         績效衰退: {avg_deg:.1%}（標準: < 50% 為佳）")
+        for sym, info in per_symbol.items():
+            print(f"           {sym}: 訓練 SR={info['train_sharpe']:.2f} → 測試 SR={info['test_sharpe']:.2f} (衰退 {info['degradation']})")
+        print()
     
     # Monte Carlo 摘要
     if monte_carlo_results:
         var_95_list = []
-        for r in monte_carlo_results.values():
+        per_symbol_mc = {}
+        for sym, r in monte_carlo_results.items():
             if "var" in r:
                 var_result = r["var"]
-                # 支援不同的 API 格式
                 if hasattr(var_result, 'get_var'):
-                    var_95_list.append(var_result.get_var(0.95))
+                    v95 = float(var_result.get_var(0.95))
+                    v99 = float(var_result.get_var(0.99))
                 elif hasattr(var_result, 'var_95'):
-                    var_95_list.append(var_result.var_95)
+                    v95 = float(var_result.var_95)
+                    v99 = float(getattr(var_result, 'var_99', 0))
+                else:
+                    continue
+                var_95_list.append(v95)
+                per_symbol_mc[sym] = {"var_95": f"{v95:.2%}", "var_99": f"{v99:.2%}"}
         
-        avg_var = np.mean(var_95_list) if var_95_list else 0
+        avg_var = float(np.mean(var_95_list)) if var_95_list else 0
         passed = avg_var > -0.3  # VaR 95% < 30%
         summary["tests"]["monte_carlo"] = {
-            "passed": passed,
+            "passed": bool(passed),
             "avg_var_95": f"{avg_var:.2%}",
+            "threshold": "日 VaR 95% < 30%",
+            "meaning": "模擬 10000 次隨機情境，估計最差情況的單日虧損",
+            "per_symbol": per_symbol_mc,
         }
-        print(f"  Monte Carlo: {'✅ PASS' if passed else '❌ FAIL'} (平均 VaR 95%: {avg_var:.2%})")
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        print(f"  {icon}  Monte Carlo（壓力測試）")
+        print(f"         測試方法: 隨機模擬 10000 種市場情境，看最差情況虧多少")
+        print(f"         平均 VaR 95%: {avg_var:.2%}（意思：95% 的情況下單日虧損 < 此值）")
+        for sym, info in per_symbol_mc.items():
+            print(f"           {sym}: VaR 95%={info['var_95']}, VaR 99%={info['var_99']}")
+        print()
     
     # Cross-Asset 摘要
     if cross_asset_results:
@@ -629,10 +688,16 @@ def generate_summary(
         if loao:
             passed = loao.robustness_level.value in ["robust", "moderate"]
             summary["tests"]["cross_asset"] = {
-                "passed": passed,
+                "passed": bool(passed),
                 "robustness": loao.robustness_level.value,
+                "threshold": "穩健度 robust 或 moderate",
+                "meaning": "策略在不同幣種上表現一致嗎？防止只對特定幣過擬合",
             }
-            print(f"  Cross-Asset: {'✅ PASS' if passed else '❌ FAIL'} ({loao.robustness_level.value})")
+            icon = "✅ PASS" if passed else "❌ FAIL"
+            print(f"  {icon}  Cross-Asset（跨資產驗證）")
+            print(f"         測試方法: 去掉一個幣種訓練，看剩下的表現")
+            print(f"         穩健度: {loao.robustness_level.value}（標準: robust 或 moderate）")
+            print()
     
     # Prado 摘要
     if prado_results:
@@ -640,19 +705,34 @@ def generate_summary(
         pbo = prado_results.get("pbo")
         
         if dsr:
+            is_sig = bool(dsr.is_significant)
             summary["tests"]["dsr"] = {
-                "passed": dsr.is_significant,
-                "deflated_sharpe": f"{dsr.deflated_sharpe:.4f}",
+                "passed": is_sig,
+                "deflated_sharpe": round(float(dsr.deflated_sharpe), 4),
+                "p_value": round(float(dsr.p_value), 6),
+                "threshold": "p-value < 0.05 (統計顯著)",
+                "meaning": "考慮了『試了很多參數才找到這個結果』的情況後，Sharpe 是否仍然顯著？",
             }
-            print(f"  DSR: {'✅ PASS' if dsr.is_significant else '⚠️  CHECK'} (校正 SR: {dsr.deflated_sharpe:.4f})")
+            icon = "✅ PASS" if is_sig else "⚠️ CHECK"
+            print(f"  {icon}  DSR（校正 Sharpe Ratio）")
+            print(f"         測試方法: 把回測裡「調了很多參數」的因素扣除，看 Sharpe 是否仍顯著")
+            print(f"         校正 SR: {dsr.deflated_sharpe:.4f}, p-value: {dsr.p_value:.4f}（標準: p < 0.05）")
+            print()
         
         if pbo:
-            passed = not pbo.is_likely_overfitted
+            not_overfitted = bool(not pbo.is_likely_overfitted)
             summary["tests"]["pbo"] = {
-                "passed": passed,
-                "pbo": f"{pbo.pbo:.2%}",
+                "passed": not_overfitted,
+                "pbo_pct": f"{pbo.pbo:.1%}",
+                "rank_correlation": round(float(pbo.rank_correlation), 4),
+                "threshold": "PBO < 50%",
+                "meaning": "用交叉驗證估計策略是『真的好』還是『碰巧好』的機率",
             }
-            print(f"  PBO: {'✅ PASS' if passed else '⚠️  CHECK'} ({pbo.pbo:.2%})")
+            icon = "✅ PASS" if not_overfitted else "⚠️ CHECK"
+            print(f"  {icon}  PBO（過擬合機率）")
+            print(f"         測試方法: 用排列組合計算「回測好但實盤差」的機率")
+            print(f"         過擬合機率: {pbo.pbo:.1%}（標準: < 50%）")
+            print()
     
     # Kelly 摘要
     if kelly_results:
@@ -663,27 +743,58 @@ def generate_summary(
         total_count = len(kelly_results)
         passed = suitable_count == total_count
         
+        per_symbol_kelly = {}
+        for sym, r in kelly_results.items():
+            per_symbol_kelly[sym] = {
+                "win_rate": f"{r.kelly_stats.win_rate:.1%}",
+                "win_loss_ratio": round(float(r.kelly_stats.win_loss_ratio), 2),
+                "full_kelly": f"{r.kelly_stats.kelly_pct:.1%}",
+                "recommended": f"{r.recommended_fraction:.0%} Kelly = {r.kelly_stats.kelly_pct * r.recommended_fraction:.1%}",
+                "stability_cv": round(float(r.kelly_stability), 2),
+            }
+        
         summary["tests"]["kelly"] = {
-            "passed": passed,
+            "passed": bool(passed),
             "suitable_assets": f"{suitable_count}/{total_count}",
+            "threshold": "所有幣種都適合使用 Kelly",
+            "meaning": "根據歷史勝率和盈虧比，計算最佳倉位大小並檢驗其穩定性",
+            "per_symbol": per_symbol_kelly,
         }
-        print(f"  Kelly: {'✅ PASS' if passed else '⚠️  CHECK'} (適合: {suitable_count}/{total_count})")
+        icon = "✅ PASS" if passed else "⚠️ CHECK"
+        print(f"  {icon}  Kelly（最佳倉位驗證）")
+        print(f"         測試方法: 用歷史勝率+盈虧比算最佳倉位，並檢查穩定性")
+        for sym, info in per_symbol_kelly.items():
+            print(f"           {sym}: 勝率={info['win_rate']}, 盈虧比={info['win_loss_ratio']}, 建議={info['recommended']}")
+        print()
     
     # 總體判斷
     all_passed = all(
         t.get("passed", True) 
         for t in summary["tests"].values()
     )
-    summary["overall_passed"] = all_passed
+    summary["overall_passed"] = bool(all_passed)
     
-    print("\n" + "-" * 70)
-    print(f"  Overall: {'✅ 策略驗證通過' if all_passed else '⚠️  需要進一步審查'}")
-    print("=" * 70)
+    print("  ─────────────────────────────────────────────────────────────────")
+    if all_passed:
+        print("  🎉 Overall: ✅ 策略驗證通過 — 可以考慮上線！")
+    else:
+        print("  ⚠️  Overall: 有項目未通過，建議了解後再決定是否上線")
+    print()
+    print("  💡 提示：驗證通過≠保證賺錢，只是表示策略在統計上有合理性。")
+    print("           實盤會受滑價、funding rate、流動性等因素影響。")
+    print("=" * 72)
     
-    # 保存摘要
+    # ── 保存 YAML（轉換為原生類型，避免 numpy 序列化問題）──
+    summary = _to_native(summary)
     summary_path = report_dir / "validation_summary.yaml"
-    with open(summary_path, "w") as f:
-        yaml.dump(summary, f, default_flow_style=False, allow_unicode=True)
+    with open(summary_path, "w", encoding="utf-8") as f:
+        yaml.dump(
+            summary,
+            f,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
     
     return summary
 
@@ -729,7 +840,7 @@ def main():
         "--only",
         type=str,
         default=None,
-        help="只執行指定的驗證（逗號分隔）: walk_forward,monte_carlo,loao,regime,dsr,pbo,kelly,consistency"
+        help="只執行指定的驗證（逗號分隔）: walk_forward,monte_carlo,loao,regime,dsr,pbo,kelly,consistency,predeploy"
     )
     
     parser.add_argument(
@@ -763,15 +874,23 @@ def main():
     if args.output:
         report_dir = Path(args.output)
     else:
-        report_dir = Path(cfg.output.report_dir) / cfg.strategy.name / f"validation_{timestamp}"
+        report_dir = cfg.get_report_dir("validation") / timestamp
     report_dir.mkdir(parents=True, exist_ok=True)
     
-    print("=" * 70)
+    print("=" * 72)
     print(f"  🔬 Strategy Validation: {cfg.strategy.name}")
-    print("=" * 70)
+    print("=" * 72)
     print(f"  配置: {args.config}")
     print(f"  交易對: {cfg.market.symbols}")
     print(f"  報告目錄: {report_dir}")
+    print()
+    print("  本工具執行 6 項驗證，從不同角度檢查策略是否真的有效：")
+    print("  ① Walk-Forward  — 策略在新數據上還行不行？")
+    print("  ② Monte Carlo   — 最壞情況會虧多少？")
+    print("  ③ Cross-Asset   — 換一個幣種還有效嗎？")
+    print("  ④ DSR / PBO     — 是不是碰巧調出來的好結果？")
+    print("  ⑤ Kelly         — 每次該下多大的注？")
+    print("  ⑥ Pre-Deploy    — 回測和實盤的程式碼一致嗎？")
     
     # 準備數據路徑
     symbols = cfg.market.symbols
@@ -876,7 +995,19 @@ def main():
             report_dir=report_dir,
         )
     
-    # 7. 生成摘要
+    # 7. Pre-Deploy 一致性檢查（回測↔實盤路徑比對）
+    if should_run("predeploy", True):
+        try:
+            from validate_live_consistency import ConsistencyChecker, print_report
+            checker = ConsistencyChecker(cfg, verbose=True)
+            results = checker.run_all()
+            print_report(results, verbose=True)
+        except ImportError:
+            print("  ⚠️  validate_live_consistency.py 未找到，跳過 pre-deploy 檢查")
+        except Exception as e:
+            print(f"  ⚠️  Pre-deploy 檢查異常: {e}")
+    
+    # 8. 生成摘要
     generate_summary(
         walk_forward_results=walk_forward_results,
         monte_carlo_results=monte_carlo_results,
