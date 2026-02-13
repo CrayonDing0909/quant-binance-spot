@@ -769,16 +769,19 @@ class TelegramCommandBot(TelegramBot):
             interval = cfg.market.interval
             market_type = cfg.market_type_str
             direction = cfg.direction
-            params = dict(cfg.strategy.params) if cfg.strategy.params else {}
 
             lines = ["📡 <b>最新信號</b>\n"]
 
             for symbol in symbols:
                 try:
+                    # 使用 get_params(symbol) 取得含幣種覆寫的參數
+                    # 確保 /signals 與 Signal Tick (run_once) 使用相同參數
+                    symbol_params = cfg.strategy.get_params(symbol)
+
                     sig = generate_signal(
                         symbol=symbol,
                         strategy_name=strategy_name,
-                        params=params,
+                        params=symbol_params,
                         interval=interval,
                         market_type=market_type,
                         direction=direction,
