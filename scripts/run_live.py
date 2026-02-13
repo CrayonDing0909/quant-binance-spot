@@ -160,6 +160,7 @@ def cmd_run(args, cfg) -> None:
                 dry_run=dry_run,
                 leverage=leverage,
                 margin_type=margin_type,
+                state_dir=cfg.get_report_dir("live"),
             )
         else:
             from qtrade.live.binance_spot_broker import BinanceSpotBroker

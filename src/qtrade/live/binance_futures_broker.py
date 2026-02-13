@@ -23,10 +23,12 @@ Binance Futures Broker — USDT-M 合約真實下單引擎
     - 建議先用 dry_run=True 測試
 """
 from __future__ import annotations
+import json
 import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
 from ..data.binance_futures_client import BinanceFuturesHTTP
@@ -145,6 +147,7 @@ class BinanceFuturesBroker:
         dry_run: bool = False,
         leverage: int = 10,
         margin_type: Literal["ISOLATED", "CROSSED"] = "ISOLATED",
+        state_dir: Path | str | None = None,
     ):
         self.http = BinanceFuturesHTTP()
         self.dry_run = dry_run
@@ -154,9 +157,15 @@ class BinanceFuturesBroker:
         self._filters: dict[str, FuturesSymbolFilter] = {}
         self._leverage_cache: dict[str, int] = {}
         self._margin_type_cache: dict[str, str] = {}
+
         # Algo 條件單快取（防止 algo query 404 時重複掛單）
-        # key = f"{symbol}_{order_kind}", value = dict with orderId, stopPrice, etc.
-        self._algo_order_cache: dict[str, dict] = {}
+        # 持久化到磁碟，跨進程生效（cron 每次 run_live.py --once 是新進程）
+        self._algo_cache_path: Path | None = None
+        if state_dir:
+            p = Path(state_dir)
+            p.mkdir(parents=True, exist_ok=True)
+            self._algo_cache_path = p / "algo_orders_cache.json"
+        self._algo_order_cache: dict[str, dict] = self._load_algo_cache()
 
         if not self.http.api_key or not self.http.api_secret:
             raise RuntimeError(
@@ -169,6 +178,48 @@ class BinanceFuturesBroker:
             f"✅ Binance Futures Broker 初始化完成 [{mode_str}]\n"
             f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}"
         )
+
+    # ── Algo Order Cache（磁碟持久化）────────────────────
+
+    def _load_algo_cache(self) -> dict[str, dict]:
+        """從磁碟讀取 algo order 快取"""
+        if self._algo_cache_path and self._algo_cache_path.exists():
+            try:
+                data = json.loads(self._algo_cache_path.read_text())
+                if isinstance(data, dict):
+                    logger.debug(f"📂 載入 algo cache: {len(data)} 筆")
+                    return data
+            except Exception as e:
+                logger.warning(f"⚠️  讀取 algo cache 失敗: {e}")
+        return {}
+
+    def _save_algo_cache(self) -> None:
+        """將 algo order 快取寫入磁碟"""
+        if not self._algo_cache_path:
+            return
+        try:
+            self._algo_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._algo_cache_path.write_text(
+                json.dumps(self._algo_order_cache, indent=2, default=str)
+            )
+        except Exception as e:
+            logger.warning(f"⚠️  寫入 algo cache 失敗: {e}")
+
+    def _cache_algo_order(self, symbol: str, kind: str, order_data: dict) -> None:
+        """快取一筆 algo/conditional order，並寫入磁碟"""
+        key = f"{symbol}_{kind}"  # e.g. "ETHUSDT_SL"
+        self._algo_order_cache[key] = order_data
+        self._save_algo_cache()
+
+    def _remove_algo_cache(self, symbol: str, kind: str | None = None) -> None:
+        """移除快取（kind=None 時移除該 symbol 所有快取）"""
+        if kind:
+            self._algo_order_cache.pop(f"{symbol}_{kind}", None)
+        else:
+            for k in list(self._algo_order_cache):
+                if k.startswith(f"{symbol}_"):
+                    del self._algo_order_cache[k]
+        self._save_algo_cache()
 
     # ── 交易對規則 ────────────────────────────────────────
 
@@ -967,9 +1018,8 @@ class BinanceFuturesBroker:
                 if "algoId" in result and "orderId" not in result:
                     result["orderId"] = str(result["algoId"])
                 result["_via"] = "algo"
-                # 快取此 algo 單，以防 algo query 404 導致重複掛單
-                cache_key = f"{symbol}_{order_kind}"
-                self._algo_order_cache[cache_key] = {
+                # 快取此 algo 單（持久化），以防 algo query 404 導致重複掛單
+                self._cache_algo_order(symbol, order_kind, {
                     "orderId": result.get("orderId"),
                     "type": order_kind,
                     "stopPrice": str(stop_price),
@@ -978,7 +1028,7 @@ class BinanceFuturesBroker:
                     "quantity": str(qty),
                     "symbol": symbol,
                     "_source": "algo_cache",
-                }
+                })
                 logger.info(
                     f"✅ {symbol}: 條件單已掛 via Algo API ({order_kind}) "
                     f"trigger=${stop_price:,.2f} qty={qty} "
@@ -1191,7 +1241,26 @@ class BinanceFuturesBroker:
             )
 
         try:
-            # 先取消舊的止損單
+            # === 去重檢查：若已存在同方向且相近觸發價的 SL，跳過避免重複掛單 ===
+            existing = self.get_all_conditional_orders(symbol)
+            for o in existing:
+                if o.get("type") not in self._SL_TYPES:
+                    continue
+                # 檢查 positionSide（避免舊方向的殘留 cache 擋住新方向）
+                o_ps = o.get("positionSide", "")
+                if o_ps and o_ps != position_side and o_ps != "BOTH":
+                    continue
+                existing_trigger = float(o.get("stopPrice", 0))
+                if existing_trigger > 0:
+                    diff_pct = abs(existing_trigger - stop_price) / stop_price
+                    if diff_pct < 0.002:  # 0.2% 容差
+                        logger.debug(
+                            f"  {symbol}: SL 已存在 @ ${existing_trigger:,.2f} "
+                            f"[{o_ps}] (目標 ${stop_price:,.2f}，差 {diff_pct:.4%})，跳過"
+                        )
+                        return None
+
+            # 先取消舊的止損單（觸發價已改變才會走到這裡）
             self.cancel_stop_loss(symbol, position_side)
 
             result = self._place_conditional_order(
@@ -1298,7 +1367,25 @@ class BinanceFuturesBroker:
             )
 
         try:
-            # 先取消舊的止盈單
+            # === 去重檢查：若已存在同方向且相近觸發價的 TP，跳過避免重複掛單 ===
+            existing = self.get_all_conditional_orders(symbol)
+            for o in existing:
+                if o.get("type") not in self._TP_TYPES:
+                    continue
+                o_ps = o.get("positionSide", "")
+                if o_ps and o_ps != position_side and o_ps != "BOTH":
+                    continue
+                existing_trigger = float(o.get("stopPrice", 0))
+                if existing_trigger > 0:
+                    diff_pct = abs(existing_trigger - take_profit_price) / take_profit_price
+                    if diff_pct < 0.002:  # 0.2% 容差
+                        logger.debug(
+                            f"  {symbol}: TP 已存在 @ ${existing_trigger:,.2f} "
+                            f"[{o_ps}] (目標 ${take_profit_price:,.2f}，差 {diff_pct:.4%})，跳過"
+                        )
+                        return None
+
+            # 先取消舊的止盈單（觸發價已改變才會走到這裡）
             self.cancel_take_profit(symbol, position_side)
 
             result = self._place_conditional_order(
@@ -1381,13 +1468,11 @@ class BinanceFuturesBroker:
                             f"🗑️  {label}單已取消 (algo) {symbol} [{order.get('positionSide')}] "
                             f"algoId={oid}"
                         )
-            # 3) 清理本地 algo 快取
+            # 3) 清理本地 algo 快取（含磁碟持久化）
             for kind in ("STOP", "TAKE_PROFIT"):
                 if kind in target_types:
-                    cache_key = f"{symbol}_{kind}"
-                    if cache_key in self._algo_order_cache:
-                        del self._algo_order_cache[cache_key]
-                        logger.debug(f"  清理 algo 快取: {cache_key}")
+                    self._remove_algo_cache(symbol, kind)
+                    logger.debug(f"  清理 algo 快取: {symbol}_{kind}")
             return True
         except Exception as e:
             logger.warning(f"⚠️  取消{label}單失敗 {symbol}: {e}")
@@ -1471,8 +1556,10 @@ class BinanceFuturesBroker:
 
         if target_pct == 0:
             # 目標是空倉 → 全部平倉
-            # 平倉前先取消止損單
+            # 平倉前先取消所有 SL/TP 掛單
             self.cancel_stop_loss(symbol)
+            self.cancel_take_profit(symbol)
+            self._remove_algo_cache(symbol)  # 清理該 symbol 所有快取
             return self.market_close(symbol, reason=reason)
 
         # ── 判斷：方向切換 vs 加減倉 ──

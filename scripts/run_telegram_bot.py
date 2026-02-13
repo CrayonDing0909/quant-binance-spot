@@ -77,6 +77,7 @@ def main():
                     dry_run=True,  # Bot 只查詢，永遠不下單
                     leverage=leverage,
                     margin_type=margin_type,
+                    state_dir=cfg.get_report_dir("live"),
                 )
             else:
                 from qtrade.live.binance_spot_broker import BinanceSpotBroker

@@ -556,6 +556,14 @@ class LiveRunner:
             # 不論是否執行了交易，每次 cron 都檢查 SL/TP 是否存在
             # 場景：初次掛單 API 失敗、交易所清除掛單、手動取消等
             if (
+                abs(current_pct) <= 0.01                        # 無持倉
+                and not isinstance(self.broker, PaperBroker)
+                and hasattr(self.broker, "_remove_algo_cache")
+            ):
+                # 清理殘留的 algo cache（SL/TP 被觸發後，cache 可能殘留）
+                self.broker._remove_algo_cache(symbol)
+
+            if (
                 abs(current_pct) > 0.01                          # 有持倉
                 and not isinstance(self.broker, PaperBroker)     # 只對 Real broker
                 and hasattr(self.broker, "place_stop_loss")
