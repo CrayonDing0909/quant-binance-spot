@@ -801,10 +801,18 @@ class TelegramCommandBot(TelegramBot):
             # ── 無快照 → 即時生成（fallback）──
             from ..live.signal_generator import generate_signal
 
+            # 嘗試使用 LiveRunner 的增量快取（如果可用）
+            kline_cache = getattr(self.live_runner, "_kline_cache", None)
+
             lines = ["📡 <b>最新信號</b>  ⚡ 即時\n"]
             for symbol in cfg.market.symbols:
                 try:
                     symbol_params = cfg.strategy.get_params(symbol)
+                    cached_df = None
+                    if kline_cache is not None:
+                        cached_df = kline_cache.get_klines(symbol)
+                        if cached_df is not None and len(cached_df) < 50:
+                            cached_df = None
                     sig = generate_signal(
                         symbol=symbol,
                         strategy_name=cfg.strategy.name,
@@ -812,6 +820,7 @@ class TelegramCommandBot(TelegramBot):
                         interval=cfg.market.interval,
                         market_type=cfg.market_type_str,
                         direction=cfg.direction,
+                        df=cached_df,
                     )
                     sig_line = self._format_signal_line(sig)
                     lines.append(sig_line)

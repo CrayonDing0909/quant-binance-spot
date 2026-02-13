@@ -206,6 +206,26 @@ class FuturesConfig:
 
 
 @dataclass(frozen=True)
+class LiveConfig:
+    """
+    實盤專屬配置
+
+    kline_cache: 啟用增量 K 線快取（推薦）
+        - True（預設）：每次 cron 只拉增量 K 線，累積歷史數據
+          → 策略從 bar 0 跑到最新 bar，與回測行為一致
+        - False：每次拉最近 300 bar（滑動窗口），可能與回測有差異
+
+    flip_confirmation: 方向切換需 2-tick 確認
+        - True：方向翻轉需連續 2 次 cron 產生同方向信號
+          → 防止滑動窗口造成的頻繁翻轉（kline_cache=False 時建議開啟）
+        - False（預設）：立即執行方向切換
+          → kline_cache=True 時，數據穩定，不需額外確認
+    """
+    kline_cache: bool = True
+    flip_confirmation: bool = False
+
+
+@dataclass(frozen=True)
 class NotificationConfig:
     """
     通知配置（支援 Spot/Futures 分開通知）
@@ -241,6 +261,7 @@ class AppConfig:
     position_sizing: PositionSizingConfig = PositionSizingConfig()
     futures: FuturesConfig | None = None  # 合約配置（僅 market_type=futures 時使用）
     notification: NotificationConfig | None = None  # 通知配置
+    live: LiveConfig = LiveConfig()  # 實盤配置
 
     @property
     def is_futures(self) -> bool:
@@ -407,6 +428,13 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
             enabled=notif_raw.get("enabled", True),
         )
 
+    # live 可選
+    live_raw = raw.get("live", {})
+    live_cfg = LiveConfig(
+        kline_cache=live_raw.get("kline_cache", True),
+        flip_confirmation=live_raw.get("flip_confirmation", False),
+    )
+
     # output 可選（預設 ./reports）
     output_raw = raw.get("output", {})
     output = OutputConfig(**output_raw) if output_raw else OutputConfig()
@@ -454,4 +482,5 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         position_sizing=position_sizing,
         futures=futures,
         notification=notification,
+        live=live_cfg,
     )

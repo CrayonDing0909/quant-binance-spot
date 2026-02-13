@@ -95,6 +95,11 @@ portfolio:
     ETHUSDT: 1.00         # 100% 權益
     # 總曝險 200%（2x），5x 槓桿下保證金用 40%，MDD 預估 ~27%
 
+# 實盤專屬配置
+live:
+  kline_cache: true           # 增量 K 線快取（策略從 bar 0 跑到最新，與回測一致）
+  flip_confirmation: false    # 方向切換 2-tick 確認（快取模式下不需要）
+
 # Telegram 通知（使用獨立的 Bot）
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}

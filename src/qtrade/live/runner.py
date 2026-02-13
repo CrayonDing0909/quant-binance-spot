@@ -26,6 +26,7 @@ from ..risk.position_sizing import (
     VolatilityPositionSizer,
 )
 from .signal_generator import generate_signal
+from .kline_cache import IncrementalKlineCache
 from .paper_broker import PaperBroker
 from .trading_state import TradingStateManager
 
@@ -105,6 +106,18 @@ class LiveRunner:
         
         # v2.7: 信號狀態持久化（防止滑動窗口導致的方向翻轉）
         self._signal_state_path = cfg.get_report_dir("live") / "signal_state.json"
+
+        # v2.8: 增量 K 線快取（解決滑動窗口狀態機發散問題）
+        self._kline_cache: IncrementalKlineCache | None = None
+        if cfg.live.kline_cache:
+            cache_dir = cfg.get_report_dir("live") / "kline_cache"
+            self._kline_cache = IncrementalKlineCache(
+                cache_dir=cache_dir,
+                interval=self.interval,
+                seed_bars=300,
+                market_type=self.market_type,
+            )
+            logger.info("📦 增量 K 線快取已啟用")
 
     def _init_position_sizer(self) -> None:
         """
@@ -411,6 +424,17 @@ class LiveRunner:
             direction = self.cfg.direction
 
             try:
+                # v2.8: 使用增量快取提供完整歷史，避免滑動窗口發散
+                cached_df = None
+                if self._kline_cache is not None:
+                    cached_df = self._kline_cache.get_klines(symbol)
+                    if cached_df is not None and len(cached_df) < 50:
+                        logger.warning(
+                            f"⚠️  {symbol}: 快取數據不足 ({len(cached_df)} bar)，"
+                            f"fallback 到 fetch_recent_klines"
+                        )
+                        cached_df = None
+
                 sig = generate_signal(
                     symbol=symbol,
                     strategy_name=self.strategy_name,
@@ -418,6 +442,7 @@ class LiveRunner:
                     interval=self.interval,
                     market_type=self.market_type,
                     direction=direction,
+                    df=cached_df,  # None → generate_signal 內部自行拉 300 bar
                 )
             except Exception as e:
                 logger.error(f"❌ {symbol} 信號生成失敗: {e}")
@@ -537,10 +562,9 @@ class LiveRunner:
                             f"需要加倉"
                         )
 
-            # v2.7: 方向切換 2-tick 確認機制
-            # 策略的狀態機從 300 bar 窗口從頭跑，窗口偏移 1 bar 就可能翻轉信號。
-            # 防護：方向切換需連續 2 次 cron 產生相同方向才執行。
-            # 例外：從空倉（|current_pct| < 1%）進場不需確認。
+            # v2.7→v2.8: 方向切換確認機制（可選）
+            # kline_cache=True 時，數據穩定，不需要確認（預設關閉）
+            # kline_cache=False 時，建議開啟，防止滑動窗口造成的頻繁翻轉
             is_direction_flip = (
                 (target_pct > 0.01 and current_pct < -0.01) or   # SHORT → LONG
                 (target_pct < -0.01 and current_pct > 0.01)      # LONG → SHORT
@@ -548,7 +572,7 @@ class LiveRunner:
             # 始終記錄本次原始信號（用於下一次確認判斷）
             new_signal_state[symbol] = sig["signal"]
 
-            if is_direction_flip:
+            if is_direction_flip and self.cfg.live.flip_confirmation:
                 prev_signal = prev_signal_state.get(symbol)
                 if prev_signal is None:
                     # 首次運行 / 無狀態檔 → 直接執行（不阻擋首筆交易）
@@ -580,6 +604,11 @@ class LiveRunner:
                             target_pct = 1.0 * weight
                         diff = abs(target_pct - current_pct)
                         # diff 通常 ≈ 0（方向一致且接近滿倉），不會觸發交易
+            elif is_direction_flip:
+                logger.info(
+                    f"🔄 {symbol}: 方向切換 "
+                    f"({current_pct:+.0%} → {raw_signal:+.0%}) — 直接執行"
+                )
 
             if diff >= 0.02:
                 ps_method = self.cfg.position_sizing.method
@@ -899,6 +928,8 @@ class LiveRunner:
         logger.info(f"   模式: {'📝 Paper Trading' if self.mode == 'paper' else '💰 Real Trading'}")
         if self.max_drawdown_pct:
             logger.info(f"   熔斷線: 回撤 ≥ {self.max_drawdown_pct:.0%} → 自動平倉停止")
+        logger.info(f"   K線快取: {'✅ 增量快取' if self._kline_cache else '❌ 滑動窗口 (300 bar)'}")
+        logger.info(f"   翻轉確認: {'✅ 2-tick' if self.cfg.live.flip_confirmation else '❌ 直接執行'}")
         logger.info(f"   Telegram: {'✅ 已啟用' if self.notifier.enabled else '❌ 未啟用'}")
         logger.info("=" * 60)
 
