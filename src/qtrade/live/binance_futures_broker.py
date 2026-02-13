@@ -843,12 +843,27 @@ class BinanceFuturesBroker:
 
     @staticmethod
     def _is_binance_error(exc: Exception, code: int) -> bool:
-        """檢查 Binance 異常是否為特定錯誤碼"""
+        """檢查 Binance 異常是否為特定錯誤碼（含 string fallback）"""
         try:
             if hasattr(exc, 'response') and exc.response is not None:
-                return exc.response.json().get("code") == code
+                # 方式 1: JSON 解析
+                try:
+                    body = exc.response.json()
+                    if body.get("code") == code:
+                        return True
+                except Exception:
+                    pass
+                # 方式 2: 字串比對（response.json() 偶爾會失敗）
+                try:
+                    if f'"code":{code}' in exc.response.text:
+                        return True
+                except Exception:
+                    pass
         except Exception:
             pass
+        # 方式 3: 異常訊息字串比對（最後手段）
+        if str(code) in str(exc):
+            return True
         return False
 
     def _place_conditional_order(
@@ -957,10 +972,12 @@ class BinanceFuturesBroker:
                     err_detail = f"{e_limit} | {e_limit.response.text}"
             except Exception:
                 pass
+            is_4120 = self._is_binance_error(e_limit, -4120)
             logger.warning(
                 f"⚠️  {symbol}: 標準 Order ({order_kind}) 也失敗: {err_detail}"
+                f" [is_4120={is_4120}]"
             )
-            if not self._is_binance_error(e_limit, -4120):
+            if not is_4120:
                 raise
 
         # ── 方式 3：Algo Order API（Binance 明確要求用此 API）──
