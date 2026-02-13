@@ -1139,6 +1139,11 @@ source .venv/bin/activate
 # 拉最新代碼
 git pull
 
+# ⭐ 關鍵：清除 Python 快取（避免舊 .pyc 導致新功能不生效）
+./scripts/setup_cron.sh --update
+# 或手動：
+# find . -name "*.pyc" -delete && find . -name "__pycache__" -exec rm -rf {} +
+
 # 找到舊的 bot 進程並停掉
 ps aux | grep run_telegram_bot
 kill <PID>
@@ -1152,7 +1157,9 @@ tail -f logs/telegram_bot.log
 # 按 Ctrl+C 退出 tail（bot 繼續在背景跑）
 ```
 
-> 💡 **小技巧**：cron 交易不需要重啟，`git pull` 後下一輪 cron 自動用新代碼。只有 Telegram Bot 常駐服務需要手動重啟。
+> ⚠️ **重要：`git pull` 後必須清除 `.pyc` 快取！** Python 會優先讀取已編譯的 `.pyc` 而非最新的 `.py` 原始碼。如果不清除，新功能（如 `kline_cache`）可能**完全不生效**，且不會報錯。用 `./scripts/setup_cron.sh --update` 一鍵完成。
+
+> 💡 **小技巧**：cron 交易不需要重啟，`git pull` + 清 `.pyc` 後下一輪 cron 自動用新代碼。只有 Telegram Bot 常駐服務需要手動重啟。
 
 > ⚠️ **v2.8 注意**：K 線快取（`kline_cache/`）會在 `git pull` 後保留。如果你改了策略邏輯，建議刪除快取讓它重新建立：`rm -rf reports/futures/*/live/kline_cache/`
 
@@ -1273,6 +1280,7 @@ sleep 3 && tail -5 logs/telegram_bot.log
 - ❌ cron 設在 `:00` 整點，K 線數據可能還不穩定
 - ❌ cron 忘記 `source .venv/bin/activate`，找不到 Python 套件
 - ❌ `git pull` 後忘記重啟 Telegram Bot（cron 會自動用新代碼，但 Bot 不會）
+- ❌ `git pull` 後沒清 `.pyc` 快取（新功能可能不生效，見 [Q13](#q13-git-pull-後-kline_cache-沒有生效-new)）
 - ❌ 改了策略邏輯後沒刪 K 線快取（舊快取的歷史數據可能與新邏輯不匹配）
 
 ---
@@ -2344,6 +2352,78 @@ live:
 ```
 
 這是正常的，SL/TP 已成功掛上。只要最後看到 `✅ 條件單已掛` 就沒問題。
+
+**另外**：如果看到 `algoOrder/openOrders` 的 `404` 警告，這也是無害的——表示你的帳戶不支援 Algo Order 查詢 API，系統會自動回退到標準掛單 + 本地快取。
+
+### Q13: `git pull` 後 kline_cache 沒有生效？ ⭐ NEW
+
+**症狀**：更新代碼到 v2.8 後，log 裡看不到 `📦 增量 K 線快取已啟用`，且 `kline_cache/` 目錄不存在。
+
+**原因**：Python 的 `.pyc` 編譯快取。`git pull` 只更新 `.py` 原始碼，但 Python 會優先讀取 `__pycache__/` 裡的舊版 `.pyc`，導致新功能（如 kline_cache 初始化）**完全不被執行**。
+
+**解決方法**：
+
+```bash
+# 方法一：用部署腳本（推薦）
+./scripts/setup_cron.sh --update
+
+# 方法二：手動清除
+find . -name "*.pyc" -delete
+find . -name "__pycache__" -exec rm -rf {} +
+```
+
+**驗證**：
+
+```bash
+# 清除後手動觸發一次，確認快取生效
+python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --dry-run --once 2>&1 | grep "增量"
+# 應看到：📦 增量 K 線快取已啟用
+
+# 下一次 cron 執行後檢查快取檔
+ls -la reports/futures/rsi_adx_atr/live/kline_cache/
+# 應看到 BTCUSDT.parquet 和 ETHUSDT.parquet
+```
+
+> ⚠️ **黃金法則**：每次 `git pull` 後都執行 `./scripts/setup_cron.sh --update`，養成習慣就不會踩坑。
+
+### Q14: 出現不明交易（bot log 裡沒有記錄）？ ⭐ NEW
+
+**症狀**：在 Binance 交易記錄中看到某個時間的交易，但 bot 的所有 log 文件都沒有對應記錄。
+
+**排查步驟**：
+
+```bash
+# 1. 確認所有 log 裡都沒有記錄
+grep -r "09:44" /home/ubuntu/quant-binance-spot/logs/ 2>/dev/null
+
+# 2. 確認沒有常駐進程在跑
+ps aux | grep run_live | grep -v grep
+
+# 3. 用 API 查交易的 orderId 和 origType
+python -c "
+from qtrade.live.binance_futures_broker import BinanceFuturesBroker
+from datetime import datetime
+b = BinanceFuturesBroker(dry_run=True)
+for s in ['BTCUSDT', 'ETHUSDT']:
+    trades = b.http.signed_get('/fapi/v1/userTrades', {'symbol': s, 'limit': 20})
+    for t in trades:
+        ts = datetime.fromtimestamp(int(t['time'])/1000)
+        oid = t['orderId']
+        order = b.http.signed_get('/fapi/v1/order', {'symbol': s, 'orderId': oid})
+        print(f'{s} {ts} {t[\"side\"]} origType={order.get(\"origType\")} clientOrderId={order.get(\"clientOrderId\")}')
+"
+```
+
+**判讀結果**：
+
+| `origType` | `clientOrderId` 特徵 | 來源 |
+|------------|---------------------|------|
+| `STOP_MARKET` | 系統生成 | ✅ SL 掛單自動觸發 |
+| `TAKE_PROFIT_MARKET` | 系統生成 | ✅ TP 掛單自動觸發 |
+| `MARKET` | 隨機字串 | ⚠️ 手動操作（Binance App/Web） |
+| `MARKET` | 有特定前綴 | ⚠️ 其他 API/Bot |
+
+如果確認不是自己操作的，建議到 Binance App → API Management 檢查是否有其他 API Key。
 
 ---
 

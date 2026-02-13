@@ -173,9 +173,20 @@ show_cron_config() {
     echo ""
 }
 
+# ── 函數：清除 Python 快取 ────────────────────────────
+clean_pycache() {
+    info "清除 Python 快取（.pyc / __pycache__）..."
+    find "$PROJECT_ROOT" -name "*.pyc" -delete 2>/dev/null || true
+    find "$PROJECT_ROOT" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    success "Python 快取已清除"
+}
+
 # ── 函數：安裝 Cron Jobs ──────────────────────────────
 install_cron() {
     header "安裝 Cron Jobs"
+    
+    # 清除 .pyc 快取，避免舊版本編譯檔導致新功能不生效
+    clean_pycache
     
     # 備份現有 crontab
     local backup_file="/tmp/crontab_backup_$(date +%Y%m%d_%H%M%S)"
@@ -301,6 +312,11 @@ main() {
             check_environment
             show_cron_config
             ;;
+        --update|-u)
+            header "更新後清理（git pull 後使用）"
+            clean_pycache
+            info "建議重新啟動正在運行的 bot 進程"
+            ;;
         --test|-t)
             check_environment
             test_run
@@ -313,6 +329,7 @@ main() {
             echo "  --remove, -r    移除 Cron Jobs"
             echo "  --show, -s      顯示目前設定"
             echo "  --preview, -p   預覽 Cron 設定"
+            echo "  --update, -u    git pull 後清除 .pyc 快取"
             echo "  --test, -t      測試執行"
             echo "  --help, -h      顯示此說明"
             echo ""
