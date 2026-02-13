@@ -755,108 +755,65 @@ class TelegramCommandBot(TelegramBot):
     # ── /signals ──
 
     def _cmd_signals(self, args: list[str], chat_id: str) -> str:
-        """即時生成交易信號"""
+        """
+        顯示最新交易信號
+
+        優先讀取 cron (run_once) 產生的 last_signals.json，
+        確保 /signals 顯示的信號與實際交易決策一致。
+        若快照不存在或過時 (>2h)，才即時重新生成。
+        """
         if not self.live_runner:
             return "⚠️ LiveRunner 未連接，無法生成信號"
 
         try:
+            import json as _json
+            from datetime import datetime as _dt, timezone as _tz
+
+            cfg = self.live_runner.cfg
+            sig_path = cfg.get_report_dir("live") / "last_signals.json"
+
+            cached_signals = None
+            cache_age_str = ""
+
+            # ── 嘗試讀取 cron 產生的信號快照 ──
+            if sig_path.exists():
+                try:
+                    with open(sig_path, "r") as f:
+                        payload = _json.load(f)
+                    gen_time = _dt.fromisoformat(payload["generated_at"])
+                    age_sec = (_dt.now(_tz.utc) - gen_time).total_seconds()
+
+                    if age_sec < 7200:  # 2 小時內有效
+                        cached_signals = payload.get("signals", [])
+                        mins = int(age_sec // 60)
+                        cache_age_str = f"⏱ {mins} 分鐘前 ({gen_time.strftime('%H:%M UTC')})"
+                except Exception:
+                    pass  # 解析失敗，走 fallback
+
+            # ── 有快照 → 使用快照信號 + 即時持倉/SL/TP ──
+            if cached_signals:
+                lines = [f"📡 <b>最新信號</b>  {cache_age_str}\n"]
+                for sig in cached_signals:
+                    sig_line = self._format_signal_line(sig)
+                    lines.append(sig_line)
+                return "\n".join(lines)
+
+            # ── 無快照 → 即時生成（fallback）──
             from ..live.signal_generator import generate_signal
 
-            runner = self.live_runner
-            cfg = runner.cfg
-            symbols = cfg.market.symbols
-            strategy_name = cfg.strategy.name
-            interval = cfg.market.interval
-            market_type = cfg.market_type_str
-            direction = cfg.direction
-
-            lines = ["📡 <b>最新信號</b>\n"]
-
-            for symbol in symbols:
+            lines = ["📡 <b>最新信號</b>  ⚡ 即時\n"]
+            for symbol in cfg.market.symbols:
                 try:
-                    # 使用 get_params(symbol) 取得含幣種覆寫的參數
-                    # 確保 /signals 與 Signal Tick (run_once) 使用相同參數
                     symbol_params = cfg.strategy.get_params(symbol)
-
                     sig = generate_signal(
                         symbol=symbol,
-                        strategy_name=strategy_name,
+                        strategy_name=cfg.strategy.name,
                         params=symbol_params,
-                        interval=interval,
-                        market_type=market_type,
-                        direction=direction,
+                        interval=cfg.market.interval,
+                        market_type=cfg.market_type_str,
+                        direction=cfg.direction,
                     )
-                    signal_pct = sig["signal"]
-                    price = sig["price"]
-                    ind = sig.get("indicators", {})
-
-                    if signal_pct > 0.5:
-                        emoji = "🟢"
-                        label = f"LONG {signal_pct:.0%}"
-                    elif signal_pct < -0.5:
-                        emoji = "🔴"
-                        label = f"SHORT {abs(signal_pct):.0%}"
-                    else:
-                        emoji = "⚪"
-                        label = f"FLAT {signal_pct:.0%}"
-
-                    sig_line = (
-                        f"{emoji} <b>{symbol}</b>: {label} @ ${price:,.2f}\n"
-                        f"   RSI={ind.get('rsi', '?')} | ADX={ind.get('adx', '?')}"
-                    )
-
-                    # 附加即時持倉 + SL/TP 資訊
-                    if self.broker and hasattr(self.broker, "get_position"):
-                        try:
-                            pos_obj = self.broker.get_position(symbol)
-                            if pos_obj and abs(pos_obj.qty) > 1e-10:
-                                side = "LONG" if pos_obj.qty > 0 else "SHORT"
-                                is_long = pos_obj.qty > 0
-                                entry = pos_obj.entry_price
-                                qty = abs(pos_obj.qty)
-                                pnl = pos_obj.unrealized_pnl
-                                pnl_emoji = "📈" if pnl >= 0 else "📉"
-                                sig_line += (
-                                    f"\n   📦 {side} {qty:.6g} @ ${entry:,.2f}"
-                                    f"  {pnl_emoji} ${pnl:+,.2f}"
-                                )
-                                # 查詢 SL/TP
-                                if hasattr(self.broker, "get_all_conditional_orders"):
-                                    orders = self.broker.get_all_conditional_orders(symbol)
-                                    sl_price, tp_price = None, None
-                                    for o in orders:
-                                        trigger = float(
-                                            o.get("stopPrice", 0)
-                                            or o.get("triggerPrice", 0)
-                                            or 0
-                                        )
-                                        if trigger <= 0:
-                                            continue
-                                        otype = o.get("type", "")
-                                        if otype in {"STOP_MARKET", "STOP"}:
-                                            sl_price = trigger
-                                        elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
-                                            tp_price = trigger
-                                        elif entry > 0:
-                                            if is_long:
-                                                sl_price = trigger if trigger < entry else tp_price
-                                                tp_price = trigger if trigger >= entry else tp_price
-                                            else:
-                                                sl_price = trigger if trigger > entry else sl_price
-                                                tp_price = trigger if trigger <= entry else tp_price
-                                    if sl_price:
-                                        sl_pnl = self._calc_pnl(entry, sl_price, qty, is_long)
-                                        pnl_str = f" ({sl_pnl:+.2f})" if sl_pnl is not None else ""
-                                        sig_line += f"\n   🛡️ SL: ${sl_price:,.2f}{pnl_str}"
-                                    if tp_price:
-                                        tp_pnl = self._calc_pnl(entry, tp_price, qty, is_long)
-                                        pnl_str = f" ({tp_pnl:+.2f})" if tp_pnl is not None else ""
-                                        sig_line += f"\n   🎯 TP: ${tp_price:,.2f}{pnl_str}"
-                                    if not sl_price and not tp_price:
-                                        sig_line += "\n   ⚠️ 無 SL/TP 掛單"
-                        except Exception:
-                            pass  # 查詢失敗不影響信號顯示
-
+                    sig_line = self._format_signal_line(sig)
                     lines.append(sig_line)
                 except Exception as e:
                     lines.append(f"❌ {symbol}: {e}")
@@ -864,6 +821,79 @@ class TelegramCommandBot(TelegramBot):
             return "\n".join(lines)
         except Exception as e:
             return f"❌ 信號生成失敗: {e}"
+
+    def _format_signal_line(self, sig: dict) -> str:
+        """格式化單個幣種的信號 + 即時持倉/SL/TP"""
+        signal_pct = sig.get("signal", 0)
+        price = sig.get("price", 0)
+        symbol = sig.get("symbol", "?")
+        ind = sig.get("indicators", {})
+
+        if signal_pct > 0.5:
+            emoji, label = "🟢", f"LONG {signal_pct:.0%}"
+        elif signal_pct < -0.5:
+            emoji, label = "🔴", f"SHORT {abs(signal_pct):.0%}"
+        else:
+            emoji, label = "⚪", f"FLAT {signal_pct:.0%}"
+
+        sig_line = (
+            f"{emoji} <b>{symbol}</b>: {label} @ ${price:,.2f}\n"
+            f"   RSI={ind.get('rsi', '?')} | ADX={ind.get('adx', '?')}"
+        )
+
+        # 附加即時持倉 + SL/TP（從 Binance 查詢，非快照）
+        if self.broker and hasattr(self.broker, "get_position"):
+            try:
+                pos_obj = self.broker.get_position(symbol)
+                if pos_obj and abs(pos_obj.qty) > 1e-10:
+                    side = "LONG" if pos_obj.qty > 0 else "SHORT"
+                    is_long = pos_obj.qty > 0
+                    entry = pos_obj.entry_price
+                    qty = abs(pos_obj.qty)
+                    pnl = pos_obj.unrealized_pnl
+                    pnl_emoji = "📈" if pnl >= 0 else "📉"
+                    sig_line += (
+                        f"\n   📦 {side} {qty:.6g} @ ${entry:,.2f}"
+                        f"  {pnl_emoji} ${pnl:+,.2f}"
+                    )
+                    # 查詢 SL/TP
+                    if hasattr(self.broker, "get_all_conditional_orders"):
+                        orders = self.broker.get_all_conditional_orders(symbol)
+                        sl_price, tp_price = None, None
+                        for o in orders:
+                            trigger = float(
+                                o.get("stopPrice", 0)
+                                or o.get("triggerPrice", 0)
+                                or 0
+                            )
+                            if trigger <= 0:
+                                continue
+                            otype = o.get("type", "")
+                            if otype in {"STOP_MARKET", "STOP"}:
+                                sl_price = trigger
+                            elif otype in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
+                                tp_price = trigger
+                            elif entry > 0:
+                                if is_long:
+                                    sl_price = trigger if trigger < entry else sl_price
+                                    tp_price = trigger if trigger >= entry else tp_price
+                                else:
+                                    sl_price = trigger if trigger > entry else sl_price
+                                    tp_price = trigger if trigger <= entry else tp_price
+                        if sl_price:
+                            sl_pnl = self._calc_pnl(entry, sl_price, qty, is_long)
+                            pnl_str = f" ({sl_pnl:+.2f})" if sl_pnl is not None else ""
+                            sig_line += f"\n   🛡️ SL: ${sl_price:,.2f}{pnl_str}"
+                        if tp_price:
+                            tp_pnl = self._calc_pnl(entry, tp_price, qty, is_long)
+                            pnl_str = f" ({tp_pnl:+.2f})" if tp_pnl is not None else ""
+                            sig_line += f"\n   🎯 TP: ${tp_price:,.2f}{pnl_str}"
+                        if not sl_price and not tp_price:
+                            sig_line += "\n   ⚠️ 無 SL/TP 掛單"
+            except Exception:
+                pass  # 查詢失敗不影響信號顯示
+
+        return sig_line
 
     # ── /stats ──
 

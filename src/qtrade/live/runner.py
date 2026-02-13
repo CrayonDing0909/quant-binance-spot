@@ -10,6 +10,7 @@ Live Runner — 即時交易主循環
     - 支援動態倉位計算（Kelly / 波動率）
 """
 from __future__ import annotations
+import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -676,6 +677,9 @@ class LiveRunner:
                 has_trade=has_trade,
             )
         
+        # 保存信號快照（供 /signals 指令讀取，確保一致性）
+        self._save_last_signals(signals)
+
         # 每次 tick 都更新狀態檔時間戳（即使沒交易），讓健康檢查能偵測 cron 存活
         if isinstance(self.broker, PaperBroker):
             self.broker.touch_state()
@@ -685,6 +689,39 @@ class LiveRunner:
             self._init_position_sizer()
 
         return signals
+
+    def _save_last_signals(self, signals: list[dict]) -> None:
+        """保存最新信號到 JSON，供 Telegram /signals 讀取"""
+        try:
+            sig_path = self.cfg.get_report_dir("live") / "last_signals.json"
+            sig_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 序列化信號（去掉不可 JSON 化的欄位）
+            serializable = []
+            for sig in signals:
+                s = {
+                    "symbol": sig.get("symbol"),
+                    "signal": sig.get("signal"),
+                    "price": sig.get("price"),
+                    "timestamp": sig.get("timestamp"),
+                    "strategy": sig.get("strategy"),
+                    "indicators": sig.get("indicators", {}),
+                    "_position": sig.get("_position", {}),
+                    "_sltp": sig.get("_sltp", {}),
+                }
+                serializable.append(s)
+
+            payload = {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "mode": self.mode,
+                "signals": serializable,
+            }
+
+            with open(sig_path, "w") as f:
+                json.dump(payload, f, indent=2, default=str)
+
+        except Exception as e:
+            logger.debug(f"  保存信號快照失敗: {e}")
 
     def run(self, max_ticks: int | None = None) -> None:
         """
