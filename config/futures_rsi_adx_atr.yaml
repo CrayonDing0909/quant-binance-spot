@@ -70,8 +70,11 @@ position_sizing:
 
 # 多幣種倉位分配
 portfolio:
-  cash_reserve: 0.30      # 合約保留 30% 現金（作為保證金緩衝）
-  allocation: null
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.00         # 100% 權益
+    ETHUSDT: 1.00         # 100% 權益
+    # 總曝險 200%（2x），5x 槓桿下保證金用 40%，MDD 預估 ~27%
 
 # Telegram 通知（使用獨立的 Bot）
 notification:
