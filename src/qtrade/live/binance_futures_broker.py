@@ -145,13 +145,11 @@ class BinanceFuturesBroker:
         dry_run: bool = False,
         leverage: int = 10,
         margin_type: Literal["ISOLATED", "CROSSED"] = "ISOLATED",
-        leverage_sizing: bool = False,
     ):
         self.http = BinanceFuturesHTTP()
         self.dry_run = dry_run
         self.default_leverage = leverage
         self.default_margin_type = margin_type
-        self.leverage_sizing = leverage_sizing
         
         self._filters: dict[str, FuturesSymbolFilter] = {}
         self._leverage_cache: dict[str, int] = {}
@@ -164,11 +162,9 @@ class BinanceFuturesBroker:
             )
 
         mode_str = "🧪 DRY-RUN（不會真的下單）" if dry_run else "💰 LIVE（真金白銀！）"
-        sizing_str = "槓桿放大" if leverage_sizing else "保守（不放大）"
         logger.info(
             f"✅ Binance Futures Broker 初始化完成 [{mode_str}]\n"
-            f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}, "
-            f"倉位計算: {sizing_str}"
+            f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}"
         )
 
     # ── 交易對規則 ────────────────────────────────────────
@@ -421,15 +417,10 @@ class BinanceFuturesBroker:
 
     def get_position_pct(self, symbol: str, current_price: float) -> float:
         """
-        獲取持倉佔比例 [-1, 1]
+        獲取持倉佔權益比例 [-1, 1]
 
-        leverage_sizing=False（預設）：
-            pct = 名義價值 / 權益
-            例：$525 notional / $1,500 equity = 35%
-
-        leverage_sizing=True：
-            pct = 名義價值 / (權益 × 槓桿)
-            例：$2,625 notional / ($1,500 × 5) = 35%
+        pct = 名義價值 / 權益
+        例：$525 notional / $1,500 equity = 35%
 
         Returns:
             正數 = 多倉，負數 = 空倉
@@ -443,9 +434,6 @@ class BinanceFuturesBroker:
             return 0.0
 
         notional = pos.qty * current_price
-        if self.leverage_sizing:
-            leverage = self._leverage_cache.get(symbol, self.default_leverage)
-            return notional / (equity * leverage)
         return notional / equity
 
     def get_price(self, symbol: str) -> float:
@@ -1328,11 +1316,8 @@ class BinanceFuturesBroker:
         pos = self.get_position(symbol)
         leverage = self._leverage_cache.get(symbol, self.default_leverage)
 
-        # 計算需要變動的名義價值
-        # leverage_sizing=True: 名義 = diff × equity × leverage（槓桿放大倉位）
-        # leverage_sizing=False: 名義 = diff × equity（保守，槓桿只影響保證金）
-        sizing_mult = leverage if self.leverage_sizing else 1
-        change_notional = abs(diff) * equity * sizing_mult
+        # 名義價值 = diff × equity（槓桿只影響保證金，不影響倉位大小）
+        change_notional = abs(diff) * equity
 
         if target_pct == 0:
             # 目標是空倉 → 全部平倉
@@ -1359,7 +1344,7 @@ class BinanceFuturesBroker:
 
             if close_result:
                 # 平倉成功，開新方向
-                open_notional = abs(target_pct) * equity * sizing_mult
+                open_notional = abs(target_pct) * equity
                 open_qty = open_notional / current_price
                 position_side = new_side
 

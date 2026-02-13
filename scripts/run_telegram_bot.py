@@ -73,12 +73,10 @@ def main():
                 from qtrade.live.binance_futures_broker import BinanceFuturesBroker
                 leverage = cfg.futures.leverage if cfg.futures else 10
                 margin_type = cfg.futures.margin_type if cfg.futures else "ISOLATED"
-                leverage_sizing = cfg.futures.leverage_sizing if cfg.futures else False
                 broker = BinanceFuturesBroker(
                     dry_run=True,  # Bot 只查詢，永遠不下單
                     leverage=leverage,
                     margin_type=margin_type,
-                    leverage_sizing=leverage_sizing,
                 )
             else:
                 from qtrade.live.binance_spot_broker import BinanceSpotBroker
