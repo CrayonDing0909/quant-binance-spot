@@ -382,9 +382,11 @@ class ConsistencyChecker:
         if issues:
             self._add("sltp_formula", False, "FAIL", "SL/TP 方向公式不一致", "\n".join(issues))
         else:
+            sl_str = f"{sl_atr}×ATR" if sl_atr else "無"
+            tp_str = f"{tp_atr}×ATR" if tp_atr else "無（信號出場）"
             details = (
-                f"Long: SL={test_price}-{sl_atr}×ATR, TP={test_price}+{tp_atr}×ATR\n"
-                f"Short: SL={test_price}+{sl_atr}×ATR, TP={test_price}-{tp_atr}×ATR"
+                f"Long: SL=entry-{sl_str}, TP=entry+{tp_str}\n"
+                f"Short: SL=entry+{sl_str}, TP=entry-{tp_str}"
             )
             self._add("sltp_formula", True, "PASS", "SL/TP 方向公式一致", details)
 
@@ -447,11 +449,39 @@ class ConsistencyChecker:
             self.cfg.portfolio.get_weight(s, n_symbols)
             for s in self.cfg.market.symbols
         )
-        if total_weight > 1.01:
-            issues.append(f"總權重 {total_weight:.2f} > 1.0，可能超配！")
+
+        # 判斷超配是否為明確設定（allocation 裡每個幣都有指定值）
+        has_explicit_allocation = (
+            self.cfg.portfolio.allocation is not None
+            and all(
+                s in self.cfg.portfolio.allocation
+                for s in self.cfg.market.symbols
+            )
+        )
+
+        if total_weight > 1.01 and not has_explicit_allocation:
+            issues.append(f"總權重 {total_weight:.2f} > 1.0，可能超配！（未明確設定 allocation）")
+
+        warnings = []
+        if total_weight > 1.01 and has_explicit_allocation:
+            leverage = self.cfg.futures.leverage if self.cfg.futures else 1
+            warnings.append(
+                f"總權重 {total_weight:.2f} > 1.0 — 明確設定的 allocation 超配 "
+                f"({total_weight:.0%} 曝險)，"
+                f"槓桿 {leverage}x 下保證金需 {total_weight / leverage:.0%}"
+            )
 
         if issues:
             self._add("position_sizing", False, "FAIL", "倉位計算異常", "\n".join(issues))
+        elif warnings:
+            notes.extend(warnings)
+            self._add(
+                "position_sizing",
+                True,
+                "WARN",
+                f"明確超配: 總曝險 {total_weight:.0%}（已確認為 allocation 設定）",
+                "\n".join(notes),
+            )
         else:
             self._add(
                 "position_sizing",
@@ -507,6 +537,18 @@ class ConsistencyChecker:
                 True,
                 "PASS",
                 f"fee={fee_bps}bps 在合理範圍 [{binance_maker}-{binance_taker*2}bps]",
+            )
+
+        # 滑點模型補充資訊
+        sm = self.cfg.backtest.slippage_model
+        if sm.enabled:
+            self._add(
+                "slippage_model",
+                True,
+                "PASS",
+                f"Volume-based 滑點已啟用 (base={sm.base_bps}bps, k={sm.impact_coefficient}, power={sm.impact_power})",
+                f"取代固定 slippage_bps={self.cfg.backtest.slippage_bps}bps\n"
+                f"ADV lookback={sm.adv_lookback} bars, participation_rate={sm.participation_rate:.0%}",
             )
 
     # ── 11. Date Filter ────────────────────────────────────
@@ -590,7 +632,7 @@ class ConsistencyChecker:
     # ── 13. Funding Rate Warning ───────────────────────────
 
     def check_funding_rate_warning(self):
-        """資金費率未建模提醒"""
+        """資金費率建模檢查"""
         if self.cfg.market_type_str != "futures":
             self._add(
                 "funding_rate_warning",
@@ -601,15 +643,30 @@ class ConsistencyChecker:
             return
 
         leverage = self.cfg.futures.leverage if self.cfg.futures else 1
-        self._add(
-            "funding_rate_warning",
-            True,
-            "WARN",
-            f"Futures {leverage}x — 回測不計入 funding rate (年化 ~10-15% 拖累)",
-            "永續合約每 8h 收取資金費率 (~0.01%)。\n"
-            "本策略持倉短 (8-24h)，影響 ≈ 3-5%/年。\n"
-            "長期實盤回報會低於回測。",
-        )
+        fr_cfg = self.cfg.backtest.funding_rate
+
+        if fr_cfg.enabled:
+            source = "歷史資料" if fr_cfg.use_historical else f"固定 {fr_cfg.default_rate_8h:.4%}/8h"
+            self._add(
+                "funding_rate_warning",
+                True,
+                "PASS",
+                f"Futures {leverage}x — 回測已啟用 funding rate 模型 ({source})",
+                f"funding_rate.enabled=true, default_rate_8h={fr_cfg.default_rate_8h}\n"
+                f"use_historical={fr_cfg.use_historical}\n"
+                f"回測已扣除 funding rate 成本，與實盤一致。",
+            )
+        else:
+            self._add(
+                "funding_rate_warning",
+                True,
+                "WARN",
+                f"Futures {leverage}x — 回測未啟用 funding rate (年化 ~10-15% 拖累)",
+                "永續合約每 8h 收取資金費率 (~0.01%)。\n"
+                "本策略持倉短 (8-24h)，影響 ≈ 3-5%/年。\n"
+                "長期實盤回報會低於回測。\n"
+                "建議在 backtest.funding_rate.enabled 設為 true。",
+            )
 
     # ── Run All ────────────────────────────────────────────
 
