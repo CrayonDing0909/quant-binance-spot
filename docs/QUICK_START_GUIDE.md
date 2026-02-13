@@ -16,10 +16,11 @@
 8. [第七步：即時交易](#第七步即時交易)（含 Telegram Bot、雲端部署）
 9. [第八步：監控與維運](#第八步監控與維運)
 10. [合約交易教學](#合約交易教學)（含 SL/TP 去重、倉位分配、API 降級）
-11. [多數據源與長期歷史數據](#多數據源與長期歷史數據)
-12. [組合回測](#組合回測)
-13. [RSI Exit 策略配置](#rsi-exit-策略配置) ⭐ NEW（經驗證的最佳配置）
-14. [完整範例：RSI 策略](#完整範例rsi策略)
+11. [增量 K 線快取](#增量-k-線快取) ⭐ v2.8（解決實盤 vs 回測數據不一致）
+12. [多數據源與長期歷史數據](#多數據源與長期歷史數據)
+13. [組合回測](#組合回測)
+14. [RSI Exit 策略配置](#rsi-exit-策略配置) ⭐ NEW（經驗證的最佳配置）
+15. [完整範例：RSI 策略](#完整範例rsi策略)
 
 ---
 
@@ -126,13 +127,15 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - **SL/TP 自動補掛**（reconciliation）⭐ NEW
    - **SL/TP 觸發冷卻機制**（cooldown）⭐ NEW
    - **多幣種倉位分配** + 防震盪機制 ⭐ NEW
+   - **增量 K 線快取**（解決實盤 vs 回測數據不一致）⭐ v2.8
+   - **方向切換確認機制**（可選 2-tick 確認）⭐ v2.8
    - **支援現貨 🟢 和合約 🔴** ⭐ NEW
 
 8. **Telegram Bot 互動** ⭐ NEW
    - **命令選單提示**（輸入 `/` 直接選）⭐ NEW
    - 帳戶狀態、持倉、交易記錄查詢
    - **SL/TP 摘要 + 預估盈虧**（`/status`）⭐ NEW
-   - 即時信號生成（`/signals`）
+   - 即時信號生成（`/signals`）+ **信號快取**（與 cron 信號一致）⭐ v2.8
    - 今日盈虧明細（`/pnl`）⭐ NEW
    - 交易統計（`/stats`）⭐ NEW
 
@@ -998,7 +1001,7 @@ python scripts/run_telegram_bot.py
 | `/positions` | 當前持倉詳細資訊（含 SL/TP 價格與預估盈虧）| ✅ |
 | `/trades` | 最近 10 筆成交記錄 | ✅ |
 | `/pnl` | 今日盈虧（已實現 + 資金費率 + 手續費）| ✅ |
-| `/signals` | 即時生成交易信號（需要 LiveRunner）| ✅ |
+| `/signals` | 交易信號（優先讀 cron 快照，確保一致）| ✅ |
 | `/stats` | 交易統計（勝率、累積 PnL）| ✅ |
 
 #### 指令輸出範例
@@ -1083,6 +1086,7 @@ crontab -e
 - `--once`：執行一次後立即退出，**cron 必須加這個參數**
 - 不加 `--once` 會進入 daemon 模式，持續等待下一根 K 線
 - 設在 `:05` 而非 `:00`：讓 K 線數據穩定，避免假信號
+- **v2.8**：如果 `live.kline_cache: true`，cron 自動使用增量快取（首次會建立種子，後續只拉增量）
 
 ### 7.5 部署到雲端伺服器（Oracle Cloud）⭐ NEW
 
@@ -1149,6 +1153,8 @@ tail -f logs/telegram_bot.log
 ```
 
 > 💡 **小技巧**：cron 交易不需要重啟，`git pull` 後下一輪 cron 自動用新代碼。只有 Telegram Bot 常駐服務需要手動重啟。
+
+> ⚠️ **v2.8 注意**：K 線快取（`kline_cache/`）會在 `git pull` 後保留。如果你改了策略邏輯，建議刪除快取讓它重新建立：`rm -rf reports/futures/*/live/kline_cache/`
 
 #### 7.5.3 查看 Log
 
@@ -1257,6 +1263,9 @@ crontab -e
 # 背景啟動（SSH 斷線也不會停）
 cd ~/quant-binance-spot && source .venv/bin/activate
 nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
+
+# 確認啟動成功（應看到「增量 K 線快取已啟用」和「已註冊 X 個命令」）
+sleep 3 && tail -5 logs/telegram_bot.log
 ```
 
 **⚠️ 常見錯誤**：
@@ -1264,6 +1273,7 @@ nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --re
 - ❌ cron 設在 `:00` 整點，K 線數據可能還不穩定
 - ❌ cron 忘記 `source .venv/bin/activate`，找不到 Python 套件
 - ❌ `git pull` 後忘記重啟 Telegram Bot（cron 會自動用新代碼，但 Bot 不會）
+- ❌ 改了策略邏輯後沒刪 K 線快取（舊快取的歷史數據可能與新邏輯不匹配）
 
 ---
 
@@ -1319,6 +1329,11 @@ backtest:
 risk:
   max_drawdown_pct: 0.15  # 15% 熔斷
 
+# 實盤專屬配置 (v2.8)
+live:
+  kline_cache: true           # 增量 K 線快取（策略從 bar 0 跑到最新，與回測一致）
+  flip_confirmation: false    # 方向切換 2-tick 確認（快取模式下不需要）
+
 # Telegram 通知（可與現貨使用不同 Bot）
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
@@ -1329,6 +1344,8 @@ notification:
 output:
   report_dir: "./reports"   # 路徑會自動組合為 reports/futures/rsi_adx_atr/...
 ```
+
+> 💡 **`live` 區段是 v2.8 新增的**。詳見 [§11 增量 K 線快取](#增量-k-線快取)。
 
 ### 10.2 策略做空信號
 
@@ -1695,6 +1712,139 @@ portfolio:
 ```
 
 > 💡 **80% 門檻**：倉位已達目標的 80% 以上 → 不動。低於 80% → 加倉到目標。這避免了每小時因為 PnL 微調而不斷加減倉。
+
+---
+
+## 增量 K 線快取 ⭐ v2.8
+
+### 問題：回測 vs 實盤的數據差異
+
+| | 回測 | 實盤（舊版） |
+|---|------|-------------|
+| 數據 | 完整歷史，從第 1 bar 到最後 | 每次只看最近 300 bar |
+| 策略行為 | 狀態機從 bar 0 開始走 | 每次從 bar N-300 重新開始 |
+| 穩定性 | 確定性結果 | 窗口偏移 1 bar 就可能導致信號翻轉 |
+
+**為什麼會不一致？**
+
+策略（如 RSI + ADX）本質是「狀態機」：每一根 K 線的計算依賴前面所有 bar 的歷史。
+回測從 bar 0 跑到最後，結果是確定的。
+但實盤每次只拉最近 300 bar，**窗口起點每小時偏移 1 bar**，就像讓狀態機從不同的初始狀態開始走——即使只差 1 bar，後續 RSI/ADX 的值可能走向完全不同的路徑。
+
+```
+回測:   [bar 0] [bar 1] [bar 2] ... [bar 8000] → 信號 SHORT
+實盤 T: [bar 7700] ... [bar 8000] → 信號 SHORT ✅
+實盤 T+1: [bar 7701] ... [bar 8001] → 信號 LONG ❌ ← 起點偏移 1 bar！
+```
+
+### 解決方案：增量 K 線快取
+
+**原理**：首次啟動拉取 300 根種子 K 線，後續每次 cron 只拉「新的 K 線」並 append 到快取。策略始終從 bar 0 跑到最新 bar，與回測行為一致。
+
+```
+首次 cron：
+  拉取 300 bar 種子 → 存入 kline_cache/BTCUSDT.parquet
+  策略跑 [bar 0 ~ bar 300] → 信號 SHORT
+
+第 2 次 cron：
+  增量拉 +1 bar → append 到 parquet
+  策略跑 [bar 0 ~ bar 301] → 信號 SHORT ✅ 穩定
+
+第 1000 次 cron：
+  快取已有 1300 bar
+  策略跑 [bar 0 ~ bar 1300] → 與回測行為一致 ✅
+```
+
+### 11.1 配置方式
+
+在 YAML 中新增 `live` 區段：
+
+```yaml
+# 實盤專屬配置
+live:
+  kline_cache: true           # 啟用增量 K 線快取（推薦）
+  flip_confirmation: false    # 方向切換 2-tick 確認（快取模式下不需要）
+```
+
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| `kline_cache` | `true` | 啟用增量快取，策略從 bar 0 跑到最新 bar |
+| `flip_confirmation` | `false` | 方向翻轉需連續 2 次 cron 確認才執行 |
+
+**建議組合**：
+
+| 情境 | `kline_cache` | `flip_confirmation` | 說明 |
+|------|:---:|:---:|------|
+| 正式環境（推薦）| `true` | `false` | 快取解決根本問題，不需額外確認 |
+| 快取 + 保守 | `true` | `true` | 雙重保險，但會延遲 1 tick 才翻轉 |
+| 舊版相容 | `false` | `true` | 滑動窗口 + 確認機制防止頻繁翻轉 |
+| 不建議 | `false` | `false` | 容易因數據偏移導致頻繁翻轉 |
+
+### 11.2 快取儲存
+
+快取檔案位於 `reports/{market_type}/{strategy}/live/kline_cache/`：
+
+```
+reports/futures/rsi_adx_atr/live/
+├── kline_cache/
+│   ├── BTCUSDT.parquet    # BTC K 線快取
+│   └── ETHUSDT.parquet    # ETH K 線快取
+├── last_signals.json      # 信號快照（供 Telegram Bot 讀取）
+├── signal_state.json      # 信號方向狀態（供翻轉確認用）
+└── algo_orders_cache.json # SL/TP 掛單快取
+```
+
+**空間佔用**：
+- 1h K 線 × 1 年 ≈ 8,760 bar × ~50 bytes ≈ **430 KB**（可忽略）
+- 快取只增不減，不會被截斷
+
+### 11.3 工作流程
+
+```
+[首次 cron]
+  IncrementalKlineCache.get_klines("BTCUSDT")
+  → 拉取 300 根種子 K 線
+  → 存入 kline_cache/BTCUSDT.parquet
+  → 傳給 generate_signal()
+
+[後續每次 cron]
+  IncrementalKlineCache.get_klines("BTCUSDT")
+  → 載入 parquet (記憶體快取加速)
+  → 只拉最後一根之後的新 K 線 (增量)
+  → append + 去重 + 丟棄未收盤
+  → 存回 parquet
+  → 傳給 generate_signal()
+
+[Telegram /signals 命令]
+  → 優先讀取 last_signals.json（與 cron 信號一致）
+  → 若無快照，fallback 到即時生成（也使用快取數據）
+```
+
+### 11.4 方向切換確認（Flip Confirmation）
+
+當 `flip_confirmation: true` 時，方向翻轉（如 SHORT → LONG）需要連續 2 次 cron 確認：
+
+```
+T=0: 信號 SHORT → 正常執行
+T=1: 信號 LONG  → ⏸️ 第 1 次翻轉，暫不執行，等下一 tick 確認
+T=2: 信號 LONG  → ✅ 連續 2 次 LONG，確認翻轉，執行買入
+```
+
+```
+T=0: 信號 SHORT → 正常執行
+T=1: 信號 LONG  → ⏸️ 第 1 次翻轉
+T=2: 信號 SHORT → ❌ 翻回來了，取消翻轉，維持 SHORT
+```
+
+> 💡 **什麼時候需要？** 如果你沒有啟用 `kline_cache`（滑動窗口模式），建議開啟 `flip_confirmation` 來避免數據微小差異導致的頻繁多空翻轉。如果已啟用快取，通常不需要。
+
+### 11.5 注意事項
+
+1. **首次 cron 稍慢**：需要拉取 300 根種子 K 線，之後每次只拉增量（通常 1 根）
+2. **快取損壞**：如果 parquet 檔損壞，系統會自動重新初始化（等同首次啟動）
+3. **刪除快取**：如果你想讓策略「從零開始」，刪除 `kline_cache/` 目錄即可
+4. **不影響 cron 設定**：`run_live.py --real --once` 會自動偵測 `live.kline_cache` 設定
+5. **Telegram Bot 共享快取**：Bot 的 `/signals` fallback 會使用同一份快取數據
 
 ---
 
@@ -2085,11 +2235,15 @@ python scripts/run_live.py -c config/base.yaml --status
 1. Look-ahead bias（使用了未來資訊）
 2. 資料對齊問題
 3. 實作錯誤
+4. **滑動窗口數據差異**（v2.8 前最常見的原因）→ 見 [Q10](#q10-實盤信號跟回測不一致頻繁翻轉-v28)
 
 **解決方法**：
 ```bash
 # 執行一致性驗證找出問題
 python scripts/validate.py -c config/rsi_adx_atr.yaml --only consistency
+
+# v2.8: 確認增量快取已啟用
+grep "kline_cache" config/futures_rsi_adx_atr.yaml
 ```
 
 ### Q6: Kelly 建議不使用怎麼辦？ ⭐ NEW
@@ -2154,7 +2308,31 @@ portfolio:
     ETHUSDT: 1.00
 ```
 
-### Q10: ETH 的 SL 掛不上但 BTC 可以？ ⭐ NEW
+### Q10: 實盤信號跟回測不一致（頻繁翻轉）？ ⭐ v2.8
+
+**原因**：策略是「狀態機」，計算結果依賴起始 bar。回測用完整歷史，實盤舊版每次只拉最近 300 bar（滑動窗口），窗口偏移 1 bar 就可能讓信號翻轉。
+
+**解決方法**：啟用增量 K 線快取（v2.8 預設開啟）：
+
+```yaml
+live:
+  kline_cache: true         # 快取數據，策略從 bar 0 跑到最新 bar
+  flip_confirmation: false  # 數據穩定後不需要確認
+```
+
+詳見 [§11 增量 K 線快取](#增量-k-線快取)。
+
+### Q11: `/signals` 和 cron 信號不一致？ ⭐ v2.8
+
+**原因**：舊版 `/signals` 命令會獨立拉取 300 bar 數據即時計算，與 cron 拉取的數據可能有微小差異（偏移 1 bar），導致信號不同。
+
+**修復後的機制**：
+1. cron 每次執行後，會將信號快照保存到 `last_signals.json`
+2. `/signals` 命令優先讀取這個快照，**保證與 cron 信號完全一致**
+3. 快照顯示格式為「⏱ X 分鐘前」，表示是快取的
+4. 若快照不存在或超過 2 小時，才 fallback 到即時生成（也會使用增量快取數據）
+
+### Q12: ETH 的 SL 掛不上但 BTC 可以？ ⭐ NEW
 
 **原因**：Binance 對不同交易對的條件單 API 支援不同。部分帳戶的 ETHUSDT 標準 API 會回傳 `-4120` 錯誤。
 
@@ -2192,7 +2370,7 @@ portfolio:
 8. ✅ **Paper Trading**：模擬交易觀察
 9. ✅ **一致性驗證**：確保 Live/Backtest 一致
 10. ✅ **Pre-Deploy 檢查**：`validate_live_consistency.py` 全過再上線
-11. ✅ **實盤**：如果一切順利
+11. ✅ **實盤**：如果一切順利（`live.kline_cache: true` 確保數據一致）
 12. ✅ **監控**：健康檢查和日報
 
 記住：**量化交易不是一夜暴富，而是持續改進的過程**。
