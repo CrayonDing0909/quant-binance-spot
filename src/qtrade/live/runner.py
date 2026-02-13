@@ -454,6 +454,23 @@ class LiveRunner:
                 except Exception as e:
                     logger.debug(f"  {symbol}: SL/TP 冷卻檢查失敗: {e}（繼續正常流程）")
 
+            # === 防止權益波動導致的不必要重平衡 ===
+            # 多幣種同時持倉時，一幣的 PnL 波動會改變 equity，
+            # 導致另一幣的 current_pct 漂移（如 -100% → -103%），觸發不必要的微調。
+            # 修正：只要持倉方向與信號方向一致（都做多或都做空），就不重平衡。
+            # 只有方向改變（空→平、空→多）或新開倉（平→空）才執行。
+            if target_pct != 0 and current_pct != 0:
+                same_direction = (
+                    (target_pct > 0 and current_pct > 0) or
+                    (target_pct < 0 and current_pct < 0)
+                )
+                if same_direction:
+                    diff = 0  # 強制跳過交易
+                    logger.debug(
+                        f"  {symbol}: 方向一致 ({current_pct:+.1%} → {target_pct:+.1%})，"
+                        f"跳過重平衡"
+                    )
+
             if diff >= 0.02:
                 ps_method = self.cfg.position_sizing.method
                 reason = f"signal={raw_signal:.0%}×{weight:.0%}"
