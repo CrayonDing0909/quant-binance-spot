@@ -35,7 +35,7 @@ strategy:
     
     # ATR 止損止盈
     stop_loss_atr: 1.5     # 止損 = 1.5 ATR
-    take_profit_atr: 4.0   # 止盈 = 4.0 ATR
+    take_profit_atr: null   # null = 不設固定止盈，靠 RSI 信號出場（回測最優）
     atr_period: 14
     
     # 冷卻期
