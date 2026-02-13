@@ -1462,16 +1462,19 @@ class BinanceFuturesBroker:
             logger.debug(f"🧪 [DRY-RUN] 取消{label}單 {symbol} [{position_side or 'ALL'}]")
             return True
 
+        canceled_ids: set[str] = set()
         try:
             # 1) Regular orders（標準條件單主要來源）
             for order in self.get_open_orders(symbol):
                 if order.get("type") in target_types:
                     if position_side and order.get("positionSide") != position_side:
                         continue
-                    self.cancel_order(symbol, str(order["orderId"]))
+                    oid = str(order["orderId"])
+                    self.cancel_order(symbol, oid)
+                    canceled_ids.add(oid)
                     logger.info(
                         f"🗑️  {label}單已取消 {symbol} [{order.get('positionSide')}] "
-                        f"orderId={order['orderId']}"
+                        f"orderId={oid}"
                     )
             # 2) Algo orders（可選，部分帳戶無此 API）
             for order in self.get_open_algo_orders(symbol):
@@ -1479,21 +1482,76 @@ class BinanceFuturesBroker:
                     if position_side and order.get("positionSide") != position_side:
                         continue
                     oid = order.get("orderId") or order.get("algoId") or order.get("algoOrderId")
-                    if oid:
+                    if oid and str(oid) not in canceled_ids:
                         self.cancel_algo_order(oid)
+                        canceled_ids.add(str(oid))
                         logger.info(
                             f"🗑️  {label}單已取消 (algo) {symbol} [{order.get('positionSide')}] "
                             f"algoId={oid}"
                         )
-            # 3) 清理本地 algo 快取（含磁碟持久化）
+            # 3) 從本地 algo 快取嘗試取消（防止 algo query 404 漏掉）+ 清理快取
             for kind in ("STOP", "TAKE_PROFIT"):
                 if kind in target_types:
+                    cache_key = f"{symbol}_{kind}"
+                    cached = self._algo_order_cache.get(cache_key)
+                    if cached:
+                        cached_id = str(cached.get("orderId", ""))
+                        if cached_id and cached_id not in canceled_ids:
+                            try:
+                                self.cancel_algo_order(cached_id)
+                                canceled_ids.add(cached_id)
+                                logger.info(
+                                    f"🗑️  {label}單已取消 (快取) {symbol} orderId={cached_id}"
+                                )
+                            except Exception:
+                                pass  # 可能已被取消，忽略
                     self._remove_algo_cache(symbol, kind)
                     logger.debug(f"  清理 algo 快取: {symbol}_{kind}")
             return True
         except Exception as e:
             logger.warning(f"⚠️  取消{label}單失敗 {symbol}: {e}")
             return False
+
+    def cancel_all_open_orders(self, symbol: str) -> bool:
+        """
+        取消該交易對的所有未成交訂單（核彈級清理）。
+
+        方向切換時使用，確保不殘留任何舊方向的 SL/TP 掛單。
+        同時清理 algo orders 和本地快取。
+        """
+        if self.dry_run:
+            logger.debug(f"🧪 [DRY-RUN] 取消所有訂單 {symbol}")
+            return True
+        success = True
+        # 1) 標準 API：一次取消所有 regular orders
+        try:
+            self.http.signed_delete("/fapi/v1/allOpenOrders", {"symbol": symbol})
+            logger.info(f"🗑️  已取消 {symbol} 所有 regular 掛單")
+        except Exception as e:
+            logger.warning(f"⚠️  取消所有 regular 訂單失敗 {symbol}: {e}")
+            success = False
+        # 2) Algo orders：逐一取消
+        try:
+            for order in self.get_open_algo_orders(symbol):
+                oid = order.get("orderId") or order.get("algoId") or order.get("algoOrderId")
+                if oid:
+                    self.cancel_algo_order(oid)
+        except Exception as e:
+            logger.warning(f"⚠️  取消 algo 訂單失敗 {symbol}: {e}")
+            success = False
+        # 3) 從本地快取嘗試取消 + 清理
+        for kind in ("STOP", "TAKE_PROFIT"):
+            cache_key = f"{symbol}_{kind}"
+            cached = self._algo_order_cache.get(cache_key)
+            if cached:
+                cached_id = str(cached.get("orderId", ""))
+                if cached_id:
+                    try:
+                        self.cancel_algo_order(cached_id)
+                    except Exception:
+                        pass
+            self._remove_algo_cache(symbol, kind)
+        return success
 
     def cancel_take_profit(self, symbol: str, position_side: str | None = None) -> bool:
         """取消該交易對的止盈單（regular + algo orders）"""
@@ -1592,8 +1650,8 @@ class BinanceFuturesBroker:
             new_side = "LONG" if target_pct > 0 else "SHORT"
             logger.info(f"🔄 {symbol}: 方向切換 {old_side} → {new_side}")
 
-            self.cancel_stop_loss(symbol)
-            self.cancel_take_profit(symbol)
+            # 核彈級清理：取消所有掛單（防止殘留舊方向 SL/TP）
+            self.cancel_all_open_orders(symbol)
             close_result = self.market_close(symbol, reason=f"{reason}_close_{old_side.lower()}")
 
             if close_result:

@@ -102,6 +102,9 @@ class LiveRunner:
         # 倉位計算器
         self.position_sizer: Optional[PositionSizer] = None
         self._init_position_sizer()
+        
+        # v2.7: 信號狀態持久化（防止滑動窗口導致的方向翻轉）
+        self._signal_state_path = cfg.get_report_dir("live") / "signal_state.json"
 
     def _init_position_sizer(self) -> None:
         """
@@ -346,6 +349,37 @@ class LiveRunner:
 
         return False
 
+    # ── 信號狀態持久化（防止滑動窗口翻轉）──────────────
+
+    def _load_signal_state(self) -> dict[str, float]:
+        """
+        載入上一次 cron 的信號方向。
+
+        Returns:
+            {symbol: signal_value}，例如 {"BTCUSDT": -1.0, "ETHUSDT": -1.0}
+        """
+        try:
+            if self._signal_state_path.exists():
+                with open(self._signal_state_path) as f:
+                    data = json.load(f)
+                return data.get("signals", {})
+        except Exception as e:
+            logger.debug(f"  載入信號狀態失敗: {e}")
+        return {}
+
+    def _save_signal_state(self, signal_map: dict[str, float]) -> None:
+        """保存本次 cron 的信號方向到磁碟"""
+        try:
+            self._signal_state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "signals": signal_map,
+            }
+            with open(self._signal_state_path, "w") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            logger.debug(f"  保存信號狀態失敗: {e}")
+
     def run_once(self) -> list[dict]:
         """
         執行一次信號檢查 + 下單
@@ -365,6 +399,10 @@ class LiveRunner:
         # 更新狀態管理器
         if self.state_manager:
             self.state_manager.increment_tick()
+
+        # v2.7: 載入上一次信號方向（用於方向切換確認）
+        prev_signal_state = self._load_signal_state()
+        new_signal_state: dict[str, float] = {}
 
         for symbol in self.symbols:
             params = self.cfg.strategy.get_params(symbol)
@@ -481,6 +519,50 @@ class LiveRunner:
                             f"需要加倉"
                         )
 
+            # v2.7: 方向切換 2-tick 確認機制
+            # 策略的狀態機從 300 bar 窗口從頭跑，窗口偏移 1 bar 就可能翻轉信號。
+            # 防護：方向切換需連續 2 次 cron 產生相同方向才執行。
+            # 例外：從空倉（|current_pct| < 1%）進場不需確認。
+            is_direction_flip = (
+                (target_pct > 0.01 and current_pct < -0.01) or   # SHORT → LONG
+                (target_pct < -0.01 and current_pct > 0.01)      # LONG → SHORT
+            )
+            # 始終記錄本次原始信號（用於下一次確認判斷）
+            new_signal_state[symbol] = sig["signal"]
+
+            if is_direction_flip:
+                prev_signal = prev_signal_state.get(symbol)
+                if prev_signal is None:
+                    # 首次運行 / 無狀態檔 → 直接執行（不阻擋首筆交易）
+                    logger.info(
+                        f"  {symbol}: 方向切換 (首次啟動，無前次信號) → 直接執行"
+                    )
+                else:
+                    new_dir = 1 if target_pct > 0 else -1
+                    prev_dir = 1 if prev_signal > 0 else (-1 if prev_signal < 0 else 0)
+
+                    if prev_dir == new_dir:
+                        # 前次信號也是同方向 → 已確認，執行
+                        logger.info(
+                            f"✅ {symbol}: 方向切換已確認 "
+                            f"(前次={prev_signal:+.0%}, 本次={raw_signal:+.0%})"
+                        )
+                    else:
+                        # 第一次出現新方向 → 保存但不執行
+                        logger.warning(
+                            f"⚠️  {symbol}: 方向切換待確認 "
+                            f"(持倉={current_pct:+.0%} → 信號={raw_signal:+.0%}, "
+                            f"前次信號={prev_signal:+.0%})"
+                            f" — 保持原方向，下次確認後執行"
+                        )
+                        # 覆寫 target_pct 為維持原方向
+                        if current_pct < 0:
+                            target_pct = -1.0 * weight
+                        else:
+                            target_pct = 1.0 * weight
+                        diff = abs(target_pct - current_pct)
+                        # diff 通常 ≈ 0（方向一致且接近滿倉），不會觸發交易
+
             if diff >= 0.02:
                 ps_method = self.cfg.position_sizing.method
                 reason = f"signal={raw_signal:.0%}×{weight:.0%}"
@@ -573,9 +655,17 @@ class LiveRunner:
                 # 清理殘留的 algo cache（SL/TP 被觸發後，cache 可能殘留）
                 self.broker._remove_algo_cache(symbol)
 
+            # v2.7: 重新讀取交易後的實際持倉（方向切換後 current_pct 可能已過時）
+            actual_pct = current_pct
+            if not isinstance(self.broker, PaperBroker) and hasattr(self.broker, "get_position_pct"):
+                try:
+                    actual_pct = self.broker.get_position_pct(symbol, price)
+                except Exception:
+                    pass  # 查詢失敗時用 pre-trade 值
+
             if (
-                abs(current_pct) > 0.01                          # 有持倉
-                and not isinstance(self.broker, PaperBroker)     # 只對 Real broker
+                abs(actual_pct) > 0.01                            # 有持倉
+                and not isinstance(self.broker, PaperBroker)      # 只對 Real broker
                 and hasattr(self.broker, "place_stop_loss")
                 and hasattr(self.broker, "get_open_orders")
             ):
@@ -593,10 +683,41 @@ class LiveRunner:
                         has_sl = any(o.get("type") in {"STOP_MARKET", "STOP"} for o in cond_orders)
                         has_tp = any(o.get("type") in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"} for o in cond_orders)
 
-                        position_side = "LONG" if current_pct > 0 else "SHORT"
+                        position_side = "LONG" if actual_pct > 0 else "SHORT"
+
+                        # v2.7: 檢查殘留的方向錯誤 TP（翻倉後舊 TP 未取消）
+                        # 例：LONG 持倉卻有 TP < entry → 觸發會虧損 → 必須取消
+                        if has_tp and hasattr(self.broker, "get_position"):
+                            pos_check = self.broker.get_position(symbol)
+                            if pos_check and pos_check.entry_price > 0:
+                                is_long = pos_check.qty > 0
+                                for o in cond_orders:
+                                    otype = o.get("type", "")
+                                    if otype not in {"TAKE_PROFIT_MARKET", "TAKE_PROFIT"}:
+                                        continue
+                                    trigger = float(
+                                        o.get("stopPrice", 0) or o.get("triggerPrice", 0) or 0
+                                    )
+                                    if trigger <= 0:
+                                        continue
+                                    wrong_dir = (
+                                        (is_long and trigger < pos_check.entry_price * 0.99) or
+                                        (not is_long and trigger > pos_check.entry_price * 1.01)
+                                    )
+                                    if wrong_dir:
+                                        logger.warning(
+                                            f"🚨 {symbol}: 發現方向錯誤的 TP "
+                                            f"${trigger:,.2f} "
+                                            f"({'LONG' if is_long else 'SHORT'} 倉 "
+                                            f"entry=${pos_check.entry_price:,.2f}) "
+                                            f"— 自動取消"
+                                        )
+                                        self.broker.cancel_take_profit(symbol)
+                                        has_tp = False
+                                        break
 
                         if not has_sl and stop_loss_atr:
-                            if current_pct > 0:
+                            if actual_pct > 0:
                                 sl_price = price - float(stop_loss_atr) * float(atr_value)
                             else:
                                 sl_price = price + float(stop_loss_atr) * float(atr_value)
@@ -607,7 +728,7 @@ class LiveRunner:
                             )
 
                         if not has_tp and take_profit_atr:
-                            if current_pct > 0:
+                            if actual_pct > 0:
                                 tp_price = price + float(take_profit_atr) * float(atr_value)
                             else:
                                 tp_price = price - float(take_profit_atr) * float(atr_value)
@@ -617,7 +738,7 @@ class LiveRunner:
                                 position_side=position_side, reason="ensure_take_profit",
                             )
 
-                        if has_sl and has_tp:
+                        if has_sl and (has_tp or not take_profit_atr):
                             logger.debug(f"  {symbol}: SL/TP 掛單正常 ✓")
                     except Exception as e:
                         logger.warning(f"⚠️  {symbol}: SL/TP 補掛檢查失敗: {e}")
@@ -679,6 +800,9 @@ class LiveRunner:
         
         # 保存信號快照（供 /signals 指令讀取，確保一致性）
         self._save_last_signals(signals)
+
+        # v2.7: 保存信號方向（供下一次 cron 方向切換確認）
+        self._save_signal_state(new_signal_state)
 
         # 每次 tick 都更新狀態檔時間戳（即使沒交易），讓健康檢查能偵測 cron 存活
         if isinstance(self.broker, PaperBroker):
