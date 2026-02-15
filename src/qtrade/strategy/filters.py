@@ -376,3 +376,75 @@ def htf_trend_filter(
             position_state = 0
 
     return pd.Series(result, index=raw_pos.index)
+
+
+def funding_rate_filter(
+    df: pd.DataFrame,
+    raw_pos: pd.Series,
+    funding_rates: pd.Series | None,
+    max_positive_rate: float = 0.0002,  # 0.02%
+    max_negative_rate: float = -0.0002, # -0.02%
+) -> pd.Series:
+    """
+    Funding Rate 過濾器（擁擠交易過濾）
+
+    邏輯：
+    - Funding Rate > max_positive (0.02%) → 市場過熱 (Longs paying Shorts) → 禁止做多
+    - Funding Rate < max_negative (-0.02%) → 市場過冷 (Shorts paying Longs) → 禁止做空
+    - 如果 funding_rates 為 None，不過濾
+
+    Args:
+        df: K線數據
+        raw_pos: 原始持倉信號
+        funding_rates: Funding Rate 序列 (需與 df 對齊)
+        max_positive_rate: 正費率閾值
+        max_negative_rate: 負費率閾值
+    """
+    if funding_rates is None or funding_rates.empty:
+        return raw_pos
+
+    raw = raw_pos.values.copy()
+    
+    # 確保 funding_rates 與 raw_pos 對齊
+    if len(funding_rates) != len(raw):
+        # 嘗試重新對齊
+        fr = funding_rates.reindex(raw_pos.index, method='ffill').fillna(0.0).values
+    else:
+        fr = funding_rates.values
+        
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0
+
+    for i in range(len(raw)):
+        # Check current funding rate
+        curr_fr = fr[i]
+        
+        # Is extreme?
+        is_extreme_pos = not np.isnan(curr_fr) and curr_fr > max_positive_rate
+        is_extreme_neg = not np.isnan(curr_fr) and curr_fr < max_negative_rate
+
+        if raw[i] > 0:  # Long Signal
+            if position_state == 1:
+                # 保持持倉
+                result[i] = raw[i]
+            elif not is_extreme_pos: # Allow only if NOT extreme positive
+                result[i] = raw[i]
+                position_state = 1
+            else:
+                # 市場過熱，禁止做多
+                result[i] = 0.0
+        elif raw[i] < 0: # Short Signal
+            if position_state == -1:
+                # 保持持倉
+                result[i] = raw[i]
+            elif not is_extreme_neg: # Allow only if NOT extreme negative
+                result[i] = raw[i]
+                position_state = -1
+            else:
+                # 市場過冷，禁止做空
+                result[i] = 0.0
+        else:
+            result[i] = 0.0
+            position_state = 0
+            
+    return pd.Series(result, index=raw_pos.index)

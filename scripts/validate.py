@@ -894,7 +894,9 @@ def main():
     
     # 準備數據路徑
     symbols = cfg.market.symbols
-    data_dir = cfg.data_dir / "binance" / "spot" / cfg.market.interval
+    # 根據 market_type 決定數據路徑
+    market_type = cfg.market_type_str  # "spot" or "futures"
+    data_dir = cfg.data_dir / "binance" / market_type / cfg.market.interval
     data_paths = {}
     
     for symbol in symbols:

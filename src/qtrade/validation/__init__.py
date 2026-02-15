@@ -38,6 +38,7 @@ from __future__ import annotations
 # Walk-Forward Analysis
 from .walk_forward import (
     walk_forward_analysis,
+    walk_forward_summary,
     parameter_sensitivity_analysis,
     detect_overfitting,
 )
@@ -97,6 +98,7 @@ from .consistency_checker import (
 __all__ = [
     # Walk-Forward
     "walk_forward_analysis",
+    "walk_forward_summary",
     "parameter_sensitivity_analysis",
     "detect_overfitting",
     # Cross-Asset - Config

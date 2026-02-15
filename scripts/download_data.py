@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import pandas as pd
 from qtrade.config import load_config
 from qtrade.data.klines import fetch_klines
 from qtrade.data.storage import save_klines, load_klines, get_local_data_range, merge_klines
@@ -483,8 +484,24 @@ def main() -> None:
             try:
                 existing = load_funding_rates(fr_path)
                 if existing is not None and not args.full:
-                    print(f"  {sym} Funding rate 已有 {len(existing)} 筆")
-                    # TODO: 增量更新
+                    last_date = existing.index[-1].strftime("%Y-%m-%d")
+                    print(f"  📥 {sym} Funding rate 增量更新: {last_date} → {end_date or '現在'}")
+                    
+                    # 增量下載
+                    new_df = download_funding_rates(sym, last_date, end_date)
+                    
+                    if not new_df.empty:
+                        # 過濾掉舊數據 (保留 index > existing.last)
+                        new_data = new_df[new_df.index > existing.index[-1]]
+                        if not new_data.empty:
+                            merged = pd.concat([existing, new_data])
+                            merged = merged[~merged.index.duplicated(keep='last')]
+                            save_funding_rates(merged, fr_path)
+                            print(f"  ✅ 新增 {len(new_data)} 筆，共 {len(merged)} 筆")
+                        else:
+                            print(f"  ✅ 數據已是最新")
+                    else:
+                        print(f"  ⚠️  無新數據")
                 else:
                     fr_df = download_funding_rates(sym, start_date, end_date)
                     if not fr_df.empty:

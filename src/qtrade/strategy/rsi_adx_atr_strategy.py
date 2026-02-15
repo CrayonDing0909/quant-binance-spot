@@ -15,11 +15,14 @@ RSI + ADX + ATR 組合策略
 """
 from __future__ import annotations
 import pandas as pd
+import os
+from pathlib import Path
 from .base import StrategyContext
 from . import register_strategy
 from ..indicators import calculate_rsi, calculate_adx, calculate_atr
 from .exit_rules import apply_exit_rules
-from .filters import trend_filter, htf_trend_filter, volatility_filter
+from .filters import trend_filter, htf_trend_filter, volatility_filter, funding_rate_filter
+from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
 
 @register_strategy("rsi_adx_atr")
@@ -65,8 +68,6 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     """
     # ── 參數 ──
     rsi_period = int(params.get("rsi_period", 14))
-    oversold = float(params.get("oversold", 35))
-    overbought = float(params.get("overbought", 70))
     min_adx = float(params.get("min_adx", 20))
     adx_period = int(params.get("adx_period", 14))
     
@@ -79,14 +80,47 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     rsi = calculate_rsi(close, rsi_period)
     rsi_prev = rsi.shift(1)
 
-    # ── 原始信號 ──
-    # 做多信號：RSI 上一根 < oversold 且當前 >= oversold（從超賣區回升）
-    long_entry = (rsi_prev < oversold) & (rsi >= oversold)
-    long_exit = rsi > overbought
+    # ── 閾值計算 (Static vs Dynamic) ──
+    rsi_mode = params.get("rsi_mode", "static")
     
-    # 做空信號（僅 Futures）：RSI 上一根 > overbought 且當前 <= overbought（從超買區回落）
-    short_entry = (rsi_prev > overbought) & (rsi <= overbought) if supports_short else pd.Series(False, index=df.index)
-    short_exit = rsi < oversold
+    if rsi_mode == "dynamic":
+        # Dynamic Thresholds (Rolling Percentile)
+        # 預設 14 天 (336 小時)
+        lookback_days = int(params.get("rsi_lookback_days", 14))
+        bars_per_day = 24  # 假設 1h
+        
+        # 嘗試從 context 獲取 interval
+        interval = ctx.interval if hasattr(ctx, "interval") else "1h"
+        
+        if interval == '15m': bars_per_day = 96
+        elif interval == '30m': bars_per_day = 48
+        elif interval == '4h': bars_per_day = 6
+        elif interval == '1d': bars_per_day = 1
+            
+        window = int(params.get("rsi_window_bars", lookback_days * bars_per_day))
+        q_low = float(params.get("rsi_quantile_low", 0.10))
+        q_high = float(params.get("rsi_quantile_high", 0.90))
+        
+        rsi_rolling = rsi.rolling(window=window)
+        oversold_threshold = rsi_rolling.quantile(q_low)
+        overbought_threshold = rsi_rolling.quantile(q_high)
+    else:
+        # Static Thresholds
+        oversold = float(params.get("oversold", 35))
+        overbought = float(params.get("overbought", 70))
+        # 轉為 Series 以便統一處理
+        oversold_threshold = pd.Series(oversold, index=df.index)
+        overbought_threshold = pd.Series(overbought, index=df.index)
+
+    # ── 原始信號 ──
+    # 做多信號：RSI 上一根 < 閾值 且 當前 >= 閾值（從超賣區回升）
+    # 注意：Dynamic 模式下閾值是變動的，比較時也應使用當下的閾值
+    long_entry = (rsi_prev < oversold_threshold.shift(1)) & (rsi >= oversold_threshold)
+    long_exit = rsi > overbought_threshold
+    
+    # 做空信號（僅 Futures）：RSI 上一根 > 閾值 且 當前 <= 閾值（從超買區回落）
+    short_entry = (rsi_prev > overbought_threshold.shift(1)) & (rsi <= overbought_threshold) if supports_short else pd.Series(False, index=df.index)
+    short_exit = rsi < oversold_threshold
 
     # 狀態機：生成持倉序列
     # 狀態：0 = 空倉，1 = 多倉，-1 = 空倉（做空）
@@ -133,6 +167,39 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         adx_period=adx_period,
         require_uptrend=True,
     )
+
+    # ── Funding Rate 過濾 (如果啟用) ──
+    # 這是一個 Hacky 的方式來獲取 funding rates，因為 ctx 沒有提供 data_dir
+    # 但對於回測來說是可行的。Live 模式下 runner 可能需要另外處理。
+    # 這裡我們假設 data_dir 是默認位置。
+    if params.get("use_funding_filter", False):
+        try:
+            # 嘗試定位 data 目錄
+            data_dir = Path("data")
+            if not data_dir.exists():
+                data_dir = Path("quant-binance-spot/data")
+            if not data_dir.exists():
+                # Try env var
+                env_data = os.getenv("DATA_DIR")
+                if env_data:
+                    data_dir = Path(env_data)
+            
+            # 如果還是找不到，嘗試從文件路徑推斷 (僅在知道 data_dir 結構時有效)
+            # 這裡簡單假設
+            if data_dir.exists():
+                fr_path = get_funding_rate_path(data_dir, ctx.symbol)
+                if fr_path.exists():
+                    fr_df = load_funding_rates(fr_path)
+                    if fr_df is not None and not fr_df.empty:
+                        fr_series = align_funding_to_klines(fr_df, df.index)
+                        filtered_pos = funding_rate_filter(
+                            df, filtered_pos, fr_series,
+                            max_positive_rate=float(params.get("fr_max_pos", 0.0002)),
+                            max_negative_rate=float(params.get("fr_max_neg", -0.0002)),
+                        )
+        except Exception:
+            # Log warning but continue
+            pass
 
     # ── 波動率過濾（可選，防止低波動磨耗）──
     min_atr_ratio = params.get("min_atr_ratio")

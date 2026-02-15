@@ -114,8 +114,10 @@ def download_funding_rates(
     # 轉換為 DataFrame
     df = pd.DataFrame(all_records)
     df["funding_time"] = pd.to_datetime(df["fundingTime"], unit="ms", utc=True)
-    df["funding_rate"] = df["fundingRate"].astype(float)
-    df["mark_price"] = df["markPrice"].astype(float)
+    df["funding_rate"] = pd.to_numeric(df["fundingRate"], errors="coerce").fillna(0.0)
+    # Remove rows where fundingRate was empty string/null before numeric conversion
+    df = df[df["fundingRate"].astype(str).str.strip() != ""]
+    df["mark_price"] = pd.to_numeric(df.get("markPrice", 0), errors="coerce").fillna(0.0)
     df = df.set_index("funding_time")[["funding_rate", "mark_price"]]
     df = df.sort_index()
     df = df[~df.index.duplicated(keep="last")]

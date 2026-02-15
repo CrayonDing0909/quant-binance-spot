@@ -35,6 +35,7 @@ from qtrade.config import load_config
 from qtrade.backtest.run_backtest import run_symbol_backtest
 from qtrade.backtest.metrics import full_report, trade_summary, trade_analysis, long_short_split_analysis
 from qtrade.backtest.plotting import plot_backtest_summary
+from qtrade.validation.prado_methods import deflated_sharpe_ratio
 
 
 def main() -> None:
@@ -84,6 +85,12 @@ def main() -> None:
         choices=["both", "long_only", "short_only"],
         default=None,
         help="交易方向（覆蓋配置檔）: both=多空都做, long_only=只做多, short_only=只做空"
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=None,
+        help="參數組合數（用於 Deflated Sharpe Ratio 校正多重測試偏差）"
     )
 
     args = parser.parse_args()
@@ -276,6 +283,35 @@ def main() -> None:
             strategy_name=strategy_name,
         )
         print(f"✅ 資金曲線圖: {plot_path}")
+
+        # ── 6. Deflated Sharpe Ratio（選用）─────────────
+        if args.n_trials:
+            returns = pf.returns()
+            observed_sharpe = pf.stats().get("Sharpe Ratio", 0)
+            skewness = returns.skew() if len(returns) > 2 else 0
+            kurtosis = (returns.kurtosis() + 3) if len(returns) > 3 else 3
+
+            dsr = deflated_sharpe_ratio(
+                observed_sharpe=observed_sharpe,
+                n_trials=args.n_trials,
+                n_observations=len(returns),
+                skewness=skewness,
+                kurtosis=kurtosis,
+            )
+
+            print(f"\n{'─'*50}")
+            print(f"  {sym}  Deflated Sharpe Ratio")
+            print(f"{'─'*50}")
+            print(f"  觀察 Sharpe:       {dsr.observed_sharpe:.2f}")
+            print(f"  預期最大 (luck):   {dsr.expected_max_sharpe:.2f}")
+            print(f"  Deflated Sharpe:   {dsr.deflated_sharpe:.2f}")
+            print(f"  p-value:           {dsr.p_value:.4f}")
+            print(f"  n_trials:          {dsr.n_trials}")
+
+            if dsr.is_significant:
+                print(f"  ✅ 統計顯著 (DSR > 0, p < 0.05)")
+            else:
+                print(f"  ⚠️  未達顯著水準")
 
 
 if __name__ == "__main__":
