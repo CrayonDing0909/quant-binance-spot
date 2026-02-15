@@ -1,6 +1,6 @@
 # 📍 專案地圖 & 指令速查
 
-> **最後更新**: 2026-02-15 | **主力配置**: `config/futures_rsi_adx_atr.yaml`
+> **最後更新**: 2026-02-16 | **主力配置**: `config/futures_rsi_adx_atr.yaml`
 >
 > 這份文件是整個專案的「儀表板」。其他文件太長不想看？只看這份。
 
@@ -20,16 +20,20 @@
 | **Pre-Deploy 檢查** | `python scripts/validate_live_consistency.py -c config/futures_rsi_adx_atr.yaml` |
 | **下載數據** | `python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml` |
 | **下載 Funding Rate** | `python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate` |
+| **參數掃描（SL × Cooldown）** | `python scripts/scan_risk_params.py -c config/futures_rsi_adx_atr.yaml` |
 | **參數掃描（overbought）** | `python scripts/scan_overbought.py -c config/futures_rsi_adx_atr.yaml` |
 | **Hyperopt 優化** | `python scripts/run_hyperopt.py -c config/futures_rsi_adx_atr.yaml` |
 | **組合回測** | `python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml` |
 | **實盤（cron 模式）** | `python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once` |
+| **實盤（WebSocket 模式）** | `python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real` ⭐ NEW |
 | **Dry-run 測試** | `python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --dry-run --once` |
+| **查詢交易資料庫** | `python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml summary` ⭐ NEW |
 | **Telegram Bot** | `python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real` |
 | **健康檢查** | `python scripts/health_check.py -c config/futures_rsi_adx_atr.yaml --real --notify` |
 | **每日報表** | `python scripts/daily_report.py -c config/futures_rsi_adx_atr.yaml` |
 | **建立新策略** | `python scripts/create_strategy.py --name my_strategy --type custom` |
 | **Oracle 更新部署** | `git pull && ./scripts/setup_cron.sh --update` |
+| **Oracle 配置 Swap** | `bash scripts/setup_swap.sh` ⭐ NEW |
 
 ---
 
@@ -46,7 +50,8 @@
 | 5 | `run_cost_sensitivity.py` | 成本敏感性分析 | `-c`, `--symbol` |
 | 6 | `validate.py` | 一站式驗證（WFA/MC/DSR/PBO/Kelly） | `-c`, `--quick`, `--full`, `--only` |
 | 7 | `validate_live_consistency.py` | Pre-Deploy 13 項檢查 | `-c`, `-v`, `--only` |
-| 8 | `run_live.py` | 實盤 / Paper Trading | `-c`, `--real/--paper`, `--once`, `--dry-run` |
+| 8 | `run_live.py` | 實盤 / Paper（Polling 模式） | `-c`, `--real/--paper`, `--once`, `--dry-run` |
+| 9 | `run_websocket.py` ⭐ | 實盤（WebSocket 事件驅動） | `-c`, `--real/--paper` |
 
 ### 優化 & 分析
 
@@ -55,6 +60,7 @@
 | `optimize_params.py` | 網格搜尋參數優化 |
 | `run_hyperopt.py` | Bayesian 超參數優化 |
 | `scan_overbought.py` | 掃描 overbought 最佳值 |
+| `scan_risk_params.py` ⭐ | SL × Cooldown 網格掃描（熱力圖） |
 | `comprehensive_backtest.py` | 多維度綜合回測（regime / exit / sizing） |
 | `run_portfolio_backtest.py` | 多幣種組合回測 |
 
@@ -63,10 +69,19 @@
 | 腳本 | 用途 |
 |------|------|
 | `run_telegram_bot.py` | Telegram 互動 Bot（常駐服務） |
+| `query_db.py` ⭐ | SQLite 交易資料庫查詢（summary / trades / signals / equity / export） |
 | `health_check.py` | 系統健康檢查（cron 每 30 分鐘） |
 | `daily_report.py` | 每日績效報表 |
 | `setup_cron.sh` | 自動設定 cron + 清 `.pyc`（`--update`） |
+| `setup_swap.sh` ⭐ | Oracle Cloud Swap 配置（1GB RAM 機器必備） |
 | `setup_secrets.py` | 設定 API Key / Telegram Token |
+
+### 研究 & 分析
+
+| 腳本 | 用途 |
+|------|------|
+| `research_dynamic_rsi.py` ⭐ | Static vs Dynamic RSI 對比研究 |
+| `research_funding_filter.py` ⭐ | Funding Rate 過濾效果分析 |
 
 ### 測試 & 開發
 
@@ -123,10 +138,10 @@
 src/qtrade/
 ├── config.py              ← 統一配置管理（AppConfig, load_config）
 ├── strategy/              ← 策略庫
-│   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略
+│   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略（支援 Dynamic RSI + Funding Filter）
 │   ├── base.py                  ← StrategyContext
 │   ├── exit_rules.py            ← SL/TP/RSI Exit 邏輯
-│   ├── filters.py               ← 過濾器
+│   ├── filters.py               ← ⭐ 過濾器（含 Funding Rate 過濾器）
 │   ├── multi_factor.py          ← 多因子（實驗）
 │   ├── bb_mean_reversion.py     ← BB（實驗）
 │   ├── macd_momentum.py         ← MACD（實驗）
@@ -144,9 +159,11 @@ src/qtrade/
 │   ├── consistency.py     ← Live/Backtest 一致性
 │   └── cross_asset.py     ← 跨資產驗證
 ├── live/
-│   ├── runner.py          ← 實盤 Runner（LiveRunner）
+│   ├── runner.py          ← 實盤 Runner（Polling 模式 LiveRunner）
+│   ├── websocket_runner.py ← ⭐ 實盤 Runner（WebSocket 事件驅動）
 │   ├── signal_generator.py ← 信號生成
-│   ├── binance_futures_broker.py ← Binance 合約 Broker
+│   ├── binance_futures_broker.py ← Binance 合約 Broker（含 Maker 優先下單）
+│   ├── trading_db.py      ← ⭐ SQLite 交易資料庫
 │   ├── kline_cache.py     ← ⭐ 增量 K 線快取
 │   └── trading_state.py   ← 交易狀態持久化
 ├── data/
@@ -192,30 +209,64 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 
 ---
 
-## 🚧 當前專案狀態 (2026-02-15)
+## 🚧 當前專案狀態 (2026-02-16)
 
 ### ✅ 已完成
 
-| Prompt | 內容 | 狀態 |
-|--------|------|------|
+| 項目 | 內容 | 狀態 |
+|------|------|------|
 | **Prompt 2** | Walk-Forward + DSR + CPCV 驗證框架 | ✅ 完成 |
 | **Prompt 3** | 完整成本模型（Funding Rate + Volume Slippage + Sensitivity） | ✅ 完成 |
+| **P1 方案 A** | 風控參數優化：SL 2.5→2.0, CD 5→3（熱力圖掃描） | ✅ 完成 |
+| **P1 方案 B** | Funding Rate 過濾器（獨立因子，過濾擁擠交易） | ✅ 完成 |
+| **P4** | Dynamic RSI（Rolling Percentile 自適應閾值，對抗 Alpha Decay） | ✅ 完成 |
+| **執行優化** | Maker 優先下單（Taker 0.04% → Maker 0.02%，省一半手續費） | ✅ 完成 |
+| **WebSocket** | 事件驅動 Runner（延遲 5min → <1s，Oracle Cloud 1GB RAM 可跑） | ✅ 完成 |
+| **SQLite DB** | 結構化交易資料庫（trades / signals / daily_equity）+ CLI 查詢 | ✅ 完成 |
 
 ### 🔲 待做
 
-| Prompt | 內容 | 優先級 | 說明 |
-|--------|------|:------:|------|
-| **P1 方案 A** | 風控修復（SL 2.5x, cooldown 5） | 🔴 高 | 不改策略邏輯，只調參數 |
-| **P1 方案 B** | Funding Rate 過濾器 | 🟡 中 | 真正獨立因子，需 review |
-| **P4** | 自適應參數 (rolling RSI threshold) | 🔵 低 | 應對 alpha decay |
+| 項目 | 內容 | 優先級 | 說明 |
+|------|------|:------:|------|
 | **P5** | 策略 ensemble | 🔵 低 | 多策略信號投票 |
 | **P6** | 時間框架遷移 (1h → 4h/daily) | 🔵 低 | 如果 1h alpha 持續衰減 |
 
 ### ⚠️ 已知風險
 
-- **Alpha 衰減**: RSI IC 從 2023 (+0.065) → 2026 (+0.018)，衰減 72%
+- **Alpha 衰減**: RSI IC 從 2023 (+0.065) → 2026 (+0.018)，衰減 72%（已用 Dynamic RSI 緩解）
 - **因子假多樣化**: RSI/BB/MACD/OBV 相關 |r| > 0.5（本質同一因子）
 - 詳見 `PROFESSIONAL_UPGRADE_PLAN.md` 研究 A~F
+
+---
+
+## 🚀 Oracle Cloud 部署方式
+
+### 方式 A：WebSocket 事件驅動（推薦，延遲 <1 秒）
+
+```bash
+# 1. 配置 Swap（1GB RAM 機器必備，只需跑一次）
+bash scripts/setup_swap.sh
+
+# 2. 用 tmux 啟動 WebSocket Runner
+tmux new -d -s bot "cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+
+# 3. 查看 log
+tmux attach -t bot           # 進入 tmux（Ctrl+B D 離開）
+tail -50 logs/websocket.log  # 不進 tmux 也能看
+
+# 4. 重啟
+tmux kill-session -t bot
+tmux new -d -s bot "..."     # 同上
+```
+
+### 方式 B：Cron 定時（傳統，延遲 ~5 分鐘）
+
+```bash
+# crontab -e
+5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/futures_live.log 2>&1
+```
+
+> ⚠️ **兩種方式不可同時使用**。用 WebSocket 時要把 cron 裡的 `run_live.py` 註解掉。
 
 ---
 
@@ -230,7 +281,13 @@ ssh ubuntu@<IP>
 cd ~/quant-binance-spot && git pull && ./scripts/setup_cron.sh --update
 
 # 查看實盤 log
-tail -100 /home/ubuntu/quant-binance-spot/logs/futures_live.log
+tail -100 /home/ubuntu/quant-binance-spot/logs/websocket.log    # WebSocket 模式
+tail -100 /home/ubuntu/quant-binance-spot/logs/futures_live.log  # Cron 模式
+
+# 查詢交易資料庫
+python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml summary
+python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml trades --limit 20
+python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml export  # 匯出 CSV
 
 # 查看當前持倉
 python -c "
