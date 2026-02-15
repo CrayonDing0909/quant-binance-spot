@@ -145,6 +145,79 @@ class IncrementalKlineCache:
             self._mem_cache.clear()
             logger.info("🗑️  所有快取已清除")
 
+    # ── WebSocket 整合 ─────────────────────────────────────────
+
+    def get_cached(self, symbol: str) -> pd.DataFrame | None:
+        """
+        取得記憶體中的快取數據（不觸發 HTTP 更新）
+
+        適用於 WebSocket 模式：由 WS 負責增量更新，策略讀取時不需要 HTTP。
+
+        Returns:
+            DataFrame or None if no cache exists
+        """
+        return self._load(symbol)
+
+    def append_bar(self, symbol: str, bar_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        追加單根 K 線到快取（WebSocket 用）
+
+        不做 HTTP 請求，直接追加到記憶體 + 磁碟快取。
+        與 get_klines() 的 HTTP 增量更新互補。
+
+        Args:
+            symbol:  交易對
+            bar_df:  單行 DataFrame (index=open_time UTC,
+                     cols=[open, high, low, close, volume, close_time])
+
+        Returns:
+            更新後的完整 DataFrame
+        """
+        cached = self._load(symbol)
+
+        # 確保 UTC index
+        if bar_df.index.tz is None:
+            bar_df.index = bar_df.index.tz_localize("UTC")
+
+        if cached is not None and len(cached) > 0:
+            combined = pd.concat([cached, bar_df])
+            combined = combined[~combined.index.duplicated(keep="last")]
+            combined = combined.sort_index()
+        else:
+            combined = bar_df
+
+        self._save(symbol, combined)
+        logger.debug(f"  {symbol}: 追加 1 bar → 總計 {len(combined)} bar")
+        return combined
+
+    def fill_gap(self, symbol: str, last_cached_time: pd.Timestamp) -> pd.DataFrame | None:
+        """
+        補齊快取缺口（WebSocket 斷線重連後使用）
+
+        從 last_cached_time 往後拉取遺漏的 K 線。
+
+        Returns:
+            更新後的完整 DataFrame, 或 None 如果失敗
+        """
+        try:
+            new_bars = self._fetch_since(symbol, last_cached_time)
+            if new_bars is not None and len(new_bars) > 0:
+                cached = self._load(symbol)
+                if cached is not None and len(cached) > 0:
+                    combined = pd.concat([cached, new_bars])
+                    combined = combined[~combined.index.duplicated(keep="last")]
+                    combined = combined.sort_index()
+                    combined = self._drop_unclosed(combined)
+                    self._save(symbol, combined)
+                    logger.info(
+                        f"📦 {symbol}: 補齊缺口 +{len(new_bars)} bar → 總計 {len(combined)} bar"
+                    )
+                    return combined
+            return self._load(symbol)
+        except Exception as e:
+            logger.warning(f"⚠️  {symbol}: 補齊缺口失敗: {e}")
+            return self._load(symbol)
+
     # ── 內部方法 ──────────────────────────────────────────────
 
     def _cache_path(self, symbol: str) -> Path:

@@ -21,7 +21,7 @@ from .base import StrategyContext
 from . import register_strategy
 from ..indicators import calculate_rsi, calculate_adx, calculate_atr
 from .exit_rules import apply_exit_rules
-from .filters import trend_filter, htf_trend_filter, volatility_filter, funding_rate_filter
+from .filters import trend_filter, htf_trend_filter, htf_soft_trend_filter, volatility_filter, funding_rate_filter
 from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
 
@@ -139,21 +139,17 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
                 raw_pos.iloc[i] = 0.0
         elif state == 1:  # 持有多倉
             if long_exit.iloc[i]:
-                if supports_short:
-                    # Futures: 平多後可以開空
-                    state = -1
-                    raw_pos.iloc[i] = -1.0
-                else:
-                    # Spot: 只能平倉
-                    state = 0
-                    raw_pos.iloc[i] = 0.0
+                # 平倉 → 回到 Flat，不直接反手
+                # 靠 cooldown + 新的入場信號再決定方向
+                state = 0
+                raw_pos.iloc[i] = 0.0
             else:
                 raw_pos.iloc[i] = 1.0
         else:  # state == -1，持有空倉
             if short_exit.iloc[i]:
-                # 平空後開多
-                state = 1
-                raw_pos.iloc[i] = 1.0
+                # 平倉 → 回到 Flat，不直接反手
+                state = 0
+                raw_pos.iloc[i] = 0.0
             else:
                 raw_pos.iloc[i] = -1.0
 
@@ -169,24 +165,28 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     )
 
     # ── Funding Rate 過濾 (如果啟用) ──
-    # 這是一個 Hacky 的方式來獲取 funding rates，因為 ctx 沒有提供 data_dir
-    # 但對於回測來說是可行的。Live 模式下 runner 可能需要另外處理。
-    # 這裡我們假設 data_dir 是默認位置。
     if params.get("use_funding_filter", False):
+        _fr_applied = False
         try:
-            # 嘗試定位 data 目錄
-            data_dir = Path("data")
-            if not data_dir.exists():
-                data_dir = Path("quant-binance-spot/data")
-            if not data_dir.exists():
-                # Try env var
-                env_data = os.getenv("DATA_DIR")
-                if env_data:
-                    data_dir = Path(env_data)
-            
-            # 如果還是找不到，嘗試從文件路徑推斷 (僅在知道 data_dir 結構時有效)
-            # 這裡簡單假設
-            if data_dir.exists():
+            # 嘗試多個可能的 data 目錄
+            data_dir = None
+            for candidate in [
+                Path("data"),
+                Path("quant-binance-spot/data"),
+                Path(os.getenv("DATA_DIR", "")),
+                Path.home() / "quant-binance-spot" / "data",
+            ]:
+                if candidate.exists() and str(candidate):
+                    data_dir = candidate
+                    break
+
+            if data_dir is None or not data_dir.exists():
+                import logging
+                logging.getLogger("strategy").warning(
+                    f"⚠️  {ctx.symbol}: Funding Rate 過濾啟用但找不到 data 目錄 "
+                    f"(嘗試: data/, $DATA_DIR, ~/quant-binance-spot/data/)"
+                )
+            else:
                 fr_path = get_funding_rate_path(data_dir, ctx.symbol)
                 if fr_path.exists():
                     fr_df = load_funding_rates(fr_path)
@@ -197,9 +197,17 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
                             max_positive_rate=float(params.get("fr_max_pos", 0.0002)),
                             max_negative_rate=float(params.get("fr_max_neg", -0.0002)),
                         )
-        except Exception:
-            # Log warning but continue
-            pass
+                        _fr_applied = True
+                else:
+                    import logging
+                    logging.getLogger("strategy").warning(
+                        f"⚠️  {ctx.symbol}: Funding Rate 資料不存在: {fr_path}"
+                    )
+        except Exception as e:
+            import logging
+            logging.getLogger("strategy").warning(
+                f"⚠️  {ctx.symbol}: Funding Rate 過濾失敗: {e}"
+            )
 
     # ── 波動率過濾（可選，防止低波動磨耗）──
     min_atr_ratio = params.get("min_atr_ratio")
@@ -213,15 +221,19 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             min_percentile=float(params.get("vol_min_percentile", 25)),
         )
 
-    # ── 多時間框架趨勢過濾（可選）──
+    # ── 多時間框架「硬」過濾（可選，在 exit rules 之前阻擋逆趨勢入場）──
     htf_interval = params.get("htf_interval")
-    if htf_interval:
+    htf_mode = params.get("htf_mode", "soft")
+    current_interval = ctx.interval if hasattr(ctx, "interval") else "1h"
+
+    # hard 模式在 exit rules 之前過濾（二元閘門）
+    if htf_interval and htf_mode == "hard":
         filtered_pos = htf_trend_filter(
             df, filtered_pos,
             htf_interval=htf_interval,
             ema_fast=int(params.get("htf_ema_fast", 20)),
             ema_slow=int(params.get("htf_ema_slow", 50)),
-            current_interval=ctx.interval if hasattr(ctx, "interval") else "1h",
+            current_interval=current_interval,
         )
 
     # ── ATR 止損 / 止盈 / 移動止損 ──
@@ -233,6 +245,21 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         atr_period=int(params.get("atr_period", 14)),
         cooldown_bars=int(params.get("cooldown_bars", 6)),
     )
+
+    # ── 多時間框架「軟」過濾（在 exit rules 之後縮放倉位大小）──
+    # 必須在 exit rules 之後：exit rules 輸出 binary [-1, 0, 1]，
+    # 軟過濾器再根據 HTF 趨勢將倉位縮放為連續值 [0.5, 0.75, 1.0]
+    if htf_interval and htf_mode == "soft":
+        pos = htf_soft_trend_filter(
+            df, pos,
+            htf_interval=htf_interval,
+            ema_fast=int(params.get("htf_ema_fast", 20)),
+            ema_slow=int(params.get("htf_ema_slow", 50)),
+            current_interval=current_interval,
+            align_weight=float(params.get("htf_align_weight", 1.0)),
+            counter_weight=float(params.get("htf_counter_weight", 0.5)),
+            neutral_weight=float(params.get("htf_neutral_weight", 0.75)),
+        )
 
     # 根據市場類型 clip 信號範圍
     # Spot: [0, 1]，Futures: [-1, 1]
