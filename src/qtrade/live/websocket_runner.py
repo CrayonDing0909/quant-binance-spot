@@ -442,6 +442,9 @@ class WebSocketRunner:
         try:
             from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
 
+            # 降低 binance lib 內部的 debug 雜訊
+            logging.getLogger("binance").setLevel(logging.WARNING)
+
             self._ws_client = UMFuturesWebsocketClient(
                 on_message=self._on_message_handler,
             )
