@@ -41,3 +41,6 @@ python-telegram-bot>=21.0
 
 # 可選：安全存儲
 # keyring>=24.0
+
+# WebSocket 支援
+binance-futures-connector>=3.0.0
