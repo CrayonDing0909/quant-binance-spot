@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from qtrade.config import load_config
-from qtrade.utils.log import setup_logging, get_logger
+from qtrade.utils.log import get_logger
 from qtrade.live.websocket_runner import WebSocketRunner
 from qtrade.live.paper_broker import PaperBroker
 from qtrade.live.binance_futures_broker import BinanceFuturesBroker
@@ -32,7 +32,7 @@ def main():
 
     # 載入配置
     cfg = load_config(args.config)
-    setup_logging(cfg.logging)
+    # setup_logging(cfg.logging) # 用預設 logging
 
     # 決定模式
     if args.real:
