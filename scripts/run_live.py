@@ -161,6 +161,8 @@ def cmd_run(args, cfg) -> None:
                 leverage=leverage,
                 margin_type=margin_type,
                 state_dir=cfg.get_report_dir("live"),
+                prefer_limit=cfg.live.prefer_limit_order,
+                limit_timeout_s=cfg.live.limit_order_timeout_s,
             )
         else:
             from qtrade.live.binance_spot_broker import BinanceSpotBroker

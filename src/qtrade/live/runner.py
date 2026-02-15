@@ -29,6 +29,7 @@ from .signal_generator import generate_signal
 from .kline_cache import IncrementalKlineCache
 from .paper_broker import PaperBroker
 from .trading_state import TradingStateManager
+from .trading_db import TradingDatabase
 
 logger = get_logger("live_runner")
 
@@ -106,6 +107,14 @@ class LiveRunner:
         
         # v2.7: 信號狀態持久化（防止滑動窗口導致的方向翻轉）
         self._signal_state_path = cfg.get_report_dir("live") / "signal_state.json"
+
+        # v3.0: SQLite 結構化資料庫（交易/信號/權益 持久化）
+        self.trading_db: TradingDatabase | None = None
+        try:
+            db_path = cfg.get_report_dir("live") / "trading.db"
+            self.trading_db = TradingDatabase(db_path)
+        except Exception as e:
+            logger.warning(f"⚠️  SQLite 資料庫初始化失敗（不影響交易）: {e}")
 
         # v2.8: 增量 K 線快取（解決滑動窗口狀態機發散問題）
         self._kline_cache: IncrementalKlineCache | None = None
@@ -453,6 +462,37 @@ class LiveRunner:
 
             signals.append(sig)
 
+            # v3.0: 記錄信號到 SQLite
+            if self.trading_db:
+                try:
+                    indicators = sig.get("indicators", {})
+                    current_pct_for_log = self.broker.get_position_pct(symbol, sig["price"]) if sig["price"] > 0 else 0
+                    action = "HOLD"
+                    raw_sig = sig["signal"]
+                    if raw_sig > 0.01 and current_pct_for_log <= 0.01:
+                        action = "OPEN_LONG"
+                    elif raw_sig < -0.01 and current_pct_for_log >= -0.01:
+                        action = "OPEN_SHORT"
+                    elif abs(raw_sig) < 0.01 and abs(current_pct_for_log) > 0.01:
+                        action = "CLOSE"
+
+                    self.trading_db.log_signal(
+                        symbol=symbol,
+                        signal_value=sig["signal"],
+                        price=sig["price"],
+                        rsi=indicators.get("rsi"),
+                        adx=indicators.get("adx"),
+                        atr=indicators.get("atr"),
+                        plus_di=indicators.get("plus_di"),
+                        minus_di=indicators.get("minus_di"),
+                        target_pct=sig["signal"] * self._weights.get(symbol, 1.0),
+                        current_pct=current_pct_for_log,
+                        action=action,
+                        timestamp=sig.get("timestamp"),
+                    )
+                except Exception as e:
+                    logger.debug(f"  {symbol}: 信號寫入 DB 失敗: {e}")
+
             # 執行交易（信號 × 分配權重 × 倉位調整）
             raw_signal = sig["signal"]
             
@@ -656,7 +696,31 @@ class LiveRunner:
                 if trade:
                     self.trade_count += 1
                     has_trade = True
-                    
+
+                    # v3.0: 記錄交易到 SQLite
+                    if self.trading_db:
+                        try:
+                            order_type = "MARKET"
+                            fee_rate = 0.0004  # default taker
+                            if hasattr(trade, "raw") and trade.raw:
+                                order_type = trade.raw.get("_order_type", "MARKET")
+                                fee_rate = trade.raw.get("_fee_rate", 0.0004)
+                            self.trading_db.log_trade(
+                                symbol=symbol,
+                                side=trade.side,
+                                qty=trade.qty,
+                                price=trade.price,
+                                fee=getattr(trade, "fee", 0.0),
+                                fee_rate=fee_rate,
+                                pnl=trade.pnl,
+                                reason=reason,
+                                order_type=order_type,
+                                order_id_hash=getattr(trade, "order_id", "")[:8],
+                                position_side=getattr(trade, "position_side", ""),
+                            )
+                        except Exception as e:
+                            logger.debug(f"  {symbol}: 交易寫入 DB 失敗: {e}")
+
                     # 記錄到狀態管理器
                     if self.state_manager:
                         self.state_manager.log_trade(
@@ -930,6 +994,7 @@ class LiveRunner:
             logger.info(f"   熔斷線: 回撤 ≥ {self.max_drawdown_pct:.0%} → 自動平倉停止")
         logger.info(f"   K線快取: {'✅ 增量快取' if self._kline_cache else '❌ 滑動窗口 (300 bar)'}")
         logger.info(f"   翻轉確認: {'✅ 2-tick' if self.cfg.live.flip_confirmation else '❌ 直接執行'}")
+        logger.info(f"   交易資料庫: {'✅ SQLite' if self.trading_db else '❌ 未啟用'}")
         logger.info(f"   Telegram: {'✅ 已啟用' if self.notifier.enabled else '❌ 未啟用'}")
         logger.info("=" * 60)
 
@@ -1027,6 +1092,19 @@ class LiveRunner:
                     trade_count=len(self.broker.account.trades),
                     mode=self.mode.upper(),
                 )
+
+                # v3.0: 記錄每日權益到 SQLite
+                if self.trading_db:
+                    try:
+                        self.trading_db.log_daily_equity(
+                            equity=equity,
+                            cash=self.broker.account.cash,
+                            pnl_day=equity - self.broker.account.initial_cash,
+                            trade_count=len(self.broker.account.trades),
+                            position_count=len(positions_info),
+                        )
+                    except Exception:
+                        pass
         else:
             # Real 模式：直接查 Binance API
             try:
@@ -1063,6 +1141,19 @@ class LiveRunner:
                     trade_count=self.trade_count,
                     mode=self.mode.upper(),
                 )
+
+                # v3.0: 記錄每日權益到 SQLite
+                if self.trading_db:
+                    try:
+                        self.trading_db.log_daily_equity(
+                            equity=total_value,
+                            cash=usdt,
+                            trade_count=self.trade_count,
+                            position_count=len(positions_info),
+                        )
+                    except Exception:
+                        pass
+
             except Exception as e:
                 logger.warning(f"⚠️  獲取 Real 帳戶摘要失敗: {e}")
 

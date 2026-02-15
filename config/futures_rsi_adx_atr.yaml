@@ -109,6 +109,8 @@ portfolio:
 live:
   kline_cache: true           # 增量 K 線快取（策略從 bar 0 跑到最新，與回測一致）
   flip_confirmation: false    # 方向切換 2-tick 確認（快取模式下不需要）
+  prefer_limit_order: true    # 🆕 優先用限價單（Maker fee 0.02% vs Taker 0.04%，省一半手續費）
+  limit_order_timeout_s: 10   # 限價單等待秒數（超時自動改市價單確保成交）
 
 # Telegram 通知（使用獨立的 Bot）
 notification:

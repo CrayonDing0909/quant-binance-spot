@@ -148,11 +148,15 @@ class BinanceFuturesBroker:
         leverage: int = 10,
         margin_type: Literal["ISOLATED", "CROSSED"] = "ISOLATED",
         state_dir: Path | str | None = None,
+        prefer_limit: bool = False,
+        limit_timeout_s: int = 10,
     ):
         self.http = BinanceFuturesHTTP()
         self.dry_run = dry_run
         self.default_leverage = leverage
         self.default_margin_type = margin_type
+        self.prefer_limit = prefer_limit
+        self.limit_timeout_s = limit_timeout_s
         
         self._filters: dict[str, FuturesSymbolFilter] = {}
         self._leverage_cache: dict[str, int] = {}
@@ -174,9 +178,11 @@ class BinanceFuturesBroker:
             )
 
         mode_str = "🧪 DRY-RUN（不會真的下單）" if dry_run else "💰 LIVE（真金白銀！）"
+        limit_str = f"✅ Maker 優先 (timeout={limit_timeout_s}s)" if prefer_limit else "❌ Taker（市價單）"
         logger.info(
             f"✅ Binance Futures Broker 初始化完成 [{mode_str}]\n"
-            f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}"
+            f"   預設槓桿: {leverage}x, 保證金類型: {margin_type}\n"
+            f"   下單模式: {limit_str}"
         )
 
     # ── Algo Order Cache（磁碟持久化）────────────────────
@@ -508,6 +514,242 @@ class BinanceFuturesBroker:
             logger.error(f"查詢權益失敗: {e}")
             return 0.0
 
+    # ── 智能下單（Maker 優先）─────────────────────────────
+
+    def _get_book_price(self, symbol: str, side: str) -> float:
+        """
+        獲取最佳掛單價格（Maker 友善）
+
+        BUY  → best bid（加入買方隊列等待成交 = Maker）
+        SELL → best ask（加入賣方隊列等待成交 = Maker）
+        """
+        try:
+            data = self.http.get("/fapi/v1/ticker/bookTicker", {"symbol": symbol})
+            if side == "BUY":
+                return float(data["bidPrice"])
+            else:
+                return float(data["askPrice"])
+        except Exception as e:
+            logger.warning(f"⚠️  {symbol}: 獲取訂單簿失敗: {e}")
+            return 0.0
+
+    def _query_order(self, symbol: str, order_id: str) -> dict:
+        """查詢訂單狀態"""
+        return self.http.signed_get("/fapi/v1/order", {
+            "symbol": symbol,
+            "orderId": order_id,
+        })
+
+    def _execute_smart_order(
+        self,
+        symbol: str,
+        side: str,
+        position_side: str,
+        qty: float,
+        reason: str = "",
+    ) -> dict:
+        """
+        智能下單：限價單優先 → 超時改市價單
+
+        策略：
+        1. 以 Best Bid (BUY) / Best Ask (SELL) 掛限價單（Maker fee 0.02%）
+        2. 等待 N 秒，每 2 秒輪詢成交狀態
+        3. 完全成交 → 返回（省手續費 🎉）
+        4. 部分成交 → 取消剩餘，剩餘改市價單
+        5. 未成交 → 取消，全部改市價單
+
+        Returns:
+            dict: Binance API 格式的結果，額外包含：
+                _fee_rate: float (Maker / Taker / 加權平均)
+                _order_type: str ("LIMIT", "MARKET", "LIMIT+MARKET")
+        """
+        sf = self._get_filter(symbol)
+
+        if not self.prefer_limit:
+            # 原始邏輯：直接市價單
+            result = self.http.signed_post("/fapi/v1/order", {
+                "symbol": symbol,
+                "side": side,
+                "positionSide": position_side,
+                "type": "MARKET",
+                "quantity": f"{qty}",
+                "newOrderRespType": "RESULT",
+            })
+            result["_fee_rate"] = FEE_RATE_TAKER
+            result["_order_type"] = "MARKET"
+            return result
+
+        # ── Step 1: 獲取最佳掛單價格 ──
+        limit_price = self._get_book_price(symbol, side)
+        if limit_price <= 0:
+            logger.warning(f"⚠️  {symbol}: 無法獲取掛單價格，改用市價單")
+            result = self.http.signed_post("/fapi/v1/order", {
+                "symbol": symbol, "side": side, "positionSide": position_side,
+                "type": "MARKET", "quantity": f"{qty}", "newOrderRespType": "RESULT",
+            })
+            result["_fee_rate"] = FEE_RATE_TAKER
+            result["_order_type"] = "MARKET"
+            return result
+
+        limit_price = sf.round_price(limit_price)
+
+        # ── Step 2: 掛限價單 ──
+        try:
+            limit_result = self.http.signed_post("/fapi/v1/order", {
+                "symbol": symbol,
+                "side": side,
+                "positionSide": position_side,
+                "type": "LIMIT",
+                "price": f"{limit_price}",
+                "quantity": f"{qty}",
+                "timeInForce": "GTC",
+                "newOrderRespType": "RESULT",
+            })
+            order_id = str(limit_result["orderId"])
+            logger.info(
+                f"📝 {symbol}: 限價單已掛 {side} {qty:.6f} @ ${limit_price:,.2f} "
+                f"(orderId={order_id}, timeout={self.limit_timeout_s}s)"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️  {symbol}: 限價單掛單失敗: {e}，改用市價單")
+            result = self.http.signed_post("/fapi/v1/order", {
+                "symbol": symbol, "side": side, "positionSide": position_side,
+                "type": "MARKET", "quantity": f"{qty}", "newOrderRespType": "RESULT",
+            })
+            result["_fee_rate"] = FEE_RATE_TAKER
+            result["_order_type"] = "MARKET"
+            return result
+
+        # ── Step 3: 輪詢等待成交 ──
+        poll_interval = 2
+        elapsed = 0
+
+        while elapsed < self.limit_timeout_s:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+            try:
+                status = self._query_order(symbol, order_id)
+                order_status = status.get("status", "")
+                exec_qty = float(status.get("executedQty", 0))
+
+                if order_status == "FILLED":
+                    # 完全成交（Maker 🎉）
+                    avg_price = float(status.get("avgPrice", limit_price))
+                    saved_bps = (FEE_RATE_TAKER - FEE_RATE_MAKER) * 10000
+                    logger.info(
+                        f"✅ {symbol}: 限價單完全成交 {exec_qty:.6f} "
+                        f"@ ${avg_price:,.2f} (Maker, 省 {saved_bps:.1f}bps 🎉)"
+                    )
+                    return {
+                        "orderId": order_id,
+                        "executedQty": str(exec_qty),
+                        "avgPrice": str(avg_price),
+                        "status": "FILLED",
+                        "_fee_rate": FEE_RATE_MAKER,
+                        "_order_type": "LIMIT",
+                    }
+
+                if exec_qty > 0:
+                    logger.debug(
+                        f"  {symbol}: 部分成交 {exec_qty:.6f}/{qty:.6f} "
+                        f"({elapsed}s/{self.limit_timeout_s}s)"
+                    )
+            except Exception as e:
+                logger.debug(f"  {symbol}: 查詢限價單狀態失敗: {e}")
+
+        # ── Step 4: 超時 → 取消剩餘 ──
+        filled_qty = 0.0
+        limit_avg_price = limit_price
+
+        try:
+            self.http.signed_delete("/fapi/v1/order", {
+                "symbol": symbol,
+                "orderId": order_id,
+            })
+            logger.info(
+                f"🗑️  {symbol}: 限價單逾時 ({self.limit_timeout_s}s)，已取消"
+            )
+        except Exception as e:
+            # 可能在取消瞬間剛好成交了
+            if "Unknown order" not in str(e) and "UNKNOWN_ORDER" not in str(e):
+                logger.warning(f"⚠️  {symbol}: 取消限價單失敗: {e}")
+
+        # 查詢最終成交量
+        try:
+            final_status = self._query_order(symbol, order_id)
+            filled_qty = float(final_status.get("executedQty", 0))
+            limit_avg_price = float(final_status.get("avgPrice", limit_price))
+        except Exception:
+            pass
+
+        remaining_qty = sf.round_qty(qty - filled_qty)
+
+        # ── Step 5: 如果取消前已全部成交 ──
+        if remaining_qty <= 0 or remaining_qty < sf.min_qty:
+            logger.info(
+                f"✅ {symbol}: 限價單在取消前已全部成交 "
+                f"{filled_qty:.6f} @ ${limit_avg_price:,.2f} (Maker 🎉)"
+            )
+            return {
+                "orderId": order_id,
+                "executedQty": str(filled_qty),
+                "avgPrice": str(limit_avg_price),
+                "status": "FILLED",
+                "_fee_rate": FEE_RATE_MAKER,
+                "_order_type": "LIMIT",
+            }
+
+        # ── Step 6: 剩餘部分用市價單 ──
+        if filled_qty > 0:
+            logger.info(
+                f"📊 {symbol}: 限價成交 {filled_qty:.6f} (Maker)，"
+                f"剩餘 {remaining_qty:.6f} 改市價單 (Taker)"
+            )
+        else:
+            logger.info(
+                f"📊 {symbol}: 限價單未成交，全部 {remaining_qty:.6f} 改市價單"
+            )
+
+        market_result = self.http.signed_post("/fapi/v1/order", {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": "MARKET",
+            "quantity": f"{remaining_qty}",
+            "newOrderRespType": "RESULT",
+        })
+
+        market_exec_qty = float(market_result.get("executedQty", 0))
+        market_avg_price = float(market_result.get("avgPrice", 0))
+        total_qty = filled_qty + market_exec_qty
+
+        # 加權平均價格
+        if total_qty > 0:
+            combined_avg = (
+                filled_qty * limit_avg_price + market_exec_qty * market_avg_price
+            ) / total_qty
+        else:
+            combined_avg = market_avg_price
+
+        # 加權平均費率
+        if total_qty > 0:
+            fee_rate = (
+                filled_qty * FEE_RATE_MAKER + market_exec_qty * FEE_RATE_TAKER
+            ) / total_qty
+        else:
+            fee_rate = FEE_RATE_TAKER
+
+        order_type = "LIMIT+MARKET" if filled_qty > 0 else "MARKET"
+        return {
+            "orderId": f"{order_id}+{market_result.get('orderId', '')}",
+            "executedQty": str(total_qty),
+            "avgPrice": str(combined_avg),
+            "status": "FILLED",
+            "_fee_rate": fee_rate,
+            "_order_type": order_type,
+        }
+
     # ── 市價單 ──────────────────────────────────────────────
 
     def market_long(
@@ -567,19 +809,16 @@ class BinanceFuturesBroker:
             )
 
         try:
-            # Hedge Mode 需要指定 positionSide
-            result = self.http.signed_post("/fapi/v1/order", {
-                "symbol": symbol,
-                "side": "BUY",
-                "positionSide": "LONG",  # Hedge Mode 必需
-                "type": "MARKET",
-                "quantity": f"{qty}",
-                "newOrderRespType": "RESULT",  # 返回成交資訊
-            })
+            result = self._execute_smart_order(
+                symbol=symbol, side="BUY", position_side="LONG",
+                qty=qty, reason=reason,
+            )
 
             exec_qty = float(result.get("executedQty", 0))
             avg_price = float(result.get("avgPrice", price))
-            est_fee = exec_qty * avg_price * FEE_RATE_TAKER
+            fee_rate = float(result.get("_fee_rate", FEE_RATE_TAKER))
+            est_fee = exec_qty * avg_price * fee_rate
+            order_type = result.get("_order_type", "MARKET")
 
             order = FuturesOrderResult(
                 order_id=str(result["orderId"]),
@@ -597,7 +836,7 @@ class BinanceFuturesBroker:
             )
             logger.info(
                 f"📗 LONG {symbol}: {order.qty:.6f} @ ${order.price:,.2f} "
-                f"(orderId={order.order_id})"
+                f"[{order_type}] (orderId={order.order_id})"
             )
             return order
 
@@ -670,19 +909,16 @@ class BinanceFuturesBroker:
             )
 
         try:
-            # Hedge Mode 需要指定 positionSide
-            result = self.http.signed_post("/fapi/v1/order", {
-                "symbol": symbol,
-                "side": "SELL",
-                "positionSide": "SHORT",  # Hedge Mode 必需
-                "type": "MARKET",
-                "quantity": f"{qty}",
-                "newOrderRespType": "RESULT",  # 返回成交資訊
-            })
+            result = self._execute_smart_order(
+                symbol=symbol, side="SELL", position_side="SHORT",
+                qty=qty, reason=reason,
+            )
 
             exec_qty = float(result.get("executedQty", 0))
             avg_price = float(result.get("avgPrice", price))
-            est_fee = exec_qty * avg_price * FEE_RATE_TAKER
+            fee_rate = float(result.get("_fee_rate", FEE_RATE_TAKER))
+            est_fee = exec_qty * avg_price * fee_rate
+            order_type = result.get("_order_type", "MARKET")
 
             order = FuturesOrderResult(
                 order_id=str(result["orderId"]),
@@ -700,7 +936,7 @@ class BinanceFuturesBroker:
             )
             logger.info(
                 f"📕 SHORT {symbol}: {order.qty:.6f} @ ${order.price:,.2f} "
-                f"(orderId={order.order_id})"
+                f"[{order_type}] (orderId={order.order_id})"
             )
             return order
 
@@ -776,19 +1012,17 @@ class BinanceFuturesBroker:
             # Hedge Mode: 指定 positionSide 而非 reduceOnly
             # 平多倉 positionSide=LONG, 平空倉 positionSide=SHORT
             position_side_param = "LONG" if pos.qty > 0 else "SHORT"
-            
-            result = self.http.signed_post("/fapi/v1/order", {
-                "symbol": symbol,
-                "side": side,
-                "positionSide": position_side_param,  # Hedge Mode 必需
-                "type": "MARKET",
-                "quantity": f"{close_qty}",
-                "newOrderRespType": "RESULT",  # 返回成交資訊
-            })
+
+            result = self._execute_smart_order(
+                symbol=symbol, side=side, position_side=position_side_param,
+                qty=close_qty, reason=reason,
+            )
 
             exec_qty = float(result.get("executedQty", 0))
             avg_price = float(result.get("avgPrice", price))
-            est_fee = exec_qty * avg_price * FEE_RATE_TAKER
+            fee_rate = float(result.get("_fee_rate", FEE_RATE_TAKER))
+            est_fee = exec_qty * avg_price * fee_rate
+            order_type = result.get("_order_type", "MARKET")
 
             # 計算 PnL
             if pos.qty > 0:  # 多倉
@@ -814,7 +1048,7 @@ class BinanceFuturesBroker:
             emoji = "📈" if pnl > 0 else "📉"
             logger.info(
                 f"{emoji} {position_label} {symbol}: {order.qty:.6f} @ ${order.price:,.2f} "
-                f"(pnl={pnl:+.2f}, orderId={order.order_id})"
+                f"[{order_type}] (pnl={pnl:+.2f}, orderId={order.order_id})"
             )
             return order
 

@@ -223,6 +223,8 @@ class LiveConfig:
     """
     kline_cache: bool = True
     flip_confirmation: bool = False
+    prefer_limit_order: bool = False   # 優先使用限價單（Maker fee 更低）
+    limit_order_timeout_s: int = 10    # 限價單等待成交秒數（超時改市價單）
 
 
 @dataclass(frozen=True)
@@ -433,6 +435,8 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     live_cfg = LiveConfig(
         kline_cache=live_raw.get("kline_cache", True),
         flip_confirmation=live_raw.get("flip_confirmation", False),
+        prefer_limit_order=live_raw.get("prefer_limit_order", False),
+        limit_order_timeout_s=live_raw.get("limit_order_timeout_s", 10),
     )
 
     # output 可選（預設 ./reports）
