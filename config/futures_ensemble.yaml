@@ -1,0 +1,118 @@
+# 合約策略配置：Ensemble (RSI + MACD) — 多策略信號加權組合
+#
+# 組合 rsi_adx_atr + macd_momentum 兩個低相關策略 (corr ≈ 0.06)
+# 理論上可提升 Sharpe 約 30%、降低 MDD
+#
+# 使用方式：
+#   python scripts/run_backtest.py -c config/futures_ensemble.yaml
+#   python scripts/run_walk_forward.py -c config/futures_ensemble.yaml --splits 5
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 5
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "ensemble_rsi_macd"
+  params:
+    # ── Ensemble 配置 ──
+    weight_rsi: 0.5
+    weight_macd: 0.5
+    consensus_only: false      # true = 只在兩策略一致時交易
+
+    # ── 共用參數（兩策略都會用到）──
+    min_adx: 15
+    adx_period: 14
+    stop_loss_atr: 2.0
+    take_profit_atr: null
+    atr_period: 14
+    cooldown_bars: 3
+
+    # ── RSI 策略專屬 ──
+    rsi_mode: "dynamic"
+    rsi_period: 10
+    rsi_lookback_days: 14
+    rsi_quantile_low: 0.10
+    rsi_quantile_high: 0.90
+    oversold: 30
+    overbought: 80
+
+    # ── Funding Rate 過濾 ──
+    use_funding_filter: true
+    fr_max_pos: 0.0002
+    fr_max_neg: -0.0002
+
+    # ── 波動率過濾 ──
+    min_atr_ratio: 0.005
+    vol_filter_mode: "absolute"
+
+    # ── HTF 軟過濾 ──
+    htf_interval: "4h"
+    htf_mode: "soft"
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    htf_align_weight: 1.0
+    htf_counter_weight: 0.5
+    htf_neutral_weight: 0.75
+
+    # ── MACD 策略專屬 ──
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    require_histogram_accel: false
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: true
+    base_bps: 2
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.65
+
+position_sizing:
+  method: "volatility"
+  position_pct: 1.0
+  kelly_fraction: 0.25
+  target_volatility: 0.20
+  vol_lookback: 168
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.00
+    ETHUSDT: 1.00
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔴 [FUTURES-ENSEMBLE]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

@@ -331,6 +331,15 @@ class AppConfig:
             "end": self.market.end,
             "leverage": self.futures.leverage if self.futures else 1,
         }
+        # position sizing（回測用）
+        ps = self.position_sizing
+        d["position_sizing"] = {
+            "method": ps.method,
+            "position_pct": ps.position_pct,
+            "kelly_fraction": ps.kelly_fraction,
+            "target_volatility": ps.target_volatility,
+            "vol_lookback": ps.vol_lookback,
+        }
         # 成本模型（新增）
         fr = self.backtest.funding_rate
         d["funding_rate"] = {

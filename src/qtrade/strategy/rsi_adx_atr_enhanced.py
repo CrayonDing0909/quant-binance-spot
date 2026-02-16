@@ -309,18 +309,16 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
                 raw_pos.iloc[i] = 0.0
         elif state == 1:
             if long_exit.iloc[i]:
-                if supports_short:
-                    state = -1
-                    raw_pos.iloc[i] = -1.0
-                else:
-                    state = 0
-                    raw_pos.iloc[i] = 0.0
+                # 平倉 → 回到 Flat，不直接反手
+                state = 0
+                raw_pos.iloc[i] = 0.0
             else:
                 raw_pos.iloc[i] = 1.0
         else:  # state == -1
             if short_exit.iloc[i]:
-                state = 1
-                raw_pos.iloc[i] = 1.0
+                # 平倉 → 回到 Flat，不直接反手
+                state = 0
+                raw_pos.iloc[i] = 0.0
             else:
                 raw_pos.iloc[i] = -1.0
     

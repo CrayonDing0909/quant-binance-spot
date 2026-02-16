@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 import logging
+import numpy as np
 import pandas as pd
 import vectorbt as vbt
 
@@ -131,6 +132,71 @@ def _apply_date_filter(
 
 
 # ══════════════════════════════════════════════════════════════
+# 波動率目標倉位縮放
+# ══════════════════════════════════════════════════════════════
+
+def _apply_vol_scaling(
+    pos: pd.Series,
+    df: pd.DataFrame,
+    target_vol: float = 0.15,
+    vol_lookback: int = 168,
+    max_scale: float = 2.0,
+    min_scale: float = 0.1,
+    interval: str = "1h",
+) -> pd.Series:
+    """
+    根據實現波動率反向縮放倉位（Volatility Targeting）
+
+    高波動期 → 降低倉位，低波動期 → 提高倉位（但不超過 max_scale）
+    
+    公式: scale = target_vol / realized_vol
+    
+    Args:
+        pos: 原始信號 [-1, 1]
+        df: K 線 DataFrame（需要 close 欄位）
+        target_vol: 目標年化波動率（預設 15%）
+        vol_lookback: 波動率計算回看期（bar 數）
+        max_scale: 最大縮放倍數
+        min_scale: 最小縮放倍數
+        interval: 時間間隔（用於年化）
+    
+    Returns:
+        縮放後的倉位信號（連續值）
+    """
+    # 根據 interval 決定年化因子
+    annualize_factors = {
+        "1m": np.sqrt(525_600),
+        "5m": np.sqrt(105_120),
+        "15m": np.sqrt(35_040),
+        "1h": np.sqrt(8_760),
+        "4h": np.sqrt(2_190),
+        "1d": np.sqrt(365),
+    }
+    annualize = annualize_factors.get(interval, np.sqrt(8_760))
+    
+    returns = df["close"].pct_change()
+    realized_vol = returns.rolling(window=vol_lookback).std() * annualize
+    
+    # 避免除以零 & warmup 期用 target_vol
+    realized_vol = realized_vol.replace(0, np.nan).ffill().fillna(target_vol)
+    
+    scale = (target_vol / realized_vol).clip(lower=min_scale, upper=max_scale)
+    
+    scaled_pos = pos * scale
+    # 最終仍然限制在 [-1, 1]
+    scaled_pos = scaled_pos.clip(lower=-1.0, upper=1.0)
+    
+    logger.info(
+        f"📊 Vol Targeting: target={target_vol:.0%}, "
+        f"avg_realized={realized_vol.mean():.1%}, "
+        f"avg_scale={scale.mean():.2f}, "
+        f"avg_|pos|={scaled_pos.abs().mean():.3f}"
+    )
+    
+    return scaled_pos
+
+
+# ══════════════════════════════════════════════════════════════
 # 核心回測函數
 # ══════════════════════════════════════════════════════════════
 
@@ -218,6 +284,18 @@ def run_symbol_backtest(
     
     # 根據 direction 過濾信號（使用共用函數）
     pos = clip_positions_by_direction(pos, mt, dr)
+
+    # ── 波動率目標倉位縮放 ───────────────────────────
+    ps_cfg = cfg.get("position_sizing", {})
+    if ps_cfg.get("method") == "volatility":
+        pos = _apply_vol_scaling(
+            pos, df,
+            target_vol=ps_cfg.get("target_volatility", 0.15),
+            vol_lookback=ps_cfg.get("vol_lookback", 168),
+            max_scale=2.0,
+            min_scale=0.1,
+            interval=cfg.get("interval", "1h"),
+        )
 
     # 應用風險限制（如果提供）
     if risk_limits is not None:

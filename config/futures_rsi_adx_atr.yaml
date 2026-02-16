@@ -56,6 +56,22 @@ strategy:
     
     # 冷卻期
     cooldown_bars: 3       # 原 5 → 3 (止損後等待 3 小時)
+    
+    # 🆕 波動率過濾器（過濾低波動磨耗）
+    # ATR/Price < 0.005 時不開倉 → 避免震盪市頻繁交易
+    min_atr_ratio: 0.005
+    vol_filter_mode: "absolute"    # "absolute" or "percentile"
+    
+    # 🆕 多時間框架趨勢過濾（軟模式）
+    # 4h EMA20/50 判斷大趨勢，用連續權重而非二元閘門
+    # soft 模式：順趨勢全倉、逆趨勢半倉、無趨勢 75%
+    htf_interval: "4h"
+    htf_mode: "soft"               # "soft"（推薦）或 "hard"（激進）
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    htf_align_weight: 1.0          # 順趨勢權重
+    htf_counter_weight: 0.5        # 逆趨勢權重
+    htf_neutral_weight: 0.75       # 無趨勢權重
 
   # 移除舊的靜態閾值覆寫，使用統一的動態邏輯
   symbol_overrides: {}
@@ -91,11 +107,15 @@ backtest:
 risk:
   max_drawdown_pct: 0.65  # 65% 熔斷（5x 槓桿下 1x MDD≈14% → 5x≈57%，留緩衝）
 
-# 倉位計算
+# 🆕 倉位計算 — 波動率目標定位（Volatility Targeting）
+# 高波動期自動降低倉位，低波動期允許加倉
+# 效果：平滑權益曲線、降低 MDD、提升 risk-adjusted return
 position_sizing:
-  method: "fixed"
-  position_pct: 1.0
-  kelly_fraction: 0.25
+  method: "volatility"         # "fixed" or "volatility"
+  position_pct: 1.0            # method=fixed 時使用
+  kelly_fraction: 0.25         # Kelly 保守因子（保留備用）
+  target_volatility: 0.20      # 目標年化波動率 20%
+  vol_lookback: 168            # 回看 168 bars = 7 天（1h 數據）
 
 # 多幣種倉位分配
 portfolio:
