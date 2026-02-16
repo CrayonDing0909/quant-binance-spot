@@ -174,7 +174,7 @@ class TelegramBot:
         params = {
             "offset": self._last_update_id + 1,
             "timeout": 30,  # 長輪詢
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "callback_query"],
         }
         
         try:
@@ -192,7 +192,32 @@ class TelegramBot:
         return []
     
     def _handle_update(self, update: dict):
-        """處理單個更新"""
+        """處理單個更新（支援 message 和 callback_query）"""
+        # ── 按鈕回調 (Inline Keyboard) ──
+        callback = update.get("callback_query")
+        if callback:
+            cb_id = callback.get("id", "")
+            data = callback.get("data", "")
+            chat_id = str(callback.get("message", {}).get("chat", {}).get("id", ""))
+            user_id = str(callback.get("from", {}).get("id", ""))
+
+            # 安全檢查
+            if chat_id not in self.allowed_users and user_id not in self.allowed_users:
+                self._answer_callback(cb_id, "⛔ 無權限")
+                return
+
+            # 回應 Telegram（消除按鈕上的 loading 動畫）
+            self._answer_callback(cb_id)
+
+            # 解析 callback data 為命令
+            if data.startswith("/"):
+                parts = data[1:].split()
+                command = parts[0].lower().split("@")[0]
+                args = parts[1:] if len(parts) > 1 else []
+                self._execute_command(command, args, chat_id)
+            return
+
+        # ── 一般訊息 ──
         message = update.get("message", {})
         text = message.get("text", "")
         chat_id = str(message.get("chat", {}).get("id", ""))
@@ -226,21 +251,40 @@ class TelegramBot:
         else:
             self._send_message(chat_id, f"❓ 未知命令: /{command}\n使用 /help 查看可用命令")
     
-    def _send_message(self, chat_id: str, text: str, parse_mode: str = "HTML"):
-        """發送訊息"""
-        if self.notifier:
+    def _send_message(
+        self,
+        chat_id: str,
+        text: str,
+        parse_mode: str = "HTML",
+        reply_markup: dict | None = None,
+    ):
+        """發送訊息（可附帶 Inline Keyboard）"""
+        if self.notifier and not reply_markup:
             self.notifier.send(text, parse_mode=parse_mode, add_prefix=False)
         else:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             payload = {
-                "chat_id": chat_id,
+                "chat_id": chat_id or self.chat_id,
                 "text": text,
                 "parse_mode": parse_mode,
             }
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
             try:
                 requests.post(url, json=payload, timeout=10)
             except Exception as e:
                 logger.error(f"發送訊息失敗: {e}")
+
+    def _answer_callback(self, callback_query_id: str, text: str = ""):
+        """回應 callback_query（消除按鈕 loading 動畫）"""
+        url = f"https://api.telegram.org/bot{self.bot_token}/answerCallbackQuery"
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except Exception:
+            pass
     
     def _send_photo(self, chat_id: str, photo_path: str, caption: str = ""):
         """發送圖片"""
@@ -535,8 +579,18 @@ class TelegramBot:
             ]
             if abs(transfer) > 0.001:
                 lines.append(f"💱 轉帳: ${transfer:+,.2f}")
-            lines.append(f"\n💡 /pnl 7d | /pnl 30d | /pnl all")
-            return "\n".join(lines)
+
+            # 用 Inline Keyboard 讓用戶可以直接點按鈕切換時間範圍
+            buttons = {
+                "inline_keyboard": [[
+                    {"text": "📅 今日", "callback_data": "/pnl"},
+                    {"text": "📅 7天", "callback_data": "/pnl 7d"},
+                    {"text": "📅 30天", "callback_data": "/pnl 30d"},
+                    {"text": "📅 全部", "callback_data": "/pnl all"},
+                ]]
+            }
+            self._send_message(chat_id, "\n".join(lines), reply_markup=buttons)
+            return ""  # 已直接發送，不需要再回傳
         except Exception as e:
             return f"❌ 獲取盈虧失敗: {e}"
     
