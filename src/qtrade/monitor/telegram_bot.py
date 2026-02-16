@@ -511,6 +511,31 @@ class TelegramBot:
         except Exception as e:
             return f"❌ 獲取交易失敗: {e}"
     
+    def _fetch_income_paginated(self, start_dt, end_dt) -> list[dict]:
+        """
+        分頁查詢 Binance 收益歷史
+        
+        Binance /fapi/v1/income 限制 startTime~endTime 最多 7 天，
+        超過就要分段查詢再合併。
+        """
+        from datetime import timedelta
+        
+        all_incomes: list[dict] = []
+        window_start = start_dt
+        
+        while window_start < end_dt:
+            window_end = min(window_start + timedelta(days=7), end_dt)
+            start_ms = int(window_start.timestamp() * 1000)
+            end_ms = int(window_end.timestamp() * 1000)
+            
+            chunk = self.broker.get_income_history(
+                limit=1000, start_time=start_ms, end_time=end_ms
+            )
+            all_incomes.extend(chunk)
+            window_start = window_end
+        
+        return all_incomes
+
     def _cmd_pnl(self, args: list[str], chat_id: str) -> str:
         """
         盈虧查詢，支援時間範圍
@@ -518,7 +543,7 @@ class TelegramBot:
         /pnl        → 今日
         /pnl 7d     → 最近 7 天
         /pnl 30d    → 最近 30 天
-        /pnl all    → 全部（最近 1000 筆）
+        /pnl all    → 全部（最近 90 天）
         """
         if not self.broker:
             return "⚠️ Broker 未連接"
@@ -531,7 +556,6 @@ class TelegramBot:
             now = datetime.now(timezone.utc)
 
             # 解析時間範圍
-            # 注意：Binance API 不帶 startTime 時預設只回 7 天，所以一律帶 startTime
             period = (args[0].lower() if args else "").strip()
             if period == "7d":
                 start_dt = now - timedelta(days=7)
@@ -546,15 +570,9 @@ class TelegramBot:
                 start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
                 label = f"今日 ({now.strftime('%m-%d')} UTC)"
 
-            start_ms = int(start_dt.timestamp() * 1000)
-            end_ms = int(now.timestamp() * 1000)
-            query_limit = 200 if not period or period not in ("7d", "30d", "all") else 1000
-
-            # 注意：Binance API 不帶 endTime 時，預設 endTime = startTime + 7 天
-            # 所以超過 7 天的查詢必須明確帶 endTime=now
-            incomes = self.broker.get_income_history(
-                limit=query_limit, start_time=start_ms, end_time=end_ms
-            )
+            # Binance API 限制 startTime~endTime 最多 7 天
+            # 超過 7 天的查詢需要分段
+            incomes = self._fetch_income_paginated(start_dt, now)
 
             realized = sum(i["income"] for i in incomes if i["income_type"] == "REALIZED_PNL")
             commission = sum(i["income"] for i in incomes if i["income_type"] == "COMMISSION")
