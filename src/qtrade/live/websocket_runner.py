@@ -560,6 +560,7 @@ class WebSocketRunner:
         )
 
         # ── 7. 執行交易 ─────────────────────────────────
+        trade = None  # 初始化，避免 diff < 0.02 時 NameError 導致 _ensure_sl_tp 跳過
         if diff >= 0.02:
             ps_method = self.cfg.position_sizing.method
             reason = f"WS_signal={raw_signal:.0%}×{weight:.0%}"

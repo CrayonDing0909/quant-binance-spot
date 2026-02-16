@@ -283,15 +283,15 @@ class TelegramNotifier:
             
             # 支援做空信號：[-1, 1]
             # 🟢 = 做多 (> 0.5)，🔴 = 做空 (< -0.5)，⚪ = 空倉
-            if signal_pct > 0.5:
+            if signal_pct > 0.01:
                 emoji = "🟢"
                 signal_label = f"LONG {signal_pct:.0%}"
-            elif signal_pct < -0.5:
+            elif signal_pct < -0.01:
                 emoji = "🔴"
                 signal_label = f"SHORT {abs(signal_pct):.0%}"
             else:
                 emoji = "⚪"
-                signal_label = f"FLAT {signal_pct:.0%}"
+                signal_label = "FLAT"
             
             sig_lines = (
                 f"{emoji} <b>{sig['symbol']}</b>: "
