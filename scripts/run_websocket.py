@@ -97,6 +97,19 @@ def main():
     from qtrade.live.websocket_runner import WebSocketRunner
     runner = WebSocketRunner(cfg, broker, mode=mode)
 
+    # 啟動 Telegram 命令 Bot（背景執行，接收 /help /risk /health 等指令）
+    try:
+        from qtrade.monitor.telegram_bot import TelegramCommandBot
+        telegram_bot = TelegramCommandBot(
+            live_runner=runner,
+            broker=broker,
+            state_manager=getattr(runner, "state_manager", None),
+        )
+        telegram_bot.start_background()
+        logger.info("🤖 Telegram 命令 Bot 已在背景啟動")
+    except Exception as e:
+        logger.warning(f"⚠️  Telegram 命令 Bot 啟動失敗（不影響交易）: {e}")
+
     logger.info("🚀 啟動中...")
     runner.run()
 
