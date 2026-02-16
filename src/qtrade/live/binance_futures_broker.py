@@ -443,6 +443,8 @@ class BinanceFuturesBroker:
         self,
         income_type: str | None = None,
         limit: int = 100,
+        start_time: int | None = None,
+        end_time: int | None = None,
     ) -> list[dict]:
         """
         查詢收益歷史（包含已實現盈虧、手續費、資金費率等）
@@ -450,6 +452,8 @@ class BinanceFuturesBroker:
         Args:
             income_type: 類型過濾（REALIZED_PNL, COMMISSION, FUNDING_FEE 等）
             limit: 返回數量上限
+            start_time: 開始時間（毫秒時間戳）
+            end_time: 結束時間（毫秒時間戳）
             
         Returns:
             收益紀錄列表
@@ -458,6 +462,10 @@ class BinanceFuturesBroker:
             params = {"limit": min(limit, 1000)}
             if income_type:
                 params["incomeType"] = income_type
+            if start_time:
+                params["startTime"] = start_time
+            if end_time:
+                params["endTime"] = end_time
             
             data = self.http.signed_get("/fapi/v1/income", params)
             

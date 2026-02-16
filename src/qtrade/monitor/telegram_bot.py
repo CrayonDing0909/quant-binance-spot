@@ -468,46 +468,75 @@ class TelegramBot:
             return f"❌ 獲取交易失敗: {e}"
     
     def _cmd_pnl(self, args: list[str], chat_id: str) -> str:
-        """今日盈虧（已實現 + 未實現 + 資金費率）"""
+        """
+        盈虧查詢，支援時間範圍
+        
+        /pnl        → 今日
+        /pnl 7d     → 最近 7 天
+        /pnl 30d    → 最近 30 天
+        /pnl all    → 全部（最近 1000 筆）
+        """
         if not self.broker:
             return "⚠️ Broker 未連接"
         
         try:
-            # Futures broker: 用 get_income_history 查詢今日收益
-            if hasattr(self.broker, "get_income_history"):
-                # 今天 00:00 UTC 的毫秒時間戳
-                now = datetime.now(timezone.utc)
-                start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                start_ms = int(start_of_day.timestamp() * 1000)
-                
-                # 查詢今日所有收益記錄
-                incomes = self.broker.get_income_history(limit=200)
-                today_incomes = [i for i in incomes if i.get("time", 0) >= start_ms]
-                
-                realized = sum(i["income"] for i in today_incomes if i["income_type"] == "REALIZED_PNL")
-                commission = sum(i["income"] for i in today_incomes if i["income_type"] == "COMMISSION")
-                funding = sum(i["income"] for i in today_incomes if i["income_type"] == "FUNDING_FEE")
-                
-                # 未實現盈虧
-                unrealized = 0.0
-                if hasattr(self.broker, "get_positions"):
-                    for pos in self.broker.get_positions():
-                        unrealized += pos.unrealized_pnl if hasattr(pos, "unrealized_pnl") else 0
-                
-                total = realized + commission + funding + unrealized
-                emoji = "📈" if total >= 0 else "📉"
-                
-                lines = [
-                    f"{emoji} <b>今日盈虧</b> ({now.strftime('%m-%d')} UTC)\n",
-                    f"💰 總計: <b>${total:+,.2f}</b>",
-                    f"✅ 已實現: ${realized:+,.2f}",
-                    f"⏳ 未實現: ${unrealized:+,.2f}",
-                    f"💸 手續費: ${commission:+,.2f}",
-                    f"🔄 資金費率: ${funding:+,.2f}",
-                ]
-                return "\n".join(lines)
-            else:
+            if not hasattr(self.broker, "get_income_history"):
                 return "⚠️ 無法獲取盈虧資訊"
+
+            from datetime import timedelta
+            now = datetime.now(timezone.utc)
+
+            # 解析時間範圍
+            period = (args[0].lower() if args else "").strip()
+            if period == "7d":
+                start_dt = now - timedelta(days=7)
+                label = "最近 7 天"
+            elif period == "30d":
+                start_dt = now - timedelta(days=30)
+                label = "最近 30 天"
+            elif period == "all":
+                start_dt = None
+                label = "全部"
+            else:
+                start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                label = f"今日 ({now.strftime('%m-%d')} UTC)"
+
+            start_ms = int(start_dt.timestamp() * 1000) if start_dt else None
+            query_limit = 200 if not period or period not in ("7d", "30d", "all") else 1000
+
+            incomes = self.broker.get_income_history(
+                limit=query_limit, start_time=start_ms
+            )
+
+            realized = sum(i["income"] for i in incomes if i["income_type"] == "REALIZED_PNL")
+            commission = sum(i["income"] for i in incomes if i["income_type"] == "COMMISSION")
+            funding = sum(i["income"] for i in incomes if i["income_type"] == "FUNDING_FEE")
+            transfer = sum(i["income"] for i in incomes if i["income_type"] == "TRANSFER")
+
+            # 未實現盈虧
+            unrealized = 0.0
+            if hasattr(self.broker, "get_positions"):
+                for pos in self.broker.get_positions():
+                    unrealized += pos.unrealized_pnl if hasattr(pos, "unrealized_pnl") else 0
+
+            total = realized + commission + funding + unrealized
+            emoji = "📈" if total >= 0 else "📉"
+
+            # 統計交易筆數
+            trade_count = sum(1 for i in incomes if i["income_type"] == "REALIZED_PNL")
+
+            lines = [
+                f"{emoji} <b>盈虧 — {label}</b>\n",
+                f"💰 總計: <b>${total:+,.2f}</b>",
+                f"✅ 已實現: ${realized:+,.2f}  ({trade_count} 筆)",
+                f"⏳ 未實現: ${unrealized:+,.2f}",
+                f"💸 手續費: ${commission:+,.2f}",
+                f"🔄 資金費率: ${funding:+,.2f}",
+            ]
+            if abs(transfer) > 0.001:
+                lines.append(f"💱 轉帳: ${transfer:+,.2f}")
+            lines.append(f"\n💡 /pnl 7d | /pnl 30d | /pnl all")
+            return "\n".join(lines)
         except Exception as e:
             return f"❌ 獲取盈虧失敗: {e}"
     
@@ -728,6 +757,8 @@ class TelegramCommandBot(TelegramBot):
         # 註冊額外命令
         self.register_command("signals", self._cmd_signals, "即時信號")
         self.register_command("stats", self._cmd_stats, "交易統計")
+        self.register_command("risk", self._cmd_risk, "風險總覽")
+        self.register_command("health", self._cmd_health, "系統狀態")
 
     # ── 別名方法，與 run_live.py 期望的介面一致 ──
 
@@ -908,6 +939,205 @@ class TelegramCommandBot(TelegramBot):
                 pass  # 查詢失敗不影響信號顯示
 
         return sig_line
+
+    # ── /risk ──
+
+    def _cmd_risk(self, args: list[str], chat_id: str) -> str:
+        """
+        風險總覽：保證金使用、曝險、Drawdown、熔斷狀態
+        """
+        if not self.broker:
+            return "⚠️ Broker 未連接"
+
+        try:
+            lines = ["🛡️ <b>風險總覽</b>\n"]
+
+            # ── 帳戶資訊 ──
+            if hasattr(self.broker, "get_account_info"):
+                info = self.broker.get_account_info()
+                if info:
+                    equity = float(info.get("totalWalletBalance", 0)) + float(
+                        info.get("totalUnrealizedProfit", 0)
+                    )
+                    available = float(info.get("availableBalance", 0))
+                    margin_balance = float(info.get("totalMarginBalance", 0))
+                    init_margin = float(info.get("totalInitialMargin", 0))
+                    maint_margin = float(info.get("totalMaintMargin", 0))
+
+                    # 保證金使用率
+                    margin_ratio = (
+                        (init_margin / margin_balance * 100) if margin_balance > 0 else 0
+                    )
+                    maint_ratio = (
+                        (maint_margin / margin_balance * 100) if margin_balance > 0 else 0
+                    )
+
+                    lines.extend([
+                        f"💰 權益: <b>${equity:,.2f}</b>",
+                        f"💵 可用: ${available:,.2f}",
+                        f"📊 保證金使用: {margin_ratio:.1f}%",
+                        f"🔒 維持保證金: {maint_ratio:.1f}%",
+                    ])
+
+                    if margin_ratio >= 80:
+                        lines.append("⚠️ <b>保證金使用率偏高！</b>")
+
+            # ── 逐幣曝險 ──
+            positions = []
+            if hasattr(self.broker, "get_positions"):
+                positions = self.broker.get_positions()
+            if positions:
+                lines.append(f"\n📋 <b>曝險明細 ({len(positions)} 倉)</b>")
+                total_notional = 0.0
+                for pos in positions:
+                    sym = pos.symbol if hasattr(pos, "symbol") else pos.get("symbol", "?")
+                    qty = pos.qty if hasattr(pos, "qty") else pos.get("qty", 0)
+                    mark = getattr(pos, "mark_price", 0) or 0
+                    liq = getattr(pos, "liquidation_price", 0) or 0
+                    lev = getattr(pos, "leverage", 0) or 0
+                    entry = pos.entry_price if hasattr(pos, "entry_price") else pos.get("entry_price", 0)
+                    pnl = pos.unrealized_pnl if hasattr(pos, "unrealized_pnl") else pos.get("unrealized_pnl", 0)
+                    notional = abs(qty * mark) if mark > 0 else abs(qty * entry)
+                    total_notional += notional
+                    side = "LONG" if qty > 0 else "SHORT"
+                    pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+                    pos_line = (
+                        f"  {pnl_emoji} <b>{sym}</b> [{side}] {lev}x\n"
+                        f"     名義: ${notional:,.0f}  PnL: ${pnl:+,.2f}"
+                    )
+                    if liq > 0:
+                        if mark > 0:
+                            dist = abs(mark - liq) / mark * 100
+                            pos_line += f"\n     強平: ${liq:,.2f} (距 {dist:.1f}%)"
+                        else:
+                            pos_line += f"\n     強平: ${liq:,.2f}"
+                    lines.append(pos_line)
+
+                lines.append(f"\n💎 總名義曝險: <b>${total_notional:,.0f}</b>")
+            else:
+                lines.append("\n📭 無持倉")
+
+            # ── Drawdown / 熔斷 ──
+            runner = self.live_runner
+            if runner:
+                cb_triggered = getattr(runner, "_circuit_breaker_triggered", False)
+                init_eq = getattr(runner, "_initial_equity", None)
+
+                if cb_triggered:
+                    lines.append("\n🚨 <b>熔斷已觸發！已停止交易</b>")
+                elif init_eq and init_eq > 0:
+                    equity_now = 0.0
+                    if hasattr(self.broker, "get_equity"):
+                        equity_now = self.broker.get_equity()
+                    if equity_now > 0:
+                        dd = (1 - equity_now / init_eq) * 100
+                        threshold = (runner.max_drawdown_pct or 0) * 100
+                        bar_len = 10
+                        filled = min(int(dd / max(threshold, 1) * bar_len), bar_len)
+                        bar = "█" * filled + "░" * (bar_len - filled)
+                        lines.append(
+                            f"\n📉 Drawdown: <b>{dd:+.2f}%</b> / {threshold:.0f}%"
+                            f"\n   [{bar}]"
+                        )
+                        lines.append(
+                            f"   基準: ${init_eq:,.2f} → 現: ${equity_now:,.2f}"
+                        )
+                else:
+                    lines.append("\n✅ 熔斷: 未觸發")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ 風險查詢失敗: {e}"
+
+    # ── /health ──
+
+    def _cmd_health(self, args: list[str], chat_id: str) -> str:
+        """
+        系統健康：記憶體、磁碟、信號新鮮度、WebSocket 狀態、運行時間
+        """
+        import shutil
+
+        lines = ["🏥 <b>系統健康</b>\n"]
+
+        # ── 記憶體 ──
+        try:
+            try:
+                import psutil
+                mem = psutil.virtual_memory()
+                mem_pct = mem.percent
+                mem_avail = mem.available / (1024 ** 3)
+                lines.append(f"🧠 記憶體: {mem_pct:.1f}% 使用 ({mem_avail:.2f} GB 可用)")
+            except ImportError:
+                # Linux fallback
+                with open("/proc/meminfo") as f:
+                    info = {}
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            info[parts[0].rstrip(":")] = int(parts[1])
+                    total = info.get("MemTotal", 0)
+                    avail = info.get("MemAvailable", info.get("MemFree", 0))
+                    if total > 0:
+                        pct = (1 - avail / total) * 100
+                        lines.append(f"🧠 記憶體: {pct:.1f}% 使用 ({avail / 1048576:.2f} GB 可用)")
+        except Exception:
+            lines.append("🧠 記憶體: 無法檢測")
+
+        # ── 磁碟 ──
+        try:
+            usage = shutil.disk_usage("/")
+            disk_pct = usage.used / usage.total * 100
+            free_gb = usage.free / (1024 ** 3)
+            lines.append(f"💾 磁碟: {disk_pct:.1f}% 使用 ({free_gb:.1f} GB 可用)")
+        except Exception:
+            lines.append("💾 磁碟: 無法檢測")
+
+        # ── WebSocket Runner 狀態 ──
+        runner = self.live_runner
+        if runner:
+            # 運行時間
+            start_time = getattr(runner, "start_time", None)
+            if start_time:
+                uptime_sec = time.time() - start_time
+                hours = int(uptime_sec // 3600)
+                mins = int((uptime_sec % 3600) // 60)
+                lines.append(f"⏱ 運行時間: {hours}h {mins}m")
+
+            # K 線 tick 數
+            ticks = getattr(runner, "_tick_count", 0)
+            trades = getattr(runner, "trade_count", 0)
+            lines.append(f"📊 K 線處理: {ticks} 次 | 交易: {trades} 筆")
+
+            # WebSocket 心跳
+            last_ws = getattr(runner, "_last_ws_message_time", 0)
+            if last_ws > 0:
+                ws_age = time.time() - last_ws
+                if ws_age < 60:
+                    ws_status = f"✅ {ws_age:.0f}s 前"
+                elif ws_age < 300:
+                    ws_status = f"⚠️ {ws_age / 60:.0f}m 前"
+                else:
+                    ws_status = f"🚨 {ws_age / 60:.0f}m 前（可能斷線）"
+                lines.append(f"📡 WebSocket: {ws_status}")
+
+            # 信號新鮮度
+            sig_path = getattr(runner, "_signal_state_path", None)
+            if sig_path and sig_path.exists():
+                sig_age = time.time() - sig_path.stat().st_mtime
+                if sig_age < 3600:
+                    lines.append(f"📝 信號: {sig_age / 60:.0f}m 前更新")
+                else:
+                    lines.append(f"📝 信號: ⚠️ {sig_age / 3600:.1f}h 前更新")
+
+            # 熔斷狀態
+            cb = getattr(runner, "_circuit_breaker_triggered", False)
+            lines.append(f"🔒 熔斷: {'🚨 已觸發' if cb else '✅ 正常'}")
+
+        else:
+            lines.append("⚠️ Runner 未連接")
+
+        return "\n".join(lines)
 
     # ── /stats ──
 
