@@ -531,6 +531,7 @@ class TelegramBot:
             now = datetime.now(timezone.utc)
 
             # 解析時間範圍
+            # 注意：Binance API 不帶 startTime 時預設只回 7 天，所以一律帶 startTime
             period = (args[0].lower() if args else "").strip()
             if period == "7d":
                 start_dt = now - timedelta(days=7)
@@ -539,13 +540,13 @@ class TelegramBot:
                 start_dt = now - timedelta(days=30)
                 label = "最近 30 天"
             elif period == "all":
-                start_dt = None
-                label = "全部"
+                start_dt = now - timedelta(days=90)
+                label = "全部 (90天)"
             else:
                 start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
                 label = f"今日 ({now.strftime('%m-%d')} UTC)"
 
-            start_ms = int(start_dt.timestamp() * 1000) if start_dt else None
+            start_ms = int(start_dt.timestamp() * 1000)
             query_limit = 200 if not period or period not in ("7d", "30d", "all") else 1000
 
             incomes = self.broker.get_income_history(
