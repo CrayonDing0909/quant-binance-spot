@@ -267,7 +267,11 @@ bash scripts/setup_swap.sh
 # 2. 用 tmux 啟動 WebSocket Runner
 tmux new -d -s bot "cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
 
-# 3. 查看 log
+# 3. （可選）設定 Alpha Decay 監控 cron
+# crontab -e 加入：
+# 0 1 * * 0 cd ~/quant-binance-spot && source .venv/bin/activate && bash scripts/cron_alpha_monitor.sh >> logs/alpha_monitor.log 2>&1
+
+# 4. 查看 log
 tmux attach -t bot           # 進入 tmux（Ctrl+B D 離開）
 tail -50 logs/websocket.log  # 不進 tmux 也能看
 
