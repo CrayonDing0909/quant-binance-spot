@@ -27,6 +27,19 @@ from qtrade.utils.log import get_logger
 logger = get_logger("main_ws")
 
 
+def _setup_file_logging(log_path: Path) -> None:
+    """為所有 logger 加入 FileHandler，讓 log 同時輸出到螢幕和檔案"""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s")
+    file_handler.setFormatter(fmt)
+    file_handler.setLevel(logging.INFO)
+    # 加到 root logger，所有子 logger 都會繼承
+    root = logging.getLogger()
+    root.addHandler(file_handler)
+    root.setLevel(logging.INFO)
+
+
 def main():
     parser = argparse.ArgumentParser(description="WebSocket Live Trading Bot")
     parser.add_argument("-c", "--config", required=True, help="配置檔案路徑")
@@ -35,6 +48,10 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Real 模式下僅記錄不發送訂單")
 
     args = parser.parse_args()
+
+    # 設定 log 檔案輸出（螢幕 + 檔案雙寫）
+    project_root = Path(__file__).parent.parent
+    _setup_file_logging(project_root / "logs" / "websocket.log")
 
     # 載入配置
     logger.info("📦 載入配置...")
