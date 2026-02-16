@@ -547,10 +547,13 @@ class TelegramBot:
                 label = f"今日 ({now.strftime('%m-%d')} UTC)"
 
             start_ms = int(start_dt.timestamp() * 1000)
+            end_ms = int(now.timestamp() * 1000)
             query_limit = 200 if not period or period not in ("7d", "30d", "all") else 1000
 
+            # 注意：Binance API 不帶 endTime 時，預設 endTime = startTime + 7 天
+            # 所以超過 7 天的查詢必須明確帶 endTime=now
             incomes = self.broker.get_income_history(
-                limit=query_limit, start_time=start_ms
+                limit=query_limit, start_time=start_ms, end_time=end_ms
             )
 
             realized = sum(i["income"] for i in incomes if i["income_type"] == "REALIZED_PNL")

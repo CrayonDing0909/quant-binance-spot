@@ -1111,24 +1111,31 @@ class WebSocketRunner:
 
         try:
             while self.is_running:
-                time.sleep(1)
+                try:
+                    time.sleep(1)
 
-                # 心跳監控
-                if self._last_ws_message_time > 0:
-                    elapsed = time.time() - self._last_ws_message_time
-                    if elapsed > HEARTBEAT_TIMEOUT:
-                        logger.warning(
-                            f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息，可能斷線"
-                        )
-                        try:
-                            self.notifier.send_error(
-                                f"⚠️  WebSocket 可能斷線 ({elapsed:.0f}s 無消息)\n"
-                                f"等待自動重連..."
+                    # 心跳監控
+                    if self._last_ws_message_time > 0:
+                        elapsed = time.time() - self._last_ws_message_time
+                        if elapsed > HEARTBEAT_TIMEOUT:
+                            logger.warning(
+                                f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息，可能斷線"
                             )
-                        except Exception:
-                            pass
-                        # Reset 避免重複告警
-                        self._last_ws_message_time = time.time()
+                            try:
+                                self.notifier.send_error(
+                                    f"⚠️  WebSocket 可能斷線 ({elapsed:.0f}s 無消息)\n"
+                                    f"等待自動重連..."
+                                )
+                            except Exception:
+                                pass
+                            # Reset 避免重複告警
+                            self._last_ws_message_time = time.time()
+                except KeyboardInterrupt:
+                    raise  # 交給外層處理
+                except Exception as e:
+                    logger.error(f"主迴圈異常（自動恢復）: {e}")
+                    logger.error(traceback.format_exc())
+                    time.sleep(5)
 
         except KeyboardInterrupt:
             logger.info("⛔ 收到 KeyboardInterrupt，停止 WebSocket...")
