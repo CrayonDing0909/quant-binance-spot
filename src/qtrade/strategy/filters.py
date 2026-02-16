@@ -378,6 +378,106 @@ def htf_trend_filter(
     return pd.Series(result, index=raw_pos.index)
 
 
+def htf_soft_trend_filter(
+    df: pd.DataFrame,
+    raw_pos: pd.Series,
+    htf_interval: str = "4h",
+    ema_fast: int = 20,
+    ema_slow: int = 50,
+    current_interval: str = "1h",
+    align_weight: float = 1.0,
+    counter_weight: float = 0.5,
+    neutral_weight: float = 0.75,
+) -> pd.Series:
+    """
+    多時間框架「軟」趨勢過濾器
+
+    與硬過濾器 (htf_trend_filter) 的區別：
+      - 硬過濾器：逆趨勢交易完全禁止 → 交易次數大幅減少
+      - 軟過濾器：逆趨勢交易以縮小倉位進行 → 保留交易機會，降低風險
+
+    權重邏輯：
+      - 順趨勢（e.g. 上升趨勢做多）→ align_weight (1.0)，全倉
+      - 逆趨勢（e.g. 上升趨勢做空）→ counter_weight (0.5)，半倉
+      - 無趨勢（EMA 糾纏）       → neutral_weight (0.75)，七五折
+
+    為什麼「軟」比「硬」好？
+      1. 避免在趨勢轉換期完全踏空
+      2. 逆趨勢的均值回歸交易仍有盈利機會
+      3. 降低倉位而非禁止，是更穩健的風控方式
+      4. 交易頻率保持穩定，不會出現長期空倉
+
+    Args:
+        df:               低級 K 線數據（e.g. 1h）
+        raw_pos:          原始持倉信號 [-1, 1]
+        htf_interval:     高級時間框架，e.g. "4h"
+        ema_fast:         快速 EMA 週期（在高級 TF 上），預設 20
+        ema_slow:         慢速 EMA 週期（在高級 TF 上），預設 50
+        current_interval: 當前 K 線週期，e.g. "1h"
+        align_weight:     順趨勢權重（預設 1.0，全倉）
+        counter_weight:   逆趨勢權重（預設 0.5，半倉）
+        neutral_weight:   無趨勢權重（預設 0.75）
+
+    Returns:
+        加權後的持倉序列（連續值）
+    """
+    # 獲取重採樣規則
+    resample_options = _RESAMPLE_MAP.get(current_interval, {})
+    resample_rule = resample_options.get(htf_interval)
+
+    if resample_rule is None:
+        return raw_pos
+
+    # 重採樣到高級時間框架
+    htf_df = _resample_ohlcv(df, resample_rule)
+    if len(htf_df) < ema_slow + 5:
+        return raw_pos
+
+    # 在高級 TF 上計算 EMA
+    ema_f = calculate_ema(htf_df["close"], ema_fast)
+    ema_s = calculate_ema(htf_df["close"], ema_slow)
+
+    # 計算趨勢強度（連續值，基於 EMA 間距）
+    # spread > 0 → 上升趨勢，spread < 0 → 下降趨勢
+    ema_spread = (ema_f - ema_s) / ema_s  # 正規化 spread
+
+    # 判斷離散趨勢方向（+1, 0, -1）
+    htf_trend = pd.Series(0.0, index=htf_df.index)
+    htf_trend[ema_f > ema_s] = 1.0
+    htf_trend[ema_f < ema_s] = -1.0
+
+    # 將趨勢映射回低級 TF
+    htf_trend_ltf = htf_trend.reindex(df.index, method="ffill").fillna(0.0)
+
+    # 計算權重
+    raw = raw_pos.values.copy()
+    trend = htf_trend_ltf.values
+    result = np.zeros(len(raw), dtype=float)
+
+    for i in range(len(raw)):
+        if raw[i] == 0:
+            result[i] = 0.0
+            continue
+
+        t = trend[i]
+        if t > 0.5:  # 上升趨勢
+            if raw[i] > 0:  # 做多 = 順趨勢
+                weight = align_weight
+            else:            # 做空 = 逆趨勢
+                weight = counter_weight
+        elif t < -0.5:  # 下降趨勢
+            if raw[i] < 0:  # 做空 = 順趨勢
+                weight = align_weight
+            else:            # 做多 = 逆趨勢
+                weight = counter_weight
+        else:  # 無明確趨勢
+            weight = neutral_weight
+
+        result[i] = raw[i] * weight
+
+    return pd.Series(result, index=raw_pos.index)
+
+
 def funding_rate_filter(
     df: pd.DataFrame,
     raw_pos: pd.Series,
