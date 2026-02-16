@@ -377,38 +377,67 @@ class HealthMonitor:
         """
         檢查狀態檔是否過期
         
-        用於偵測 cron 停止或程式當掉
+        用於偵測 cron 停止或程式當掉。
+        同時檢查 signal_state.json（WebSocket runner 每次處理信號都會更新），
+        取兩者中較新的時間戳記。
         """
-        if not self.state_path or not self.state_path.exists():
+        if not self.state_path:
             return None
-        
+
+        # 收集所有候選狀態檔的修改時間
+        candidates: list[tuple[Path, datetime]] = []
+
+        # 1. 原始 state file (real_state.json / paper_state.json)
+        if self.state_path.exists():
+            try:
+                mtime = datetime.fromtimestamp(
+                    self.state_path.stat().st_mtime, tz=timezone.utc
+                )
+                candidates.append((self.state_path, mtime))
+            except Exception:
+                pass
+
+        # 2. WebSocket runner 的 signal_state.json（同目錄）
+        signal_state_path = self.state_path.parent / "signal_state.json"
+        if signal_state_path.exists():
+            try:
+                mtime = datetime.fromtimestamp(
+                    signal_state_path.stat().st_mtime, tz=timezone.utc
+                )
+                candidates.append((signal_state_path, mtime))
+            except Exception:
+                pass
+
+        if not candidates:
+            return None
+
+        # 取最新的修改時間
+        best_path, best_mtime = max(candidates, key=lambda x: x[1])
+        age = datetime.now(timezone.utc) - best_mtime
+        age_minutes = age.total_seconds() / 60
+        source = best_path.name
+
         try:
-            mtime = datetime.fromtimestamp(
-                self.state_path.stat().st_mtime, tz=timezone.utc
-            )
-            age = datetime.now(timezone.utc) - mtime
-            age_minutes = age.total_seconds() / 60
-            
             if age_minutes >= self.state_stale_minutes:
                 return HealthCheck(
                     name="狀態更新",
                     status="critical",
-                    message=f"已 {age_minutes:.0f} 分鐘未更新，cron 可能停止",
+                    message=f"已 {age_minutes:.0f} 分鐘未更新，runner 可能停止",
                     value=age_minutes,
-                    details={"last_update": mtime.isoformat()},
+                    details={"last_update": best_mtime.isoformat(), "source": source},
                 )
             elif age_minutes >= self.state_stale_minutes * 0.8:
                 return HealthCheck(
                     name="狀態更新",
                     status="warning",
-                    message=f"接近過期: {age_minutes:.0f} 分鐘前更新",
+                    message=f"接近過期: {age_minutes:.0f} 分鐘前更新 ({source})",
                     value=age_minutes,
                 )
             
             return HealthCheck(
                 name="狀態更新",
                 status="ok",
-                message=f"正常: {age_minutes:.0f} 分鐘前更新",
+                message=f"正常: {age_minutes:.0f} 分鐘前更新 ({source})",
                 value=age_minutes,
             )
         except Exception as e:
