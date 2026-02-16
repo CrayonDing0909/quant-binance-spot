@@ -1810,6 +1810,65 @@ class BinanceFuturesBroker:
                 return order
         return None
 
+    # ── SL/TP 掛單（帶重試） ─────────────────────────────────
+
+    def _place_sl_tp_with_retry(
+        self,
+        symbol: str,
+        position_side: str,
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
+        max_retries: int = 3,
+        retry_delay: float = 0.5,
+    ) -> None:
+        """
+        掛 SL/TP，失敗自動重試（最多 max_retries 次，間隔 retry_delay 秒）。
+
+        主要解決：市價單剛成交 → Binance 尚未更新持倉 → place_stop_loss
+        查不到 qty → 掛單失敗的時序問題。
+        """
+        import time as _time
+
+        if stop_loss_price and stop_loss_price > 0:
+            for attempt in range(1, max_retries + 1):
+                sl_result = self.place_stop_loss(
+                    symbol=symbol, stop_price=stop_loss_price,
+                    position_side=position_side, reason="auto_stop_loss",
+                )
+                if sl_result:
+                    break
+                if attempt < max_retries:
+                    logger.warning(
+                        f"⚠️  {symbol}: SL 掛單失敗 (嘗試 {attempt}/{max_retries})，"
+                        f"{retry_delay}s 後重試..."
+                    )
+                    _time.sleep(retry_delay)
+                else:
+                    logger.error(
+                        f"❌ {symbol}: SL 掛單在 {max_retries} 次嘗試後仍失敗！"
+                        f"將由 _ensure_sl_tp 在下個 tick 補掛"
+                    )
+
+        if take_profit_price and take_profit_price > 0:
+            for attempt in range(1, max_retries + 1):
+                tp_result = self.place_take_profit(
+                    symbol=symbol, take_profit_price=take_profit_price,
+                    position_side=position_side, reason="auto_take_profit",
+                )
+                if tp_result:
+                    break
+                if attempt < max_retries:
+                    logger.warning(
+                        f"⚠️  {symbol}: TP 掛單失敗 (嘗試 {attempt}/{max_retries})，"
+                        f"{retry_delay}s 後重試..."
+                    )
+                    _time.sleep(retry_delay)
+                else:
+                    logger.error(
+                        f"❌ {symbol}: TP 掛單在 {max_retries} 次嘗試後仍失敗！"
+                        f"將由 _ensure_sl_tp 在下個 tick 補掛"
+                    )
+
     # ── 目標倉位執行 ────────────────────────────────────────
 
     def execute_target_position(
@@ -1908,12 +1967,10 @@ class BinanceFuturesBroker:
                     result = self.market_short(symbol, qty=open_qty, reason=reason)
 
                 if result:
-                    if stop_loss_price and stop_loss_price > 0:
-                        self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
-                                             position_side=position_side, reason="auto_stop_loss")
-                    if take_profit_price and take_profit_price > 0:
-                        self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
-                                               position_side=position_side, reason="auto_take_profit")
+                    self._place_sl_tp_with_retry(
+                        symbol, position_side,
+                        stop_loss_price, take_profit_price,
+                    )
                 return result or close_result
             return close_result
 
@@ -1923,28 +1980,25 @@ class BinanceFuturesBroker:
                 close_qty = min(change_notional / current_price, abs(pos.qty))
                 result = self.market_close(symbol, qty=close_qty, reason=f"{reason}_reduce_short")
                 # 減倉後重新掛 SL/TP（保護剩餘倉位）
-                if result and stop_loss_price and stop_loss_price > 0:
+                if result:
                     self.cancel_stop_loss(symbol)
-                    self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
-                                         position_side="SHORT", reason="auto_stop_loss")
-                if result and take_profit_price and take_profit_price > 0:
                     self.cancel_take_profit(symbol)
-                    self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
-                                           position_side="SHORT", reason="auto_take_profit")
+                    self._place_sl_tp_with_retry(
+                        symbol, "SHORT",
+                        stop_loss_price, take_profit_price,
+                    )
                 return result
             else:
                 # 開多或加多
                 qty = change_notional / current_price
                 result = self.market_long(symbol, qty=qty, reason=reason)
                 if result:
-                    if stop_loss_price and stop_loss_price > 0:
-                        self.cancel_stop_loss(symbol, "LONG")
-                        self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
-                                             position_side="LONG", reason="auto_stop_loss")
-                    if take_profit_price and take_profit_price > 0:
-                        self.cancel_take_profit(symbol, "LONG")
-                        self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
-                                               position_side="LONG", reason="auto_take_profit")
+                    self.cancel_stop_loss(symbol, "LONG")
+                    self.cancel_take_profit(symbol, "LONG")
+                    self._place_sl_tp_with_retry(
+                        symbol, "LONG",
+                        stop_loss_price, take_profit_price,
+                    )
                 return result
         else:
             # diff < 0
@@ -1953,28 +2007,25 @@ class BinanceFuturesBroker:
                 close_qty = min(change_notional / current_price, pos.qty)
                 result = self.market_close(symbol, qty=close_qty, reason=f"{reason}_reduce_long")
                 # 減倉後重新掛 SL/TP（保護剩餘倉位）
-                if result and stop_loss_price and stop_loss_price > 0:
+                if result:
                     self.cancel_stop_loss(symbol)
-                    self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
-                                         position_side="LONG", reason="auto_stop_loss")
-                if result and take_profit_price and take_profit_price > 0:
                     self.cancel_take_profit(symbol)
-                    self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
-                                           position_side="LONG", reason="auto_take_profit")
+                    self._place_sl_tp_with_retry(
+                        symbol, "LONG",
+                        stop_loss_price, take_profit_price,
+                    )
                 return result
             else:
                 # 開空或加空
                 qty = change_notional / current_price
                 result = self.market_short(symbol, qty=qty, reason=reason)
                 if result:
-                    if stop_loss_price and stop_loss_price > 0:
-                        self.cancel_stop_loss(symbol, "SHORT")
-                        self.place_stop_loss(symbol=symbol, stop_price=stop_loss_price,
-                                             position_side="SHORT", reason="auto_stop_loss")
-                    if take_profit_price and take_profit_price > 0:
-                        self.cancel_take_profit(symbol, "SHORT")
-                        self.place_take_profit(symbol=symbol, take_profit_price=take_profit_price,
-                                               position_side="SHORT", reason="auto_take_profit")
+                    self.cancel_stop_loss(symbol, "SHORT")
+                    self.cancel_take_profit(symbol, "SHORT")
+                    self._place_sl_tp_with_retry(
+                        symbol, "SHORT",
+                        stop_loss_price, take_profit_price,
+                    )
                 return result
 
     # ── 訂單管理 ──────────────────────────────────────────

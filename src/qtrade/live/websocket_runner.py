@@ -663,6 +663,10 @@ class WebSocketRunner:
             )
 
         # ── 8. SL/TP 補掛機制 (v2.5 + v2.7) ──────────
+        # 剛交易完等待 Binance API 更新持倉，避免查不到 position 導致 SL 漏掛
+        if trade:
+            time.sleep(1)
+
         # 交易後重新讀取實際倉位
         actual_pct = current_pct
         if not isinstance(self.broker, PaperBroker) and hasattr(self.broker, "get_position_pct"):
