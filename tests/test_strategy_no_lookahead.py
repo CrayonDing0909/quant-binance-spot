@@ -1,14 +1,35 @@
 import pandas as pd
-from qtrade.strategy.ema_cross import generate_positions
+import numpy as np
+from qtrade.strategy.rsi_adx_atr_strategy import generate_positions
 from qtrade.strategy.base import StrategyContext
 
 
 def test_positions_shifted_no_lookahead():
-    # dummy data
-    idx = pd.date_range("2024-01-01", periods=5, freq="h", tz="UTC")
-    df = pd.DataFrame({"close": [1, 2, 3, 2, 1], "open": [1, 2, 3, 2, 1]}, index=idx)
+    """確保策略信號有 shift，不會 look-ahead"""
+    np.random.seed(42)
+    n = 200
+    idx = pd.date_range("2024-01-01", periods=n, freq="h", tz="UTC")
+    close = pd.Series(np.cumsum(np.random.randn(n)) + 100, index=idx)
+    df = pd.DataFrame({
+        "open": close.shift(1).fillna(close.iloc[0]),
+        "high": close + abs(np.random.randn(n)),
+        "low": close - abs(np.random.randn(n)),
+        "close": close,
+        "volume": np.random.randint(100, 10000, n).astype(float),
+    }, index=idx)
 
-    pos = generate_positions(df, StrategyContext("TEST"), {"fast": 2, "slow": 3})
+    ctx = StrategyContext("TEST", market_type="futures", direction="both")
+    params = {
+        "rsi_period": 10,
+        "oversold": 30,
+        "overbought": 70,
+        "min_adx": 15,
+        "adx_period": 14,
+        "stop_loss_atr": 2.0,
+        "atr_period": 14,
+        "cooldown_bars": 3,
+    }
+    pos = generate_positions(df, ctx, params)
 
-    # first bar must be 0 due to shift
+    # first bar must be 0 (indicators need warmup, no look-ahead)
     assert float(pos.iloc[0]) == 0.0

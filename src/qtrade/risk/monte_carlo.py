@@ -511,7 +511,7 @@ class BootstrapSimulator:
             if sampled.std() > 1e-10:
                 sharpe_ratios[i] = (
                     sampled.mean() / sampled.std() *
-                    np.sqrt(self._config.n_simulations)
+                    np.sqrt(n_trades_per_sim)
                 )
             
             running_max = np.maximum.accumulate(cumulative)

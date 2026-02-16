@@ -191,13 +191,8 @@ src/qtrade/
 
 | 文件 | 行數 | 該看嗎？ | 內容 |
 |------|:----:|:--------:|------|
-| **CLI_REFERENCE.md** | ~320 | ⭐ **必看** | 你現在在看的這份（專案地圖） |
-| **PROFESSIONAL_UPGRADE_PLAN.md** | 566 | ⭐ **必看** | 策略升級計畫 + 因子研究 + P1/P2/P3 詳情 |
-| QUICK_START_GUIDE.md | ~3000 | 📖 查閱 | 完整教學（新手 → 部署 → FAQ），當百科全書查 |
-| RISK_MANAGEMENT.md | — | 📖 查閱 | 風控詳細說明 |
-| TRADING_STRATEGIES_REFERENCE.md | — | 📖 查閱 | 策略開發參考 |
-| DATA_QUALITY.md | — | 📖 查閱 | 數據品質說明 |
-| STRATEGY_PORTFOLIO.md | — | 📖 查閱 | 組合策略說明 |
+| **CLI_REFERENCE.md** | ~350 | ⭐ **必看** | 你現在在看的這份（專案地圖） |
+| **QUICK_START_GUIDE.md** | ~3000 | 📖 查閱 | 完整教學（新手 → 部署 → FAQ），當百科全書查 |
 
 ---
 
@@ -251,7 +246,7 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 
 - **Alpha 衰減**: RSI IC 從 2023 (+0.065) → 2026 (+0.018)，衰減 72%（已用 Dynamic RSI + IC 監控緩解）
 - **因子假多樣化**: RSI/BB/MACD/OBV 相關 |r| > 0.5（本質同一因子，Ensemble 僅用低相關配對）
-- 詳見 `PROFESSIONAL_UPGRADE_PLAN.md` 研究 A~F
+- 以上研究結論已整合進 v3.1 策略中
 
 ---
 

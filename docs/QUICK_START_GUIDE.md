@@ -941,7 +941,7 @@ position_sizing:
 - `0.5`（Half Kelly）：中等風險
 - `1.0`（Full Kelly）：最激進，不推薦
 
-詳細文件：[風險管理指南](RISK_MANAGEMENT.md)
+詳細參數說明請參考 `config/futures_rsi_adx_atr.yaml` 中的註解。
 
 ---
 
@@ -2993,10 +2993,9 @@ for s in ['BTCUSDT', 'ETHUSDT']:
 
 ## 下一步
 
-1. **學習更多策略**：查看 `STRATEGY_DEVELOPMENT.md`
-2. **了解風險管理**：查看 `RISK_MANAGEMENT.md`
-3. **學習策略組合**：查看 `STRATEGY_PORTFOLIO.md`
-4. **資料品質**：查看 `DATA_QUALITY.md`
+1. **專案地圖 & 指令速查**：查看 `CLI_REFERENCE.md`
+2. **策略參數調整**：編輯 `config/futures_rsi_adx_atr.yaml`
+3. **回測驗證**：使用 `scripts/run_backtest.py` 和 `scripts/validate.py`
 
 ---
 

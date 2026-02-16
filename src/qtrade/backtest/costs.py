@@ -57,21 +57,26 @@ def compute_funding_costs(
     - 多頭(pos>0) 且 rate>0 → 付費；rate<0 → 收費
     - 空頭(pos<0) 且 rate>0 → 收費；rate<0 → 付費
     - cost = position_value × funding_rate
-    - position_value = equity × pos × leverage
+    - position_value = equity × pos（名目曝險 = VBT 模擬的實際曝險）
+
+    重要：VBT 的 from_orders(size=pos, size_type="targetpercent") 模擬的
+    名目曝險 = equity × pos。leverage 只決定保證金需求，不改變名目曝險。
+    因此 funding 也基於 equity × pos 計算，不需乘以 leverage。
 
     Args:
         pos: 持倉信號 Series（[-1, 1]）
         equity: 資金曲線 Series（VBT 的 portfolio value）
         funding_rates: 對齊到 kline 的 funding rate Series（非結算時刻=0）
-        leverage: 槓桿倍數
+        leverage: 槓桿倍數（保留參數向後相容，但不再影響計算）
 
     Returns:
         FundingCostResult
     """
     # 逐 bar 計算 funding 成本
-    # cost = equity × pos × leverage × funding_rate
+    # cost = equity × pos × funding_rate
     # 正值 = 支出，負值 = 收入
-    position_value = equity * pos * leverage
+    # 注意：不乘 leverage，因為 VBT 回報也不乘 leverage
+    position_value = equity * pos
     per_bar_cost = position_value * funding_rates
 
     # 只保留有結算的 bar（funding_rate != 0）
@@ -206,9 +211,12 @@ def compute_volume_slippage(
     其中：
     - base_spread: 最小買賣價差（固定成本）
     - k: 衝擊係數（經驗值，與市場深度有關）
-    - trade_value: 該 bar 的交易金額 = |Δpos| × capital × leverage
+    - trade_value: 該 bar 的交易金額 = |Δpos| × capital
     - ADV: 過去 N bar 的平均成交額
     - power: 衝擊指數（0.5 = 平方根模型，學術標準）
+
+    重要：trade_value 不乘 leverage。VBT 的 from_orders(size=pos) 模擬的
+    交易金額 = Δpos × equity，不涉及槓桿放大。leverage 只決定保證金需求。
 
     Args:
         pos: 持倉信號 Series
@@ -219,14 +227,14 @@ def compute_volume_slippage(
         impact_power: 衝擊指數（預設 0.5 = 平方根）
         adv_lookback: 平均成交量回看期（bar 數）
         participation_rate: 最大市場佔比（用於 clip）
-        leverage: 槓桿倍數
+        leverage: 槓桿倍數（保留參數向後相容，但不再影響計算）
 
     Returns:
         SlippageResult
     """
-    # 計算每 bar 的交易金額
+    # 計算每 bar 的交易金額（不乘 leverage，與 VBT 模擬一致）
     delta_pos = pos.diff().fillna(pos.iloc[0])
-    trade_value = delta_pos.abs() * capital * leverage
+    trade_value = delta_pos.abs() * capital
 
     # 計算平均每日成交額（ADV）
     # volume 是以基礎貨幣計價，乘以 close 轉為 USDT
