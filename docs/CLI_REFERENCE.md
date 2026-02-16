@@ -34,6 +34,8 @@
 | **建立新策略** | `python scripts/create_strategy.py --name my_strategy --type custom` |
 | **Oracle 更新部署** | `git pull && ./scripts/setup_cron.sh --update` |
 | **Oracle 配置 Swap** | `bash scripts/setup_swap.sh` ⭐ NEW |
+| **Alpha Decay 監控** | `python scripts/monitor_alpha_decay.py -c config/futures_rsi_adx_atr.yaml` ⭐ NEW |
+| **策略相關性分析** | `python scripts/research_strategy_correlation.py -c config/futures_rsi_adx_atr.yaml` ⭐ NEW |
 
 ---
 
@@ -72,6 +74,8 @@
 | `query_db.py` ⭐ | SQLite 交易資料庫查詢（summary / trades / signals / equity / export） |
 | `health_check.py` | 系統健康檢查（cron 每 30 分鐘） |
 | `daily_report.py` | 每日績效報表 |
+| `monitor_alpha_decay.py` ⭐ | Alpha Decay 監控（IC 分析 + Telegram 通知） |
+| `cron_alpha_monitor.sh` ⭐ | Alpha Decay 監控排程腳本 |
 | `setup_cron.sh` | 自動設定 cron + 清 `.pyc`（`--update`） |
 | `setup_swap.sh` ⭐ | Oracle Cloud Swap 配置（1GB RAM 機器必備） |
 | `setup_secrets.py` | 設定 API Key / Telegram Token |
@@ -82,6 +86,7 @@
 |------|------|
 | `research_dynamic_rsi.py` ⭐ | Static vs Dynamic RSI 對比研究 |
 | `research_funding_filter.py` ⭐ | Funding Rate 過濾效果分析 |
+| `research_strategy_correlation.py` ⭐ | 策略相關性矩陣 + Ensemble 推薦 |
 
 ### 測試 & 開發
 
@@ -103,12 +108,15 @@
 |--------|------|:-----------:|
 | `futures_rsi_adx_atr.yaml` | **合約 RSI+ADX+ATR（主策略）** | ✅ |
 
-### 📊 回測用
+### 📊 回測 / 研究用
 
 | 配置檔 | 用途 |
 |--------|------|
 | `rsi_adx_atr.yaml` | 現貨版本 |
 | `rsi_adx_atr_rsi_exit.yaml` | RSI Exit 變體（TP=null） |
+| `futures_rsi_adx_atr_15m.yaml` ⭐ | 15m 時間框架（HTF=1h） |
+| `futures_rsi_adx_atr_4h.yaml` ⭐ | 4h 時間框架（HTF=1d） |
+| `futures_ensemble.yaml` ⭐ | RSI+MACD 組合策略 |
 | `futures_full_history.yaml` | 長期歷史回測 |
 | `rsi_adx_atr_full_history.yaml` | 現貨長期歷史 |
 
@@ -138,17 +146,18 @@
 src/qtrade/
 ├── config.py              ← 統一配置管理（AppConfig, load_config）
 ├── strategy/              ← 策略庫
-│   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略（支援 Dynamic RSI + Funding Filter）
+│   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略（Dynamic RSI + Funding + Vol Filter + HTF Soft）
+│   ├── ensemble_strategy.py     ← ⭐ RSI+MACD 組合策略
 │   ├── base.py                  ← StrategyContext
 │   ├── exit_rules.py            ← SL/TP/RSI Exit 邏輯
-│   ├── filters.py               ← ⭐ 過濾器（含 Funding Rate 過濾器）
+│   ├── filters.py               ← ⭐ 過濾器（Funding Rate / 波動率 / HTF 軟趨勢）
 │   ├── multi_factor.py          ← 多因子（實驗）
 │   ├── bb_mean_reversion.py     ← BB（實驗）
 │   ├── macd_momentum.py         ← MACD（實驗）
 │   └── ...其他範例
 ├── indicators/            ← 技術指標（RSI, ADX, ATR, BB, MACD, EMA, OBV...）
 ├── backtest/
-│   ├── run_backtest.py    ← 回測引擎 (run_symbol_backtest)
+│   ├── run_backtest.py    ← 回測引擎 (run_symbol_backtest + ⭐ Volatility Targeting)
 │   ├── costs.py           ← 成本模型（Funding Rate + Volume Slippage）
 │   ├── metrics.py         ← 績效指標 + Long/Short 分析
 │   ├── plotting.py        ← 繪圖
@@ -156,6 +165,7 @@ src/qtrade/
 ├── validation/
 │   ├── walk_forward.py    ← Walk-Forward Analysis + Summary
 │   ├── prado_methods.py   ← DSR, PBO, CPCV
+│   ├── ic_monitor.py      ← ⭐ Alpha Decay 監控（Rolling IC + 年度 IC + 警報）
 │   ├── consistency.py     ← Live/Backtest 一致性
 │   └── cross_asset.py     ← 跨資產驗證
 ├── live/
@@ -223,18 +233,25 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 | **執行優化** | Maker 優先下單（Taker 0.04% → Maker 0.02%，省一半手續費） | ✅ 完成 |
 | **WebSocket** | 事件驅動 Runner（延遲 5min → <1s，Oracle Cloud 1GB RAM 可跑） | ✅ 完成 |
 | **SQLite DB** | 結構化交易資料庫（trades / signals / daily_equity）+ CLI 查詢 | ✅ 完成 |
+| **波動率過濾器** | ATR/Price < 0.005 時不開倉，過濾低波動磨耗 | ✅ 完成 |
+| **HTF 軟趨勢過濾** | 4h EMA 連續權重（順趨勢 100% / 逆趨勢 50% / 無趨勢 75%） | ✅ 完成 |
+| **波動率目標倉位** | `position_sizing.method: "volatility"`，年化波動率 20% 目標 | ✅ 完成 |
+| **狀態機修復** | 平倉後不直接反手，強制回 Flat + cooldown 再入場 | ✅ 完成 |
+| **Alpha Decay 監控** | Rolling IC + 年度 IC + Telegram 警報（`monitor_alpha_decay.py`） | ✅ 完成 |
+| **P5 Ensemble** | RSI+MACD 組合策略（低相關 corr=0.15，Sharpe 提升） | ✅ 完成 |
+| **P6 時間框架** | 15m / 4h 配置檔已建立，供研究用 | ✅ 完成 |
 
 ### 🔲 待做
 
 | 項目 | 內容 | 優先級 | 說明 |
 |------|------|:------:|------|
-| **P5** | 策略 ensemble | 🔵 低 | 多策略信號投票 |
-| **P6** | 時間框架遷移 (1h → 4h/daily) | 🔵 低 | 如果 1h alpha 持續衰減 |
+| **Ensemble 實盤** | 組合策略實盤驗證 | 🟡 中 | 需累積 Paper Trading 數據 |
+| **15m/4h 回測** | 不同時間框架績效比較 | 🔵 低 | 配置已備，需下載對應數據 |
 
 ### ⚠️ 已知風險
 
-- **Alpha 衰減**: RSI IC 從 2023 (+0.065) → 2026 (+0.018)，衰減 72%（已用 Dynamic RSI 緩解）
-- **因子假多樣化**: RSI/BB/MACD/OBV 相關 |r| > 0.5（本質同一因子）
+- **Alpha 衰減**: RSI IC 從 2023 (+0.065) → 2026 (+0.018)，衰減 72%（已用 Dynamic RSI + IC 監控緩解）
+- **因子假多樣化**: RSI/BB/MACD/OBV 相關 |r| > 0.5（本質同一因子，Ensemble 僅用低相關配對）
 - 詳見 `PROFESSIONAL_UPGRADE_PLAN.md` 研究 A~F
 
 ---

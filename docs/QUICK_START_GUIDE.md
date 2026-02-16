@@ -24,7 +24,11 @@
 16. [執行優化：Maker 優先下單](#執行優化maker-優先下單) ⭐ v3.0
 17. [WebSocket 事件驅動](#websocket-事件驅動) ⭐ v3.0（延遲 <1 秒）
 18. [SQLite 交易資料庫](#sqlite-交易資料庫) ⭐ v3.0
-19. [完整範例：RSI 策略](#完整範例rsi策略)
+19. [波動率過濾 + HTF 軟趨勢過濾](#波動率過濾--htf-軟趨勢過濾) ⭐ v3.1
+20. [波動率目標倉位管理](#波動率目標倉位管理) ⭐ v3.1
+21. [Alpha Decay 監控](#alpha-decay-監控) ⭐ v3.1
+22. [策略組合 Ensemble](#策略組合-ensemble) ⭐ v3.1
+23. [完整範例：RSI 策略](#完整範例rsi策略)
 
 ---
 
@@ -91,6 +95,9 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - 策略註冊系統
    - **Dynamic RSI**（Rolling Percentile 自適應閾值，對抗 Alpha Decay）⭐ v3.0
    - **Funding Rate 過濾器**（獨立因子，過濾擁擠交易）⭐ v3.0
+   - **波動率過濾器**（ATR/Price 低於閾值時不開倉，過濾低波動磨耗）⭐ v3.1
+   - **HTF 軟趨勢過濾**（多時間框架連續權重，非二元閘門）⭐ v3.1
+   - **策略組合 Ensemble**（RSI+MACD 低相關配對，信號平均）⭐ v3.1
 
 2. **資料管理**
    - 自動下載幣安資料（現貨/合約）
@@ -118,12 +125,14 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - **Kelly 公式驗證** ⭐ NEW
    - **Live/Backtest 一致性驗證** ⭐ NEW
    - **Pre-Deploy 一致性檢查** ⭐ NEW（上架前必跑）
+   - **Alpha Decay 監控**（Rolling IC + 年度 IC 衰退偵測 + Telegram 警報）⭐ v3.1
 
 6. **風險管理**
    - 倉位管理
    - 風險限制
    - 組合風險管理
    - **Kelly 倉位計算** ⭐ NEW
+   - **波動率目標倉位**（目標年化波動率，自動調整持倉大小）⭐ v3.1
 
 7. **即時交易** ⭐ NEW
    - Paper Trading（模擬交易）
