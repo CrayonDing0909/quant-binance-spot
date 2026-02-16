@@ -1132,14 +1132,17 @@ pip install -r requirements.txt
 cp .env.example .env   # 或手動建立
 nano .env              # 填入 API Key、Telegram Token 等
 
-# 6. 設定 cron（自動交易）
-crontab -e
-# 加入：
-# 5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/live.log 2>&1
+# 6. 下載所有幣種的 K 線 + Funding Rate
+PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
+PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate
 
-# 7. 啟動 Telegram Bot（背景常駐）
+# 7. 用 tmux 啟動 WebSocket Runner（推薦）
 mkdir -p logs
-nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
+tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+
+# 8. 設定 cron（輔助任務，不含交易 — 交易由 WebSocket 負責）
+crontab -e
+# 詳見下方 cron 設定範例
 ```
 
 #### 7.5.2 更新代碼 & 重啟
@@ -1256,34 +1259,53 @@ python scripts/daily_report.py -c config/rsi_adx_atr.yaml --print-only
 
 ### 8.3 完整生產環境設定範例
 
-一台雲端伺服器上，你需要跑兩個東西：
+一台雲端伺服器上，你需要跑這些東西：
 
 | 元件 | 執行方式 | 說明 |
 |------|---------|------|
-| **交易引擎** | cron 定時 | 每小時跑一次 `run_live.py --once` |
-| **Telegram Bot** | nohup 常駐 | 24/7 接收命令查詢 |
+| **交易引擎** | tmux 常駐 | WebSocket Runner（即時觸發，延遲 <1s） |
+| **Telegram Bot** | WebSocket Runner 內建 | 自動啟用，不需額外啟動 |
+| **輔助任務** | cron 定時 | 報表、健康檢查、數據更新、Alpha 監控 |
 
-#### Cron Jobs 設定
+#### 交易引擎（tmux WebSocket）
+
+```bash
+# 啟動（或重啟）
+tmux kill-session -t trading 2>/dev/null
+tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+```
+
+#### Cron Jobs 設定（輔助任務）
 
 ```bash
 # 編輯 crontab
 crontab -e
 
-# === 交易執行 ===
-# 每小時第 5 分鐘（讓 K 線數據穩定）
-5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/live.log 2>&1
+# ⚠️ 交易由 WebSocket Runner 負責，cron 裡的 run_live.py 要註解掉！
+
+# === 數據更新 ===
+# 每 8 小時下載 Funding Rate
+10 */8 * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate >> logs/download_data.log 2>&1
 
 # === 監控 ===
 # 每 30 分鐘健康檢查
-*/30 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/health_check.py --config config/futures_rsi_adx_atr.yaml --real --notify >> logs/health.log 2>&1
+*/30 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/health_check.py -c config/futures_rsi_adx_atr.yaml --real --notify >> logs/health.log 2>&1
 
 # === 報表 ===
 # 每天 00:05 UTC 發送日報
 5 0 * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/daily_report.py -c config/futures_rsi_adx_atr.yaml >> logs/daily_report.log 2>&1
 
+# === 驗證 ===
+# 每週日 01:00 UTC 一致性驗證
+0 1 * * 0 cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/validate.py -c config/futures_rsi_adx_atr.yaml --quick >> logs/validation.log 2>&1
+
 # === Alpha Decay 監控 ===
 # 每週日 01:00 UTC 執行 IC 分析 + Telegram 通知
 0 1 * * 0 cd ~/quant-binance-spot && source .venv/bin/activate && bash scripts/cron_alpha_monitor.sh >> logs/alpha_monitor.log 2>&1
+
+# === Log 清理 ===
+# 每週一 04:00，保留 7 天
+0 4 * * 1 find ~/quant-binance-spot/logs -name "*.log" -mtime +7 -delete
 ```
 
 #### Telegram Bot 常駐
@@ -1328,7 +1350,7 @@ sleep 3 && tail -5 logs/telegram_bot.log
 ```yaml
 # 合約策略配置
 market:
-  symbols: ["BTCUSDT", "ETHUSDT"]
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -1336,7 +1358,7 @@ market:
 
 # 合約專屬配置
 futures:
-  leverage: 3             # 槓桿倍數（建議 1-5 倍）
+  leverage: 5             # 槓桿倍數（建議 1-5 倍）
   margin_type: "ISOLATED" # ISOLATED（逐倉）或 CROSSED（全倉）
   position_mode: "ONE_WAY" # ONE_WAY（單向）或 HEDGE（雙向）
 
@@ -1696,7 +1718,8 @@ portfolio:
   allocation:
     BTCUSDT: 1.00           # 100% 權益分配給 BTC
     ETHUSDT: 1.00           # 100% 權益分配給 ETH
-    # 總曝險 200%（兩幣各 100%）
+    SOLUSDT: 1.00           # 100% 權益分配給 SOL
+    # 總曝險 300%（三幣各 100%），5x 槓桿下保證金佔 60%
 ```
 
 **計算公式**：
@@ -1718,9 +1741,9 @@ portfolio:
 |------|-------------|------------|--------|----------|
 | 保守 | 0.30 | 自動平均（不寫 allocation） | ~70% | ~10% |
 | 平衡 | 0.10 | BTC 0.45 + ETH 0.45 | ~90% | ~15% |
-| 激進 | 0.00 | BTC 1.00 + ETH 1.00 | 200% | ~27% |
+| 激進 | 0.00 | BTC 1.00 + ETH 1.00 + SOL 1.00 | 300% | ~38% |
 
-> ⚠️ **總曝險 > 100%** 代表你在用槓桿放大倉位。MDD 也會等比放大。200% 曝險下 5x 槓桿保證金只佔 40%，但回撤可能到 27%。
+> ⚠️ **總曝險 > 100%** 代表你在用槓桿放大倉位。MDD 也會等比放大。300% 曝險下 5x 槓桿保證金佔 60%，回撤最大到 38%（離 65% 熔斷線還有 27% 緩衝）。
 
 **沒寫 `allocation` 時**：系統自動平均分配。2 個幣 + 30% 現金 = 每個幣 35%。
 
@@ -2199,7 +2222,7 @@ live:
 bash scripts/setup_swap.sh
 
 # 2. 用 tmux 背景啟動
-tmux new -d -s bot "cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
 
 # 3. 檢查狀態
 sleep 5 && cat logs/websocket.log
@@ -2209,15 +2232,15 @@ sleep 5 && cat logs/websocket.log
 
 ```bash
 # 查看即時 log
-tmux attach -t bot
+tmux attach -t trading
 # (Ctrl+B 然後 D 離開，程式繼續跑)
 
 # 不進 tmux，直接看最近 log
 tail -50 logs/websocket.log
 
 # 重啟
-tmux kill-session -t bot
-tmux new -d -s bot "cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+tmux kill-session -t trading
+tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
 ```
 
 ### 17.4 注意事項
@@ -2232,8 +2255,8 @@ tmux new -d -s bot "cd ~/quant-binance-spot && source .venv/bin/activate && pyth
 ```
 WebSocket Runner
 ├── 連線 Binance Futures WebSocket
-│   └── 訂閱 btcusdt@kline_1h, ethusdt@kline_1h
-├── Rolling DataFrame（每幣 300 根 K 線，~1MB）
+│   └── 訂閱 btcusdt@kline_1h, ethusdt@kline_1h, solusdt@kline_1h
+├── Rolling DataFrame（每幣 365 根 K 線，~1MB）
 ├── K 線收盤事件
 │   ├── 更新 DataFrame
 │   ├── 產生信號（generate_signal）
@@ -2399,20 +2422,20 @@ v3.1 修復了策略狀態機的一個重要問題：**平倉後直接反手**�
 ```yaml
 position_sizing:
   method: "volatility"       # 啟用波動率目標
-  target_volatility: 0.20    # 目標年化波動率 20%
-  vol_lookback: 20           # 計算波動率的回看期（bars）
+  target_volatility: 1.00    # 目標年化波動率 100%（全倉位）
+  vol_lookback: 168          # 計算波動率的回看期（168 bars = 7 天 @ 1h）
 ```
 
 **原理**：
 ```
 調整因子 = target_volatility / current_volatility
 
-如果當前年化波動率 = 40%，目標 = 20%
-→ 調整因子 = 20% / 40% = 0.5
+如果當前年化波動率 = 200%，目標 = 100%
+→ 調整因子 = 100% / 200% = 0.5
 → 原始信號 1.0 → 調整後 0.5（半倉）
 
-如果當前年化波動率 = 10%，目標 = 20%
-→ 調整因子 = 20% / 10% = 2.0（上限 cap）
+如果當前年化波動率 = 50%，目標 = 100%
+→ 調整因子 = 100% / 50% = 2.0（上限 cap）
 → 原始信號 1.0 → 調整後 1.0（全倉，不超過槓桿上限）
 ```
 
@@ -2854,6 +2877,7 @@ portfolio:
   allocation:
     BTCUSDT: 1.00  # 100% 權益
     ETHUSDT: 1.00
+    SOLUSDT: 1.00
 ```
 
 ### Q10: 實盤信號跟回測不一致（頻繁翻轉）？ ⭐ v2.8
@@ -2921,7 +2945,7 @@ python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --dry-run -
 
 # 下一次 cron 執行後檢查快取檔
 ls -la reports/futures/rsi_adx_atr/live/kline_cache/
-# 應看到 BTCUSDT.parquet 和 ETHUSDT.parquet
+# 應看到 BTCUSDT.parquet、ETHUSDT.parquet 和 SOLUSDT.parquet
 ```
 
 > ⚠️ **黃金法則**：每次 `git pull` 後都執行 `./scripts/setup_cron.sh --update`，養成習慣就不會踩坑。

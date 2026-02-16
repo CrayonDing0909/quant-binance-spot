@@ -25,17 +25,17 @@
 | **Hyperopt 優化** | `python scripts/run_hyperopt.py -c config/futures_rsi_adx_atr.yaml` |
 | **組合回測** | `python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml` |
 | **實盤（cron 模式）** | `python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once` |
-| **實盤（WebSocket 模式）** | `python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real` ⭐ NEW |
+| **實盤（WebSocket 模式）** | `python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real` ⭐ |
 | **Dry-run 測試** | `python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --dry-run --once` |
-| **查詢交易資料庫** | `python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml summary` ⭐ NEW |
+| **查詢交易資料庫** | `python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml summary` |
 | **Telegram Bot** | `python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real` |
 | **健康檢查** | `python scripts/health_check.py -c config/futures_rsi_adx_atr.yaml --real --notify` |
 | **每日報表** | `python scripts/daily_report.py -c config/futures_rsi_adx_atr.yaml` |
 | **建立新策略** | `python scripts/create_strategy.py --name my_strategy --type custom` |
 | **Oracle 更新部署** | `git pull && ./scripts/setup_cron.sh --update` |
-| **Oracle 配置 Swap** | `bash scripts/setup_swap.sh` ⭐ NEW |
-| **Alpha Decay 監控** | `python scripts/monitor_alpha_decay.py -c config/futures_rsi_adx_atr.yaml` ⭐ NEW |
-| **策略相關性分析** | `python scripts/research_strategy_correlation.py -c config/futures_rsi_adx_atr.yaml` ⭐ NEW |
+| **Oracle 配置 Swap** | `bash scripts/setup_swap.sh` |
+| **Alpha Decay 監控** | `python scripts/monitor_alpha_decay.py -c config/futures_rsi_adx_atr.yaml` |
+| **策略相關性分析** | `python scripts/research_strategy_correlation.py -c config/futures_rsi_adx_atr.yaml` |
 
 ---
 
@@ -77,7 +77,7 @@
 | `monitor_alpha_decay.py` ⭐ | Alpha Decay 監控（IC 分析 + Telegram 通知） |
 | `cron_alpha_monitor.sh` ⭐ | Alpha Decay 監控排程腳本 |
 | `setup_cron.sh` | 自動設定 cron + 清 `.pyc`（`--update`） |
-| `setup_swap.sh` ⭐ | Oracle Cloud Swap 配置（1GB RAM 機器必備） |
+| `setup_swap.sh` | Oracle Cloud Swap 配置（1GB RAM 機器必備） |
 | `setup_secrets.py` | 設定 API Key / Telegram Token |
 
 ### 研究 & 分析
@@ -106,7 +106,7 @@
 
 | 配置檔 | 用途 | Oracle 部署 |
 |--------|------|:-----------:|
-| `futures_rsi_adx_atr.yaml` | **合約 RSI+ADX+ATR（主策略）** | ✅ |
+| `futures_rsi_adx_atr.yaml` | **合約 RSI+ADX+ATR v3.1（BTC+ETH+SOL 三幣）** | ✅ |
 
 ### 📊 回測 / 研究用
 
@@ -114,9 +114,9 @@
 |--------|------|
 | `rsi_adx_atr.yaml` | 現貨版本 |
 | `rsi_adx_atr_rsi_exit.yaml` | RSI Exit 變體（TP=null） |
-| `futures_rsi_adx_atr_15m.yaml` ⭐ | 15m 時間框架（HTF=1h） |
-| `futures_rsi_adx_atr_4h.yaml` ⭐ | 4h 時間框架（HTF=1d） |
-| `futures_ensemble.yaml` ⭐ | RSI+MACD 組合策略 |
+| `futures_rsi_adx_atr_15m.yaml` | 15m 時間框架（HTF=1h） |
+| `futures_rsi_adx_atr_4h.yaml` | 4h 時間框架（HTF=1d） |
+| `futures_ensemble.yaml` | RSI+MACD 組合策略 |
 | `futures_full_history.yaml` | 長期歷史回測 |
 | `rsi_adx_atr_full_history.yaml` | 現貨長期歷史 |
 
@@ -147,7 +147,7 @@ src/qtrade/
 ├── config.py              ← 統一配置管理（AppConfig, load_config）
 ├── strategy/              ← 策略庫
 │   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略（Dynamic RSI + Funding + Vol Filter + HTF Soft）
-│   ├── ensemble_strategy.py     ← ⭐ RSI+MACD 組合策略
+│   ├── ensemble_strategy.py     ← RSI+MACD 組合策略
 │   ├── base.py                  ← StrategyContext
 │   ├── exit_rules.py            ← SL/TP/RSI Exit 邏輯
 │   ├── filters.py               ← ⭐ 過濾器（Funding Rate / 波動率 / HTF 軟趨勢）
@@ -191,15 +191,12 @@ src/qtrade/
 
 | 文件 | 行數 | 該看嗎？ | 內容 |
 |------|:----:|:--------:|------|
-| **CLI_REFERENCE.md** | ~200 | ⭐ **必看** | 你現在在看的這份（專案地圖） |
+| **CLI_REFERENCE.md** | ~320 | ⭐ **必看** | 你現在在看的這份（專案地圖） |
 | **PROFESSIONAL_UPGRADE_PLAN.md** | 566 | ⭐ **必看** | 策略升級計畫 + 因子研究 + P1/P2/P3 詳情 |
-| QUICK_START_GUIDE.md | 2459 | 📖 查閱 | 完整教學（新手 → 部署 → FAQ），當百科全書查 |
+| QUICK_START_GUIDE.md | ~3000 | 📖 查閱 | 完整教學（新手 → 部署 → FAQ），當百科全書查 |
 | RISK_MANAGEMENT.md | — | 📖 查閱 | 風控詳細說明 |
 | TRADING_STRATEGIES_REFERENCE.md | — | 📖 查閱 | 策略開發參考 |
 | DATA_QUALITY.md | — | 📖 查閱 | 數據品質說明 |
-| COMMAND_LINE_USAGE.md | 325 | ⚠️ 過時 | 被本文件取代 |
-| PROJECT_FEATURES.md | 593 | ⚠️ 過時 | 被 QUICK_START_GUIDE 取代 |
-| ARCHITECTURE_PROPOSAL.md | 217 | ⚠️ 過時 | 架構提案（未實施） |
 | STRATEGY_PORTFOLIO.md | — | 📖 查閱 | 組合策略說明 |
 
 ---
@@ -235,11 +232,13 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 | **SQLite DB** | 結構化交易資料庫（trades / signals / daily_equity）+ CLI 查詢 | ✅ 完成 |
 | **波動率過濾器** | ATR/Price < 0.005 時不開倉，過濾低波動磨耗 | ✅ 完成 |
 | **HTF 軟趨勢過濾** | 4h EMA 連續權重（順趨勢 100% / 逆趨勢 50% / 無趨勢 75%） | ✅ 完成 |
-| **波動率目標倉位** | `position_sizing.method: "volatility"`，年化波動率 20% 目標 | ✅ 完成 |
+| **波動率目標倉位** | `target_volatility: 1.00`（100% 年化波動率目標） | ✅ 完成 |
 | **狀態機修復** | 平倉後不直接反手，強制回 Flat + cooldown 再入場 | ✅ 完成 |
 | **Alpha Decay 監控** | Rolling IC + 年度 IC + Telegram 警報（`monitor_alpha_decay.py`） | ✅ 完成 |
 | **P5 Ensemble** | RSI+MACD 組合策略（低相關 corr=0.15，Sharpe 提升） | ✅ 完成 |
 | **P6 時間框架** | 15m / 4h 配置檔已建立，供研究用 | ✅ 完成 |
+| **三幣組合** | 加入 SOLUSDT（低相關 corr=0.21，Sharpe +34%，MDD -39%） | ✅ 完成 |
+| **驗證工具審計** | 10 個驗證工具全面審計 + Bug 修復（Bootstrap Sharpe、成本模型） | ✅ 完成 |
 
 ### 🔲 待做
 
@@ -256,6 +255,20 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 
 ---
 
+## 🏗️ 當前 Oracle 部署配置
+
+```
+交易對:    BTCUSDT, ETHUSDT, SOLUSDT（三幣）
+策略:      rsi_adx_atr v3.1（Dynamic RSI + Funding Filter + Vol Filter + HTF Soft）
+倉位分配:  各 100%（總曝險 300%）
+槓桿:      5x ISOLATED（保證金佔用 60%）
+波動率目標: 100%（target_volatility: 1.00）
+執行模式:  WebSocket 事件驅動（tmux session: trading）
+熔斷線:    65%（歷史 MDD 38.3%，緩衝 26.7%）
+```
+
+---
+
 ## 🚀 Oracle Cloud 部署方式
 
 ### 方式 A：WebSocket 事件驅動（推薦，延遲 <1 秒）
@@ -265,19 +278,19 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 bash scripts/setup_swap.sh
 
 # 2. 用 tmux 啟動 WebSocket Runner
-tmux new -d -s bot "cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
 
 # 3. （可選）設定 Alpha Decay 監控 cron
 # crontab -e 加入：
 # 0 1 * * 0 cd ~/quant-binance-spot && source .venv/bin/activate && bash scripts/cron_alpha_monitor.sh >> logs/alpha_monitor.log 2>&1
 
 # 4. 查看 log
-tmux attach -t bot           # 進入 tmux（Ctrl+B D 離開）
+tmux attach -t trading       # 進入 tmux（Ctrl+B D 離開）
 tail -50 logs/websocket.log  # 不進 tmux 也能看
 
-# 4. 重啟
-tmux kill-session -t bot
-tmux new -d -s bot "..."     # 同上
+# 5. 重啟
+tmux kill-session -t trading
+tmux new -d -s trading "..."  # 同上
 ```
 
 ### 方式 B：Cron 定時（傳統，延遲 ~5 分鐘）
@@ -288,6 +301,25 @@ tmux new -d -s bot "..."     # 同上
 ```
 
 > ⚠️ **兩種方式不可同時使用**。用 WebSocket 時要把 cron 裡的 `run_live.py` 註解掉。
+
+### 更新部署（加幣 / 改參數）
+
+```bash
+# 在本機改好 config，commit + push 後：
+ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255
+cd ~/quant-binance-spot
+git stash && git pull   # stash 本地改動再拉
+
+# 如果加了新幣，下載 K 線 + Funding Rate
+source .venv/bin/activate
+PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
+PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate
+
+# 重啟 runner
+tmux attach -t trading   # Ctrl+C 停舊的
+PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real
+# Ctrl+B, d 離開（或直接關 SSH 視窗）
+```
 
 ---
 
