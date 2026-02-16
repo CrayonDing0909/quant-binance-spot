@@ -8,7 +8,7 @@
 #   python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
 
 market:
-  symbols: ["BTCUSDT", "ETHUSDT"]
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -114,7 +114,7 @@ position_sizing:
   method: "volatility"         # "fixed" or "volatility"
   position_pct: 1.0            # method=fixed 時使用
   kelly_fraction: 0.25         # Kelly 保守因子（保留備用）
-  target_volatility: 0.20      # 目標年化波動率 20%
+  target_volatility: 1.00      # 目標年化波動率 100%
   vol_lookback: 168            # 回看 168 bars = 7 天（1h 數據）
 
 # 多幣種倉位分配
@@ -123,7 +123,8 @@ portfolio:
   allocation:
     BTCUSDT: 1.00         # 100% 權益
     ETHUSDT: 1.00         # 100% 權益
-    # 總曝險 200%（2x），5x 槓桿下保證金用 40%，MDD 預估 ~27%
+    SOLUSDT: 1.00         # 100% 權益
+    # 總曝險 300%（3x），5x 槓桿下保證金用 60%，MDD 預估 ~38%（離熔斷65%還有27%緩衝）
 
 # 實盤專屬配置
 live:
