@@ -417,12 +417,22 @@ def kelly_backtest_comparison(
         
         try:
             if scaled_pos is not None:
+                # 構建執行價格（消除 SL/TP look-ahead bias）
+                exit_exec_prices = base_pos.attrs.get("exit_exec_prices") if base_pos is not None else None
+                if exit_exec_prices is not None:
+                    exit_exec_prices = exit_exec_prices.reindex(close.index)
+                    kelly_exec_price = open_.copy()
+                    _sl_tp_mask = exit_exec_prices.notna()
+                    kelly_exec_price[_sl_tp_mask] = exit_exec_prices[_sl_tp_mask]
+                else:
+                    kelly_exec_price = open_
+
                 # 使用縮放後的倉位執行回測
                 test_pf = vbt.Portfolio.from_orders(
                     close=close,
                     size=scaled_pos,
                     size_type="targetpercent",
-                    price=open_,
+                    price=kelly_exec_price,
                     fees=fee,
                     slippage=slippage,
                     init_cash=initial_cash,

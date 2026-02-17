@@ -5,33 +5,45 @@
     策略只負責產生「進出場信號」（raw position），
     出場規則作為後處理器，疊加在任何策略上。
 
-止損/止盈檢查邏輯（v2.0 更新）：
+v3.1 重大修正 — 消除 SL/TP Look-Ahead Bias：
+    之前的問題：
+        - exit_rules 在 bar[i] 用 low[i] 檢測 SL 觸發
+        - 但 VBT 在 bar[i] 用 open[i] 執行出場
+        - open[i] 在 low[i] 之前發生 → 等於「看到未來會跌，提前出場」
+        - 這導致回測收益被系統性高估 3-4 倍
+
+    修正方案：
+        - apply_exit_rules 現在返回 (positions, execution_prices) 元組
+        - execution_prices[i] = SL/TP 價格（當 SL/TP 觸發時）
+        - execution_prices[i] = NaN（當信號觸發出場時，使用默認 open 價格）
+        - run_backtest.py 使用 execution_prices 構建自定義價格數組
+
+止損/止盈檢查邏輯（v2.0）：
     - 止損：用 K 棒「最低價」檢查（模擬硬止損/預掛單行為）
     - 止盈：用 K 棒「最高價」檢查
     - 這比用「收盤價」更真實，與實盤預掛單行為一致
 
-入場價格（v2.1 更新）：
+入場價格（v2.1）：
     - 入場價使用 open（開盤價），與 vectorbt from_orders(price=open_) 一致
     - 這確保 SL/TP 計算基於實際入場價，不存在收盤價 look-ahead
 
-自適應止損（v3.0 更新）：
+自適應止損（v3.0）：
     - 可選傳入 adaptive_sl_er 參數（ER 序列）
     - ER 低（震盪）→ 放寬 SL → 扛過噪聲
     - ER 高（趨勢）→ 收緊 SL → 保護利潤
-    - SL 乘數 = sl_atr_base × (er_sl_max - (er_sl_max - er_sl_min) × ER)
-    - 例：ER=0.1 → SL=3.0x ATR，ER=0.8 → SL=1.5x ATR
 
 用法：
     from qtrade.strategy.exit_rules import apply_exit_rules
 
     raw_pos = my_indicator_logic(df, params)
-    pos = apply_exit_rules(
+    pos, exec_prices = apply_exit_rules(
         df, raw_pos,
         stop_loss_atr=2.0,      # 止損 = 入場價 - 2×ATR
         take_profit_atr=3.0,    # 止盈 = 入場價 + 3×ATR
         trailing_stop_atr=2.5,  # 移動止損 = 最高價 - 2.5×ATR
         cooldown_bars=6,        # 止損後 6 根 bar 不進場
     )
+    # exec_prices[i] = 實際出場價 (SL/TP) 或 NaN (用 open)
 """
 from __future__ import annotations
 import pandas as pd
@@ -84,7 +96,7 @@ def apply_exit_rules(
     adaptive_sl_er: pd.Series | np.ndarray | None = None,
     er_sl_min: float = 1.5,
     er_sl_max: float = 3.0,
-) -> pd.Series:
+) -> tuple[pd.Series, pd.Series]:
     """
     對原始持倉信號疊加出場規則（支援做空）
 
@@ -107,7 +119,10 @@ def apply_exit_rules(
         er_sl_max:        ER=0（震盪）時的最寬 SL 乘數，預設 3.0
 
     Returns:
-        調整後的持倉序列 [-1, 1]
+        (positions, execution_prices) 元組：
+        - positions: 調整後的持倉序列 [-1, 1]
+        - execution_prices: 每 bar 的實際執行價格
+          SL/TP 觸發時 = SL/TP 價格，信號觸發/無交易 = NaN (用默認 open)
     """
     open_ = df["open"].values
     close = df["close"].values
@@ -127,6 +142,8 @@ def apply_exit_rules(
 
     raw = raw_pos.values.copy()
     result = np.zeros(n, dtype=float)
+    # 執行價格：SL/TP 觸發時記錄實際出場價，否則為 NaN（用默認 open）
+    exec_prices = np.full(n, np.nan, dtype=float)
 
     # 狀態變數
     # position_state: 0 = flat, 1 = long, -1 = short
@@ -161,6 +178,8 @@ def apply_exit_rules(
         # ── 持有多倉 ──
         if position_state == 1:
             triggered_exit = False
+            exit_by_sl = False
+            exit_by_tp = False
 
             # 更新最高價（用於移動止損）
             if current_high > extreme_since_entry:
@@ -171,21 +190,32 @@ def apply_exit_rules(
             # 檢查止損（用 low 價）
             if sl_price > 0 and current_low <= sl_price:
                 triggered_exit = True
+                exit_by_sl = True
 
             # 檢查止盈（用 high 價）
             if tp_price > 0 and current_high >= tp_price:
                 triggered_exit = True
+                exit_by_tp = True
 
             # 策略發出平倉或反向信號
             if raw[i] <= 0:
                 triggered_exit = True
 
             if triggered_exit:
+                # 記錄 SL/TP 出場價格（用於消除 look-ahead bias）
+                if exit_by_sl:
+                    exec_prices[i] = sl_price
+                elif exit_by_tp:
+                    exec_prices[i] = tp_price
+                # else: 信號觸發 → exec_prices[i] = NaN → 使用默認 open
+
                 # 平倉後是否反手做空
                 if raw[i] < 0:
-                    # 反手做空（入場價 = open，與 VBT 一致）
+                    # 反手做空
+                    # 入場價 = SL/TP 出場價（同一 bar 的反手用出場價入場更真實）
+                    _reversal_price = exec_prices[i] if not np.isnan(exec_prices[i]) else current_open
                     position_state = -1
-                    entry_price = current_open
+                    entry_price = _reversal_price
                     extreme_since_entry = current_low
                     if _sl_mult is not None and current_atr > 0:
                         sl_price = entry_price + _sl_mult * current_atr
@@ -211,6 +241,8 @@ def apply_exit_rules(
         # ── 持有空倉 ──
         elif position_state == -1:
             triggered_exit = False
+            exit_by_sl = False
+            exit_by_tp = False
 
             # 更新最低價（用於移動止損）
             if current_low < extreme_since_entry:
@@ -221,21 +253,30 @@ def apply_exit_rules(
             # 檢查止損（用 high 價，空倉止損在上方）
             if sl_price > 0 and current_high >= sl_price:
                 triggered_exit = True
+                exit_by_sl = True
 
             # 檢查止盈（用 low 價，空倉止盈在下方）
             if tp_price > 0 and current_low <= tp_price:
                 triggered_exit = True
+                exit_by_tp = True
 
             # 策略發出平倉或反向信號
             if raw[i] >= 0:
                 triggered_exit = True
 
             if triggered_exit:
+                # 記錄 SL/TP 出場價格
+                if exit_by_sl:
+                    exec_prices[i] = sl_price
+                elif exit_by_tp:
+                    exec_prices[i] = tp_price
+
                 # 平倉後是否反手做多
                 if raw[i] > 0:
-                    # 反手做多（入場價 = open，與 VBT 一致）
+                    # 反手做多
+                    _reversal_price = exec_prices[i] if not np.isnan(exec_prices[i]) else current_open
                     position_state = 1
-                    entry_price = current_open
+                    entry_price = _reversal_price
                     extreme_since_entry = current_high
                     if _sl_mult is not None and current_atr > 0:
                         sl_price = entry_price - _sl_mult * current_atr
@@ -305,4 +346,7 @@ def apply_exit_rules(
             else:
                 result[i] = 0.0
 
-    return pd.Series(result, index=raw_pos.index)
+    return (
+        pd.Series(result, index=raw_pos.index),
+        pd.Series(exec_prices, index=raw_pos.index),
+    )

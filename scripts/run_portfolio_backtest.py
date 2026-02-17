@@ -153,12 +153,22 @@ def run_portfolio_backtest(
         df = all_data[symbol]
         pos = all_positions[symbol]
         
-        # 用 vectorbt 計算（使用 open 價格執行，與 run_backtest.py 一致）
+        # 構建執行價格（消除 SL/TP look-ahead bias）
+        exit_exec_prices = pos.attrs.get("exit_exec_prices")
+        if exit_exec_prices is not None:
+            exit_exec_prices = exit_exec_prices.reindex(pos.index)
+            exec_price = df["open"].copy()
+            sl_tp_mask = exit_exec_prices.notna()
+            exec_price[sl_tp_mask] = exit_exec_prices[sl_tp_mask]
+        else:
+            exec_price = df["open"]
+        
+        # 用 vectorbt 計算（使用修正後的執行價格）
         pf = vbt.Portfolio.from_orders(
             close=df["close"],
             size=pos,
             size_type="targetpercent",
-            price=df["open"],  # 關鍵：使用開盤價執行
+            price=exec_price,
             fees=fee,
             slippage=slippage,
             init_cash=initial_cash,

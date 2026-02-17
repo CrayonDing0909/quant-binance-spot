@@ -127,14 +127,17 @@ position_sizing:
   target_volatility: 1.00      # 目標年化波動率 100%
   vol_lookback: 168            # 回看 168 bars = 7 天（1h 數據）
 
-# 多幣種倉位分配
+# 多幣種倉位分配（優化權重，基於 2022-2026 Grid Search）
+# 原始等權 1.0/1.0/1.0（總 3x）→ Sharpe 1.96, MDD -38.6%
+# 優化比例 15:50:35，維持總曝險 ~2x → Sharpe 1.98, MDD ~39%
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 1.00         # 100% 權益
-    ETHUSDT: 1.00         # 100% 權益
-    SOLUSDT: 1.00         # 100% 權益
-    # 總曝險 300%（3x），5x 槓桿下保證金用 60%，MDD 預估 ~38%（離熔斷65%還有27%緩衝）
+    BTCUSDT: 0.30         # 15% 比例 × 2x = 0.30（BTC 最弱，降低曝險）
+    ETHUSDT: 1.00         # 50% 比例 × 2x = 1.00（ETH 最穩定，主力）
+    SOLUSDT: 0.70         # 35% 比例 × 2x = 0.70（SOL 高收益，次主力）
+    # 總曝險 200%（2x），比原 3x 更保守，5x 槓桿下保證金用 40%
+    # 相對比例 BTC:ETH:SOL = 15:50:35（與回測優化一致）
 
 # 實盤專屬配置
 live:

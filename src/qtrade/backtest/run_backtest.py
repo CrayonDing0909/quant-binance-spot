@@ -320,6 +320,22 @@ def run_symbol_backtest(
     open_ = df["open"]
     fee = _bps_to_pct(cfg["fee_bps"])
 
+    # ── 構建執行價格（消除 SL/TP look-ahead bias）──────
+    # exit_exec_prices: SL/TP 觸發時為實際出場價，其餘為 NaN
+    exit_exec_prices = pos.attrs.get("exit_exec_prices")
+    if exit_exec_prices is not None:
+        # 對齊到日期過濾後的索引
+        exit_exec_prices = exit_exec_prices.reindex(pos.index)
+        # 自定義執行價格: SL/TP bar 使用出場價，其餘用 open
+        exec_price = open_.copy()
+        sl_tp_mask = exit_exec_prices.notna()
+        exec_price[sl_tp_mask] = exit_exec_prices[sl_tp_mask]
+        logger.info(
+            f"🔧 SL/TP 出場價修正: {sl_tp_mask.sum()} bars 使用實際 SL/TP 價格"
+        )
+    else:
+        exec_price = open_
+
     # ── 滑點模型 ──────────────────────────────────────
     sm_cfg = cfg.get("slippage_model", {})
     slippage_result: SlippageResult | None = None
@@ -354,7 +370,7 @@ def run_symbol_backtest(
         close=close,
         size=pos,
         size_type="targetpercent",
-        price=open_,
+        price=exec_price,
         fees=fee,
         slippage=slippage,
         init_cash=cfg["initial_cash"],

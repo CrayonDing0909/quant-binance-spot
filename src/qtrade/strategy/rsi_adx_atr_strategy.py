@@ -247,7 +247,7 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         _er_period = int(params.get("adaptive_sl_er_period", 10))
         adaptive_sl_er = calculate_efficiency_ratio(df["close"], period=_er_period)
 
-    pos = apply_exit_rules(
+    pos, _exit_exec_prices = apply_exit_rules(
         df, filtered_pos,
         stop_loss_atr=params.get("stop_loss_atr", 2.0),
         take_profit_atr=params.get("take_profit_atr", 3.0),
@@ -293,9 +293,13 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     # 根據市場類型 clip 信號範圍
     # Spot: [0, 1]，Futures: [-1, 1]
     if supports_short:
-        return pos.clip(-1.0, 1.0)
+        result = pos.clip(-1.0, 1.0)
     else:
-        return pos.clip(0.0, 1.0)
+        result = pos.clip(0.0, 1.0)
+
+    # 附加 SL/TP 出場價格，供 run_backtest 使用（消除 look-ahead bias）
+    result.attrs['exit_exec_prices'] = _exit_exec_prices
+    return result
 
 
 @register_strategy("rsi_adx_atr_trailing")
