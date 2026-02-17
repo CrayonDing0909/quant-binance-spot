@@ -8,7 +8,7 @@
 #   python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
 
 market:
-  symbols: ["ETHUSDT", "SOLUSDT", "AVAXUSDT"]
+  symbols: ["ETHUSDT", "SOLUSDT"]
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -137,21 +137,23 @@ position_sizing:
   vol_lookback: 168            # vol 模式用（已停用，留作參考）
 
 # 多幣種倉位分配
-# v3.1: BTC+ETH+SOL → Sharpe 2.19, MDD 34.6%, Return +1399%
-# v3.2: ETH+SOL+AVAX → Sharpe 2.32, MDD 33.4%, Return +2308%
-#   BTC 替換為 AVAX 的理由：
-#     - BTC Sharpe 0.59（倒數第二），2/4 年虧損
-#     - AVAX Sharpe 1.48，4/4 年正回報
-#     - AVAX vs ETH/SOL 相關性 0.30/0.33，分散效果與 BTC 相當
-#     - 用完全相同的策略參數（零調參），非過擬合
+# ⚠️ 嚴格回測教訓（含 Funding Rate + Volume Slippage）：
+#   - 簡化版（無 FR/滑點）會嚴重高估收益 → 「快樂表」
+#   - 只有 ETH/SOL 在嚴格回測下存活（流動性夠大）
+#   - AVAX/LINK/XRP/BNB 在嚴格版全部爆虧（流動性不足 + funding 成本）
+#   - BTC 嚴格版 Sharpe 0.21，勉強打平，不值得佔用資金
+#
+# 嚴格版結果（2022-2026）：
+#   ETH: Return +106%, Sharpe 0.65, 3/4 年正
+#   SOL: Return +890%, Sharpe 1.30, 4/4 年正
+#   組合: Return +436%, Sharpe 1.32, MDD 39.8%
 portfolio:
   cash_reserve: 0
   allocation:
-    ETHUSDT: 0.80         # ETH 穩定主力（Sharpe 1.12, 4/4 年正）
-    SOLUSDT: 1.00         # SOL 最強（Sharpe 2.16, 4/4 年正）
-    AVAXUSDT: 0.50        # AVAX 替代 BTC（Sharpe 1.48, 4/4 年正）
-    # 總曝險 230%（2.3x），與 v3.1 一致
-    # 相對比例 ETH:SOL:AVAX ≈ 35:43:22
+    ETHUSDT: 1.00         # ETH 穩定（嚴格版 Sharpe 0.65, 3/4 年正）
+    SOLUSDT: 1.00         # SOL 最強（嚴格版 Sharpe 1.30, 4/4 年正）
+    # 總曝險 200%（2x），5x 槓桿下保證金用 40%
+    # 只保留流動性最好的兩幣，避免小幣種滑點磨損
 
 # 實盤專屬配置
 live:
