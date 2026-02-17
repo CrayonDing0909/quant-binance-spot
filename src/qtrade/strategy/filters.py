@@ -6,7 +6,7 @@
     如果當前 bar 不滿足過濾條件，不允許新開倉（但不強制平倉）。
 
 用法：
-    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter
+    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter
 
     raw_pos = my_indicator_logic(df, params)
     pos = trend_filter(df, raw_pos, min_adx=25)
@@ -634,6 +634,69 @@ def smooth_positions(
             values[i] = prev
 
     return pd.Series(values, index=pos.index)
+
+
+def time_of_day_filter(
+    df: pd.DataFrame,
+    raw_pos: pd.Series,
+    blocked_hours: list[int] | None = None,
+) -> pd.Series:
+    """
+    Time-of-Day 過濾器：在指定 UTC 小時禁止新開倉
+
+    為什麼有效？
+        加密市場雖然 24/7 交易，但不同時段的流動性和波動品質差異顯著：
+        - 亞洲收盤 → 歐洲開盤過渡期（~09 UTC）：方向不明，whipsaw 多
+        - 歐洲午休（~12 UTC）：流動性斷層，假突破多
+        這些時段進場的交易，跨三幣種、跨年度都顯示負 Sharpe。
+
+    規則：
+        - 當前 bar 的 UTC 小時在 blocked_hours 中 → 不允許新開倉
+        - 已有持倉不受影響（不強制平倉）
+        - blocked_hours 為空或 None → 不過濾（原樣返回）
+
+    Args:
+        df:             K 線數據（index 為 DatetimeIndex UTC）
+        raw_pos:        原始持倉信號 [-1, 1]
+        blocked_hours:  要封鎖的 UTC 小時列表，e.g. [9, 12]
+
+    Returns:
+        過濾後的持倉序列
+    """
+    if not blocked_hours:
+        return raw_pos
+
+    blocked_set = set(blocked_hours)
+    hours = df.index.hour  # UTC hours
+
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0  # 0=flat, 1=long, -1=short
+
+    for i in range(len(raw)):
+        is_blocked = hours[i] in blocked_set
+
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                result[i] = raw[i]  # 已有多倉 → 保持
+            elif not is_blocked:
+                result[i] = raw[i]  # 允許新開多倉
+                position_state = 1
+            else:
+                result[i] = 0.0     # 封鎖時段 → 擋掉
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                result[i] = raw[i]  # 已有空倉 → 保持
+            elif not is_blocked:
+                result[i] = raw[i]  # 允許新開空倉
+                position_state = -1
+            else:
+                result[i] = 0.0     # 封鎖時段 → 擋掉
+        else:
+            result[i] = 0.0
+            position_state = 0
+
+    return pd.Series(result, index=raw_pos.index)
 
 
 def funding_rate_filter(

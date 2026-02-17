@@ -8,7 +8,7 @@
 #   python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --paper
 
 market:
-  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  symbols: ["ETHUSDT", "SOLUSDT", "AVAXUSDT"]
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -68,6 +68,12 @@ strategy:
     # 冷卻期 & 最小持倉
     cooldown_bars: 3       # 止損後等待 3 小時再入場
     min_hold_bars: 2       # 入場後至少持倉 2h（SL 不受限），防止 RSI 震盪快進快出
+    
+    # Time-of-Day 過濾（已驗證無效，不啟用）
+    # 原理：封鎖 UTC 09/12 等低品質時段的新開倉
+    # 結果：Sharpe 1.50→1.30，三幣全面下降
+    # 原因：加密 24/7 無明顯 session 邊界；封鎖時段也擋掉好交易
+    # blocked_hours: [9, 12]  # 保留備用，設為 null 或刪除此行即可停用
     
     # 🆕 波動率過濾器（過濾低波動磨耗）
     # ATR/Price < 0.005 時不開倉 → 避免震盪市頻繁交易
@@ -130,17 +136,22 @@ position_sizing:
   target_volatility: 0.50      # vol 模式用（已停用，留作參考）
   vol_lookback: 168            # vol 模式用（已停用，留作參考）
 
-# 多幣種倉位分配（優化權重，基於 2022-2026 Grid Search）
-# 原始等權 1.0/1.0/1.0（總 3x）→ Sharpe 1.96, MDD -38.6%
-# 優化比例 15:50:35，維持總曝險 ~2x → Sharpe 1.98, MDD ~39%
+# 多幣種倉位分配
+# v3.1: BTC+ETH+SOL → Sharpe 2.19, MDD 34.6%, Return +1399%
+# v3.2: ETH+SOL+AVAX → Sharpe 2.32, MDD 33.4%, Return +2308%
+#   BTC 替換為 AVAX 的理由：
+#     - BTC Sharpe 0.59（倒數第二），2/4 年虧損
+#     - AVAX Sharpe 1.48，4/4 年正回報
+#     - AVAX vs ETH/SOL 相關性 0.30/0.33，分散效果與 BTC 相當
+#     - 用完全相同的策略參數（零調參），非過擬合
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.30         # BTC 最弱（Sharpe 0.59），降到 0.30 保留分散效果
-    ETHUSDT: 1.00         # ETH 穩定主力（Sharpe 1.12）
-    SOLUSDT: 1.00         # SOL 高收益（Sharpe 2.16）
-    # 總曝險 230%（2.3x），5x 槓桿下保證金用 46%
-    # 相對比例 BTC:ETH:SOL ≈ 13:43:43
+    ETHUSDT: 0.80         # ETH 穩定主力（Sharpe 1.12, 4/4 年正）
+    SOLUSDT: 1.00         # SOL 最強（Sharpe 2.16, 4/4 年正）
+    AVAXUSDT: 0.50        # AVAX 替代 BTC（Sharpe 1.48, 4/4 年正）
+    # 總曝險 230%（2.3x），與 v3.1 一致
+    # 相對比例 ETH:SOL:AVAX ≈ 35:43:22
 
 # 實盤專屬配置
 live:

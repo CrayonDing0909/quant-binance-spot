@@ -24,7 +24,7 @@ from .exit_rules import apply_exit_rules
 from .filters import (
     trend_filter, htf_trend_filter, htf_soft_trend_filter,
     volatility_filter, funding_rate_filter, efficiency_ratio_filter,
-    smooth_positions,
+    smooth_positions, time_of_day_filter,
 )
 from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
@@ -168,6 +168,11 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         adx_period=adx_period,
         require_uptrend=True,
     )
+
+    # ── Time-of-Day 過濾（封鎖低品質時段）──
+    blocked_hours = params.get("blocked_hours")
+    if blocked_hours:
+        filtered_pos = time_of_day_filter(df, filtered_pos, blocked_hours=blocked_hours)
 
     # ── Funding Rate 過濾 (如果啟用) ──
     if params.get("use_funding_filter", False):
