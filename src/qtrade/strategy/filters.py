@@ -27,28 +27,38 @@ def trend_filter(
     df: pd.DataFrame,
     raw_pos: pd.Series,
     min_adx: float = 25.0,
+    short_min_adx: float | None = None,
     adx_period: int = 14,
     require_uptrend: bool = True,
 ) -> pd.Series:
     """
-    ADX 趨勢過濾器（支援做空）
+    ADX 趨勢過濾器（支援做空，多空可分別設門檻）
 
     規則：
-    - ADX < min_adx → 無趨勢，禁止新開倉
+    - ADX < min_adx → 無趨勢，禁止新開多倉
+    - ADX < short_min_adx → 趨勢不夠強，禁止新開空倉
     - 做多：require_uptrend=True 時，要求 +DI > -DI（上升趨勢）
     - 做空：require_uptrend=True 時，要求 -DI > +DI（下降趨勢）
     - 已有持倉不受影響（由出場規則或策略信號決定平倉）
 
+    為什麼空頭要更高的 ADX 門檻？
+        加密市場有天然的多頭偏差（long bias）。做空本質上逆風，
+        需要更強的下跌趨勢確認才能獲利。數據顯示空頭 WR 比多頭低 15-20pp，
+        提高空頭 ADX 門檻可過濾大量低品質空頭交易。
+
     Args:
         df:              K線數據
         raw_pos:         原始持倉信號 [-1, 1]
-        min_adx:         最小 ADX 值，低於此值不開新倉
+        min_adx:         做多最小 ADX 值，低於此值不開新多倉
+        short_min_adx:   做空最小 ADX 值，None = 與 min_adx 相同
         adx_period:      ADX 週期
-        require_uptrend: 是否要求趨勢方向配合（做多配上升趨勢，做空配下降趨勢）
+        require_uptrend: 是否要求趨勢方向配合
 
     Returns:
         過濾後的持倉序列
     """
+    _short_adx = short_min_adx if short_min_adx is not None else min_adx
+
     adx_data = calculate_adx(df, adx_period)
     adx = adx_data["ADX"].values
     plus_di = adx_data["+DI"].values
@@ -59,7 +69,8 @@ def trend_filter(
     position_state = 0  # 0 = flat, 1 = long, -1 = short
 
     for i in range(len(raw)):
-        has_trend = not np.isnan(adx[i]) and adx[i] >= min_adx
+        has_long_trend = not np.isnan(adx[i]) and adx[i] >= min_adx
+        has_short_trend = not np.isnan(adx[i]) and adx[i] >= _short_adx
         is_uptrend = plus_di[i] > minus_di[i]
         is_downtrend = minus_di[i] > plus_di[i]
 
@@ -67,7 +78,7 @@ def trend_filter(
             if position_state == 1:
                 # 已有多倉 → 保持
                 result[i] = raw[i]
-            elif has_trend and (is_uptrend or not require_uptrend):
+            elif has_long_trend and (is_uptrend or not require_uptrend):
                 # 允許新開多倉
                 result[i] = raw[i]
                 position_state = 1
@@ -78,8 +89,8 @@ def trend_filter(
             if position_state == -1:
                 # 已有空倉 → 保持
                 result[i] = raw[i]
-            elif has_trend and (is_downtrend or not require_uptrend):
-                # 允許新開空倉（需要下降趨勢）
+            elif has_short_trend and (is_downtrend or not require_uptrend):
+                # 允許新開空倉（需要更強的下降趨勢）
                 result[i] = raw[i]
                 position_state = -1
             else:
@@ -571,6 +582,58 @@ def efficiency_ratio_filter(
             result[i] = raw[i] * w
 
     return pd.Series(result, index=raw_pos.index)
+
+
+def smooth_positions(
+    pos: pd.Series,
+    min_delta: float = 0.30,
+) -> pd.Series:
+    """
+    倉位平滑器：忽略微小的倉位調整，減少不必要的交易。
+
+    問題背景：
+        HTF Soft Filter 每 bar 根據 4H EMA 趨勢狀態動態調整倉位權重
+        (1.0 / 0.75 / 0.5)，當趨勢在邊界震盪時，會在相鄰狀態間頻繁切換
+        (e.g. 0.75 ↔ 1.0)，每次切換 VBT 都算一筆交易 → 大量手續費損耗。
+
+    規則：
+        - 進場（0 → 非0）→ 永遠允許
+        - 出場（非0 → 0）→ 永遠允許
+        - 方向翻轉（多 ↔ 空）→ 永遠允許
+        - 同方向微調 < min_delta → 保持原倉位，不交易
+
+    為什麼 min_delta = 0.30？
+        HTF soft filter 的權重值為 {0.5, 0.75, 1.0}，
+        相鄰切換的 delta = 0.25（< 0.30 → 被擋），
+        跨級切換的 delta = 0.50（> 0.30 → 通過）。
+        這樣只阻擋噪音切換，不影響趨勢大翻轉。
+
+    Args:
+        pos:       倉位序列（經過所有 filter 後的值）
+        min_delta: 同方向最小變化閾值（預設 0.30）
+
+    Returns:
+        平滑後的倉位序列
+    """
+    values = pos.values.copy()
+
+    for i in range(1, len(values)):
+        prev = values[i - 1]
+        curr = values[i]
+
+        # 出場或進場 → 永遠允許
+        if curr == 0.0 or prev == 0.0:
+            continue
+
+        # 方向改變（多 ↔ 空）→ 永遠允許
+        if (prev > 0) != (curr > 0):
+            continue
+
+        # 同方向：只在變化足夠大時才調倉
+        if abs(curr - prev) < min_delta:
+            values[i] = prev
+
+    return pd.Series(values, index=pos.index)
 
 
 def funding_rate_filter(

@@ -131,17 +131,29 @@ class VolatilityPositionSizer(PositionSizer):
     根據資產波動率調整倉位，波動率越高，倉位越小。
     """
     
+    # 常見 interval → 年化因子（periods_per_year 的平方根）
+    ANNUALIZE_FACTORS = {
+        "1m": np.sqrt(525_600),
+        "5m": np.sqrt(105_120),
+        "15m": np.sqrt(35_040),
+        "1h": np.sqrt(8_760),
+        "4h": np.sqrt(2_190),
+        "1d": np.sqrt(365),
+    }
+
     def __init__(
         self,
         base_position_pct: float = 1.0,
         target_volatility: float = 0.15,
-        lookback: int = 20
+        lookback: int = 20,
+        interval: str = "1h",
     ):
         """
         Args:
             base_position_pct: 基礎倉位比例 [0, 1]
             target_volatility: 目標波動率（年化），預設 15%
             lookback: 計算波動率的回看期，預設 20
+            interval: K 線時間間隔（用於正確年化），預設 "1h"
         """
         if not 0 <= base_position_pct <= 1:
             raise ValueError("base_position_pct must be between 0 and 1")
@@ -151,6 +163,7 @@ class VolatilityPositionSizer(PositionSizer):
         self.base_position_pct = base_position_pct
         self.target_volatility = target_volatility
         self.lookback = lookback
+        self.annualize_factor = self.ANNUALIZE_FACTORS.get(interval, np.sqrt(8_760))
     
     def calculate_size(
         self,
@@ -171,9 +184,13 @@ class VolatilityPositionSizer(PositionSizer):
             target_value = equity * self.base_position_pct * signal
             return target_value / price if price > 0 else 0.0
         
-        # 計算當前波動率（年化）
-        current_vol = returns.tail(self.lookback).std() * np.sqrt(252)  # 假設日線數據
+        # 計算當前波動率（年化）— 使用正確的年化因子
+        current_vol = returns.tail(self.lookback).std() * self.annualize_factor
         
+        if current_vol <= 0 or np.isnan(current_vol):
+            target_value = equity * self.base_position_pct * signal
+            return target_value / price if price > 0 else 0.0
+
         # 根據波動率調整倉位
         vol_adjustment = min(self.target_volatility / current_vol, 2.0)  # 限制最大調整到 2 倍
         adjusted_position_pct = self.base_position_pct * vol_adjustment

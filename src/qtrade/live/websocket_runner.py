@@ -179,6 +179,7 @@ class WebSocketRunner:
                 base_position_pct=ps_cfg.position_pct,
                 target_volatility=ps_cfg.target_volatility,
                 lookback=ps_cfg.vol_lookback,
+                interval=self.interval,  # 傳入 interval 用於正確年化
             )
             logger.info(f"📊 倉位計算: 波動率目標 ({ps_cfg.target_volatility:.1%})")
 
@@ -249,11 +250,19 @@ class WebSocketRunner:
             else:
                 equity = 10000
 
+            # 取得收益率序列（VolatilityPositionSizer 需要）
+            returns = None
+            if isinstance(self.position_sizer, VolatilityPositionSizer):
+                df = self._kline_cache.get_cached(symbol)
+                if df is not None and len(df) > self.position_sizer.lookback:
+                    returns = df["close"].pct_change()
+
             # 計算倉位大小
             position_size = self.position_sizer.calculate_size(
                 signal=raw_signal,
                 equity=equity,
                 price=price,
+                returns=returns,
             )
 
             # 轉換為倉位比例

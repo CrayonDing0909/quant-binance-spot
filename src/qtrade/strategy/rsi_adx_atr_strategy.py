@@ -24,6 +24,7 @@ from .exit_rules import apply_exit_rules
 from .filters import (
     trend_filter, htf_trend_filter, htf_soft_trend_filter,
     volatility_filter, funding_rate_filter, efficiency_ratio_filter,
+    smooth_positions,
 )
 from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
@@ -163,6 +164,7 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     filtered_pos = trend_filter(
         df, raw_pos,
         min_adx=min_adx,
+        short_min_adx=params.get("short_min_adx"),  # None = 與 min_adx 相同
         adx_period=adx_period,
         require_uptrend=True,
     )
@@ -254,6 +256,7 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         trailing_stop_atr=params.get("trailing_stop_atr", None),
         atr_period=int(params.get("atr_period", 14)),
         cooldown_bars=int(params.get("cooldown_bars", 6)),
+        min_hold_bars=int(params.get("min_hold_bars", 0)),
         adaptive_sl_er=adaptive_sl_er,
         er_sl_min=float(params.get("er_sl_min", 1.5)),
         er_sl_max=float(params.get("er_sl_max", 3.0)),
@@ -289,6 +292,11 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             weight_at_low=float(params.get("er_weight_at_low", 0.30)),
             weight_at_high=float(params.get("er_weight_at_high", 1.0)),
         )
+
+    # ── 倉位平滑（減少 HTF 權重微調造成的假交易）──
+    min_rebalance = params.get("min_rebalance_pct")
+    if min_rebalance is not None:
+        pos = smooth_positions(pos, min_delta=float(min_rebalance))
 
     # 根據市場類型 clip 信號範圍
     # Spot: [0, 1]，Futures: [-1, 1]

@@ -285,17 +285,13 @@ def run_symbol_backtest(
     # 根據 direction 過濾信號（使用共用函數）
     pos = clip_positions_by_direction(pos, mt, dr)
 
-    # ── 波動率目標倉位縮放 ───────────────────────────
-    ps_cfg = cfg.get("position_sizing", {})
-    if ps_cfg.get("method") == "volatility":
-        pos = _apply_vol_scaling(
-            pos, df,
-            target_vol=ps_cfg.get("target_volatility", 0.15),
-            vol_lookback=ps_cfg.get("vol_lookback", 168),
-            max_scale=2.0,
-            min_scale=0.1,
-            interval=cfg.get("interval", "1h"),
-        )
+    # ── 波動率目標倉位縮放（已停用）─────────────────
+    # 停用原因：此區塊只在 run_symbol_backtest 生效，
+    # 但 run_portfolio_backtest 和 websocket_runner 都沒有 vol scaling，
+    # 導致驗證測試的 Sharpe/收益率比實盤樂觀 30-70%。
+    # 三條路徑統一為：不做 vol scaling，由 portfolio.allocation 控制曝險。
+    # 如需重新啟用，請同步修改 run_portfolio_backtest.py 和 websocket_runner.py。
+    # ───────────────────────────────────────────────
 
     # 應用風險限制（如果提供）
     if risk_limits is not None:

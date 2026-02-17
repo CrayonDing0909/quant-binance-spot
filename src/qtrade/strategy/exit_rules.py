@@ -93,6 +93,7 @@ def apply_exit_rules(
     take_profit_pct: float | None = None,
     atr_period: int = 14,
     cooldown_bars: int = 0,
+    min_hold_bars: int = 0,
     adaptive_sl_er: pd.Series | np.ndarray | None = None,
     er_sl_min: float = 1.5,
     er_sl_max: float = 3.0,
@@ -113,6 +114,9 @@ def apply_exit_rules(
         take_profit_pct:  止盈百分比（備選），None = 不用
         atr_period:       ATR 計算週期
         cooldown_bars:    出場後冷卻期（bar 數）
+        min_hold_bars:    最小持倉時間（bar 數），進場後至少持倉 N bars
+                          期間只有 SL/TP 可以觸發出場，信號出場被抑制。
+                          目的：避免 RSI 在閾值附近震盪導致的快速進出。
         adaptive_sl_er:   Efficiency Ratio 序列 [0,1]（可選）
                           傳入時啟用自適應止損
         er_sl_min:        ER=1（趨勢）時的最窄 SL 乘數，預設 1.5
@@ -153,6 +157,7 @@ def apply_exit_rules(
     tp_price = 0.0
     extreme_since_entry = 0.0  # 多倉追蹤最高價，空倉追蹤最低價
     cooldown_remaining = 0
+    bars_in_position = 0       # 持倉 bar 數（用於 min_hold_bars）
 
     for i in range(n):
         current_open = open_[i]
@@ -177,6 +182,7 @@ def apply_exit_rules(
 
         # ── 持有多倉 ──
         if position_state == 1:
+            bars_in_position += 1
             triggered_exit = False
             exit_by_sl = False
             exit_by_tp = False
@@ -187,18 +193,18 @@ def apply_exit_rules(
                 if trailing_stop_atr is not None and current_atr > 0:
                     sl_price = max(sl_price, extreme_since_entry - trailing_stop_atr * current_atr)
 
-            # 檢查止損（用 low 價）
+            # 檢查止損（用 low 價）— 不受 min_hold_bars 限制
             if sl_price > 0 and current_low <= sl_price:
                 triggered_exit = True
                 exit_by_sl = True
 
-            # 檢查止盈（用 high 價）
+            # 檢查止盈（用 high 價）— 不受 min_hold_bars 限制
             if tp_price > 0 and current_high >= tp_price:
                 triggered_exit = True
                 exit_by_tp = True
 
-            # 策略發出平倉或反向信號
-            if raw[i] <= 0:
+            # 策略發出平倉或反向信號 — 受 min_hold_bars 限制
+            if raw[i] <= 0 and bars_in_position >= min_hold_bars:
                 triggered_exit = True
 
             if triggered_exit:
@@ -215,6 +221,7 @@ def apply_exit_rules(
                     # 入場價 = SL/TP 出場價（同一 bar 的反手用出場價入場更真實）
                     _reversal_price = exec_prices[i] if not np.isnan(exec_prices[i]) else current_open
                     position_state = -1
+                    bars_in_position = 0
                     entry_price = _reversal_price
                     extreme_since_entry = current_low
                     if _sl_mult is not None and current_atr > 0:
@@ -240,6 +247,7 @@ def apply_exit_rules(
 
         # ── 持有空倉 ──
         elif position_state == -1:
+            bars_in_position += 1
             triggered_exit = False
             exit_by_sl = False
             exit_by_tp = False
@@ -250,18 +258,18 @@ def apply_exit_rules(
                 if trailing_stop_atr is not None and current_atr > 0:
                     sl_price = min(sl_price, extreme_since_entry + trailing_stop_atr * current_atr)
 
-            # 檢查止損（用 high 價，空倉止損在上方）
+            # 檢查止損（用 high 價，空倉止損在上方）— 不受 min_hold_bars 限制
             if sl_price > 0 and current_high >= sl_price:
                 triggered_exit = True
                 exit_by_sl = True
 
-            # 檢查止盈（用 low 價，空倉止盈在下方）
+            # 檢查止盈（用 low 價，空倉止盈在下方）— 不受 min_hold_bars 限制
             if tp_price > 0 and current_low <= tp_price:
                 triggered_exit = True
                 exit_by_tp = True
 
-            # 策略發出平倉或反向信號
-            if raw[i] >= 0:
+            # 策略發出平倉或反向信號 — 受 min_hold_bars 限制
+            if raw[i] >= 0 and bars_in_position >= min_hold_bars:
                 triggered_exit = True
 
             if triggered_exit:
@@ -276,6 +284,7 @@ def apply_exit_rules(
                     # 反手做多
                     _reversal_price = exec_prices[i] if not np.isnan(exec_prices[i]) else current_open
                     position_state = 1
+                    bars_in_position = 0
                     entry_price = _reversal_price
                     extreme_since_entry = current_high
                     if _sl_mult is not None and current_atr > 0:
@@ -304,6 +313,7 @@ def apply_exit_rules(
             if raw[i] > 0:
                 # 開多（入場價 = open，與 VBT 一致）
                 position_state = 1
+                bars_in_position = 0
                 entry_price = current_open
                 extreme_since_entry = current_high
 
@@ -325,6 +335,7 @@ def apply_exit_rules(
             elif raw[i] < 0:
                 # 開空（入場價 = open，與 VBT 一致）
                 position_state = -1
+                bars_in_position = 0
                 entry_price = current_open
                 extreme_since_entry = current_low
 

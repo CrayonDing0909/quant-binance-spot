@@ -38,7 +38,8 @@ strategy:
     overbought: 80
     
     # ADX 過濾器
-    min_adx: 15
+    min_adx: 15              # 做多 ADX 門檻（保持寬鬆，回調入場不需要強趨勢）
+    short_min_adx: 20        # 做空 ADX 門檻（加密多頭偏差，空頭要求更強趨勢確認）
     adx_period: 14
     
     # 💰 Funding Rate 過濾器 (新功能)
@@ -64,8 +65,9 @@ strategy:
     er_sl_min: 1.5              # ER=1（趨勢）→ SL = 1.5x ATR（最窄）
     er_sl_max: 2.5              # ER=0（震盪）→ SL = 2.5x ATR（最寬）
     
-    # 冷卻期
-    cooldown_bars: 3       # 原 5 → 3 (止損後等待 3 小時)
+    # 冷卻期 & 最小持倉
+    cooldown_bars: 3       # 止損後等待 3 小時再入場
+    min_hold_bars: 2       # 入場後至少持倉 2h（SL 不受限），防止 RSI 震盪快進快出
     
     # 🆕 波動率過濾器（過濾低波動磨耗）
     # ATR/Price < 0.005 時不開倉 → 避免震盪市頻繁交易
@@ -117,15 +119,16 @@ backtest:
 risk:
   max_drawdown_pct: 0.65  # 65% 熔斷（5x 槓桿下 1x MDD≈14% → 5x≈57%，留緩衝）
 
-# 🆕 倉位計算 — 波動率目標定位（Volatility Targeting）
-# 高波動期自動降低倉位，低波動期允許加倉
-# 效果：平滑權益曲線、降低 MDD、提升 risk-adjusted return
+# 倉位計算
+# 曝險由 portfolio.allocation 統一控制，不再額外做 vol scaling。
+# 原 "volatility" 模式在實盤從未生效（VolatilityPositionSizer 未收到 returns），
+# 且與回測不一致，已改為 "fixed"。
 position_sizing:
-  method: "volatility"         # "fixed" or "volatility"
-  position_pct: 1.0            # method=fixed 時使用
+  method: "fixed"              # "fixed" or "volatility" or "kelly"
+  position_pct: 1.0            # method=fixed 時使用（× portfolio.allocation 權重）
   kelly_fraction: 0.25         # Kelly 保守因子（保留備用）
-  target_volatility: 1.00      # 目標年化波動率 100%
-  vol_lookback: 168            # 回看 168 bars = 7 天（1h 數據）
+  target_volatility: 0.50      # vol 模式用（已停用，留作參考）
+  vol_lookback: 168            # vol 模式用（已停用，留作參考）
 
 # 多幣種倉位分配（優化權重，基於 2022-2026 Grid Search）
 # 原始等權 1.0/1.0/1.0（總 3x）→ Sharpe 1.96, MDD -38.6%
@@ -133,11 +136,11 @@ position_sizing:
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.50         # 15% 比例 × 2x = 0.30（BTC 最弱，降低曝險）
-    ETHUSDT: 1.00         # 50% 比例 × 2x = 1.00（ETH 最穩定，主力）
-    SOLUSDT: 1.00         # 35% 比例 × 2x = 0.70（SOL 高收益，次主力）
-    # 總曝險 200%（2x），比原 3x 更保守，5x 槓桿下保證金用 40%
-    # 相對比例 BTC:ETH:SOL = 15:50:35（與回測優化一致）
+    BTCUSDT: 0.30         # BTC 最弱（Sharpe 0.59），降到 0.30 保留分散效果
+    ETHUSDT: 1.00         # ETH 穩定主力（Sharpe 1.12）
+    SOLUSDT: 1.00         # SOL 高收益（Sharpe 2.16）
+    # 總曝險 230%（2.3x），5x 槓桿下保證金用 46%
+    # 相對比例 BTC:ETH:SOL ≈ 13:43:43
 
 # 實盤專屬配置
 live:
