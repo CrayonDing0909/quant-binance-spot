@@ -1,6 +1,6 @@
 # 📍 專案地圖 & 指令速查
 
-> **最後更新**: 2026-02-16 | **主力配置**: `config/futures_rsi_adx_atr.yaml`
+> **最後更新**: 2026-02-17 | **主力配置**: `config/futures_rsi_adx_atr.yaml`
 >
 > 這份文件是整個專案的「儀表板」。其他文件太長不想看？只看這份。
 
@@ -106,7 +106,7 @@
 
 | 配置檔 | 用途 | Oracle 部署 |
 |--------|------|:-----------:|
-| `futures_rsi_adx_atr.yaml` | **合約 RSI+ADX+ATR v3.1（BTC+ETH+SOL 三幣）** | ✅ |
+| `futures_rsi_adx_atr.yaml` | **合約 RSI+ADX+ATR v3.1（ETH+SOL 雙幣，嚴格回測篩選）** | ✅ |
 
 ### 📊 回測 / 研究用
 
@@ -147,17 +147,12 @@ src/qtrade/
 ├── config.py              ← 統一配置管理（AppConfig, load_config）
 ├── strategy/              ← 策略庫
 │   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略（Dynamic RSI + Funding + Vol Filter + HTF Soft）
-│   ├── ensemble_strategy.py     ← RSI+MACD 組合策略
 │   ├── base.py                  ← StrategyContext
-│   ├── exit_rules.py            ← SL/TP/RSI Exit 邏輯
-│   ├── filters.py               ← ⭐ 過濾器（Funding Rate / 波動率 / HTF 軟趨勢）
-│   ├── multi_factor.py          ← 多因子（實驗）
-│   ├── bb_mean_reversion.py     ← BB（實驗）
-│   ├── macd_momentum.py         ← MACD（實驗）
-│   └── ...其他範例
-├── indicators/            ← 技術指標（RSI, ADX, ATR, BB, MACD, EMA, OBV...）
+│   ├── exit_rules.py            ← SL/TP/RSI Exit + Adaptive SL 邏輯
+│   └── filters.py               ← ⭐ 過濾器（Funding Rate / 波動率 / HTF 軟趨勢 / ER）
+├── indicators/            ← 技術指標（RSI, ADX, ATR, EMA, Efficiency Ratio...）
 ├── backtest/
-│   ├── run_backtest.py    ← 回測引擎 (run_symbol_backtest + ⭐ Volatility Targeting)
+│   ├── run_backtest.py    ← 回測引擎 (run_symbol_backtest → ⭐ BacktestResult dataclass)
 │   ├── costs.py           ← 成本模型（Funding Rate + Volume Slippage）
 │   ├── metrics.py         ← 績效指標 + Long/Short 分析
 │   ├── plotting.py        ← 繪圖
@@ -169,17 +164,20 @@ src/qtrade/
 │   ├── consistency.py     ← Live/Backtest 一致性
 │   └── cross_asset.py     ← 跨資產驗證
 ├── live/
-│   ├── runner.py          ← 實盤 Runner（Polling 模式 LiveRunner）
-│   ├── websocket_runner.py ← ⭐ 實盤 Runner（WebSocket 事件驅動）
-│   ├── signal_generator.py ← 信號生成
+│   ├── base_runner.py     ← ⭐ 抽象基類（14 個共享安全機制：熔斷/SL/TP/倉位/日誌...）
+│   ├── runner.py          ← LiveRunner（Polling 模式，繼承 BaseRunner）
+│   ├── websocket_runner.py ← ⭐ WebSocketRunner（事件驅動，繼承 BaseRunner）
+│   ├── signal_generator.py ← 信號生成 → ⭐ SignalResult dataclass（型別安全）
 │   ├── binance_futures_broker.py ← Binance 合約 Broker（含 Maker 優先下單）
 │   ├── trading_db.py      ← ⭐ SQLite 交易資料庫
 │   ├── kline_cache.py     ← ⭐ 增量 K 線快取
 │   └── trading_state.py   ← 交易狀態持久化
 ├── data/
+│   ├── binance_client.py  ← ⭐ BinanceHTTP 基類（retry / HMAC / fallback）
+│   ├── binance_futures_client.py ← BinanceFuturesHTTP（繼承 BinanceHTTP）
 │   ├── funding_rate.py    ← Funding Rate 下載/對齊
 │   ├── storage.py         ← Parquet 存取
-│   └── ...多數據源客戶端
+│   └── ...多數據源客戶端（yfinance, ccxt, binance_vision）
 ├── risk/                  ← 風險管理 (position sizing, Kelly, Monte Carlo)
 ├── monitor/               ← 健康檢查、通知、Telegram Bot
 └── utils/                 ← 日誌、安全、時間工具
@@ -211,7 +209,7 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 
 ---
 
-## 🚧 當前專案狀態 (2026-02-16)
+## 🚧 當前專案狀態 (2026-02-17)
 
 ### ✅ 已完成
 
@@ -232,8 +230,14 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 | **Alpha Decay 監控** | Rolling IC + 年度 IC + Telegram 警報（`monitor_alpha_decay.py`） | ✅ 完成 |
 | **P5 Ensemble** | RSI+MACD 組合策略（低相關 corr=0.15，Sharpe 提升） | ✅ 完成 |
 | **P6 時間框架** | 15m / 4h 配置檔已建立，供研究用 | ✅ 完成 |
-| **三幣組合** | 加入 SOLUSDT（低相關 corr=0.21，Sharpe +34%，MDD -39%） | ✅ 完成 |
+| **三幣→雙幣** | 嚴格回測（含 FR + 滑點）篩選，僅 ETH+SOL 存活 | ✅ 完成 |
 | **驗證工具審計** | 10 個驗證工具全面審計 + Bug 修復（Bootstrap Sharpe、成本模型） | ✅ 完成 |
+| **回測系統重構** | `BacktestResult` dataclass + `validate_backtest_config` 防快樂表 | ✅ 完成 |
+| **BaseRunner 基類** | 14 個共享安全機制；WS 1216→328 行（-73%），消除重複 | ✅ 完成 |
+| **SignalResult** | dataclass 取代 raw dict，型別安全 + IDE 自動補全 | ✅ 完成 |
+| **HTTP Client 繼承** | `BinanceFuturesHTTP` 繼承 `BinanceHTTP`（226→92 行，-59%） | ✅ 完成 |
+| **死代碼清理** | 刪除 `broker_interface.py`、`portfolio.py`，清理 exports | ✅ 完成 |
+| **BaseRunner 測試** | 14 個單元測試覆蓋熔斷、倉位計算、信號處理 | ✅ 完成 |
 
 ### 🔲 待做
 
@@ -253,13 +257,14 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 ## 🏗️ 當前 Oracle 部署配置
 
 ```
-交易對:    BTCUSDT, ETHUSDT, SOLUSDT（三幣）
-策略:      rsi_adx_atr v3.1（Dynamic RSI + Funding Filter + Vol Filter + HTF Soft）
-倉位分配:  各 100%（總曝險 300%）
-槓桿:      5x ISOLATED（保證金佔用 60%）
-波動率目標: 100%（target_volatility: 1.00）
+交易對:    ETHUSDT, SOLUSDT（雙幣，嚴格回測篩選）
+策略:      rsi_adx_atr v3.1（Dynamic RSI + Funding Filter + Vol Filter + HTF Soft + Adaptive SL）
+倉位分配:  各 100%（總曝險 200%）
+槓桿:      5x ISOLATED（保證金佔用 40%）
+倉位計算:  fixed（× allocation 權重）
 執行模式:  WebSocket 事件驅動（tmux session: trading）
-熔斷線:    65%（歷史 MDD 38.3%，緩衝 26.7%）
+執行架構:  BaseRunner → WebSocketRunner（繼承，共享 14 個安全機制）
+熔斷線:    65%（歷史 MDD 39.8%，緩衝 25.2%）
 ```
 
 ---
@@ -272,20 +277,27 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 # 1. 配置 Swap（1GB RAM 機器必備，只需跑一次）
 bash scripts/setup_swap.sh
 
-# 2. 用 tmux 啟動 WebSocket Runner
-tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+# 2. 用 tmux 啟動 WebSocket Runner（含自動重啟）
+tmux kill-session -t trading 2>/dev/null
+tmux new -d -s trading 'while true; do
+  cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
+  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real;
+  echo "⚠️ Runner 退出，10秒後自動重啟..."; sleep 10;
+done'
 
-# 3. （可選）設定 Alpha Decay 監控 cron
+# 3. 等待啟動後查看日誌
+sleep 10 && tmux capture-pane -t trading -p | tail -20
+
+# 4. （可選）設定 Alpha Decay 監控 cron
 # crontab -e 加入：
 # 0 1 * * 0 cd ~/quant-binance-spot && source .venv/bin/activate && bash scripts/cron_alpha_monitor.sh >> logs/alpha_monitor.log 2>&1
 
-# 4. 查看 log
+# 5. 查看 log
 tmux attach -t trading       # 進入 tmux（Ctrl+B D 離開）
-tail -50 logs/websocket.log  # 不進 tmux 也能看
 
-# 5. 重啟
+# 6. 重啟
 tmux kill-session -t trading
-tmux new -d -s trading "..."  # 同上
+# 然後重新執行步驟 2
 ```
 
 ### 方式 B：Cron 定時（傳統，延遲 ~5 分鐘）

@@ -57,6 +57,8 @@
 - ✅ **策略名稱必須一致**：程式碼中的 `@register_strategy("my_strategy")` 和設定檔中的 `strategy.name: "my_strategy"` 必須完全一致
 - ✅ **參數在設定檔中**：策略的參數在 `config/base.yaml` 的 `strategy.params` 中設定
 - ✅ **切換策略很簡單**：只需要修改設定檔，無需修改程式碼
+- ✅ **回測結果標準化**：`run_symbol_backtest()` 回傳 `BacktestResult` dataclass，所有腳本共用同一套成本邏輯
+- ✅ **成本模型自動套用**：合約模式下 `funding_rate` 和 `slippage_model` 未開啟會自動警告
 
 ### 範例
 
@@ -112,6 +114,8 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
    - 自動產生報告和圖表
    - **支援做空模擬（合約）** ⭐ NEW
    - **組合回測**（多幣種權重配置）⭐ NEW
+   - **`BacktestResult` dataclass**（標準化回測輸出，防止路徑不一致）⭐ v3.2
+   - **`validate_backtest_config`**（合約模式自動警告未開成本模型）⭐ v3.2
 
 4. **策略優化**
    - 參數網格搜尋
@@ -137,7 +141,10 @@ python scripts/run_backtest.py  # 自動讀取設定，使用 my_rsi_strategy
 7. **即時交易** ⭐ NEW
    - Paper Trading（模擬交易）
    - Real Trading（真實交易）
+   - **BaseRunner 基類**（14 個共享安全機制，LiveRunner + WebSocketRunner 統一繼承）⭐ v3.2
+   - **SignalResult dataclass**（型別安全信號傳遞，取代 raw dict）⭐ v3.2
    - **自動 SL/TP 掛單**（標準 API + Algo Order 自動降級）⭐ NEW
+   - **Adaptive SL**（Efficiency Ratio 動態調整止損寬度）⭐ v3.2
    - **SL/TP 去重 + 持久化快取**（防止重複掛單）⭐ NEW
    - **SL/TP 自動補掛**（reconciliation）⭐ NEW
    - **SL/TP 觸發冷卻機制**（cooldown）⭐ NEW
@@ -1136,9 +1143,13 @@ nano .env              # 填入 API Key、Telegram Token 等
 PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
 PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate
 
-# 7. 用 tmux 啟動 WebSocket Runner（推薦）
+# 7. 用 tmux 啟動 WebSocket Runner（推薦，含自動重啟）
 mkdir -p logs
-tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+tmux new -d -s trading 'while true; do
+  cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
+  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real;
+  echo "⚠️ Runner 退出，10秒後自動重啟..."; sleep 10;
+done'
 
 # 8. 設定 cron（輔助任務，不含交易 — 交易由 WebSocket 負責）
 crontab -e
@@ -1263,16 +1274,22 @@ python scripts/daily_report.py -c config/rsi_adx_atr.yaml --print-only
 
 | 元件 | 執行方式 | 說明 |
 |------|---------|------|
-| **交易引擎** | tmux 常駐 | WebSocket Runner（即時觸發，延遲 <1s） |
+| **交易引擎** | tmux 常駐 | WebSocket Runner（即時觸發，延遲 <1s，繼承 BaseRunner） |
 | **Telegram Bot** | WebSocket Runner 內建 | 自動啟用，不需額外啟動 |
 | **輔助任務** | cron 定時 | 報表、健康檢查、數據更新、Alpha 監控 |
 
-#### 交易引擎（tmux WebSocket）
+> 💡 **架構說明**：`WebSocketRunner` 和 `LiveRunner`（Polling）都繼承自 `BaseRunner` 基類，共享 14 個安全機制（熔斷、Adaptive SL、倉位計算、防震盪等）。交易信號使用 `SignalResult` dataclass 傳遞，確保型別安全。
+
+#### 交易引擎（tmux WebSocket，含自動重啟）
 
 ```bash
 # 啟動（或重啟）
 tmux kill-session -t trading 2>/dev/null
-tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+tmux new -d -s trading 'while true; do
+  cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
+  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real;
+  echo "⚠️ Runner 退出，10秒後自動重啟..."; sleep 10;
+done'
 ```
 
 #### Cron Jobs 設定（輔助任務）
@@ -1308,14 +1325,16 @@ crontab -e
 0 4 * * 1 find ~/quant-binance-spot/logs -name "*.log" -mtime +7 -delete
 ```
 
-#### Telegram Bot 常駐
+#### Telegram Bot
+
+WebSocket Runner 已內建 Telegram Bot，不需額外啟動。如需獨立運行（例如 cron 模式下）：
 
 ```bash
-# 背景啟動（SSH 斷線也不會停）
+# 獨立啟動（僅在不使用 WebSocket Runner 時需要）
 cd ~/quant-binance-spot && source .venv/bin/activate
 nohup python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real > logs/telegram_bot.log 2>&1 &
 
-# 確認啟動成功（應看到「增量 K 線快取已啟用」和「已註冊 X 個命令」）
+# 確認啟動成功
 sleep 3 && tail -5 logs/telegram_bot.log
 ```
 
@@ -1350,7 +1369,7 @@ sleep 3 && tail -5 logs/telegram_bot.log
 ```yaml
 # 合約策略配置
 market:
-  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  symbols: ["ETHUSDT", "SOLUSDT"]  # 嚴格回測篩選後的雙幣組合
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -1361,14 +1380,19 @@ futures:
   leverage: 5             # 槓桿倍數（建議 1-5 倍）
   margin_type: "ISOLATED" # ISOLATED（逐倉）或 CROSSED（全倉）
   position_mode: "ONE_WAY" # ONE_WAY（單向）或 HEDGE（雙向）
+  direction: "both"       # 交易方向: "both"=多空都做
 
 strategy:
   name: "rsi_adx_atr"
   params:
+    rsi_mode: "dynamic"   # Dynamic RSI（對抗 Alpha Decay）
     rsi_period: 10
     oversold: 30           # RSI < 30 → 做多
-    overbought: 70         # RSI > 70 → 做空（合約專用）
-    min_adx: 15
+    overbought: 80         # RSI > 80 → 做空（合約專用）
+    min_adx: 15            # 做多 ADX 門檻
+    short_min_adx: 20      # 做空 ADX 門檻（加密多頭偏差，更嚴格）
+    adaptive_sl: true      # ⭐ 自適應止損（ER 動態調整 SL 寬度）
+    min_hold_bars: 2       # 入場後至少持倉 2h，防止 RSI 震盪快進快出
     # ...其他參數
 
 backtest:
@@ -1376,15 +1400,32 @@ backtest:
   fee_bps: 4              # 合約手續費較低
   slippage_bps: 3
   trade_on: "next_open"
+  funding_rate:
+    enabled: true          # ⭐ 必須開啟，否則會產生「快樂表」
+  slippage_model:
+    enabled: true          # ⭐ Volume-based 滑點模型
 
 # 風控（合約建議更保守）
 risk:
-  max_drawdown_pct: 0.15  # 15% 熔斷
+  max_drawdown_pct: 0.65  # 65% 熔斷（5x 槓桿建議）
 
-# 實盤專屬配置 (v2.8)
+# 倉位計算
+position_sizing:
+  method: "fixed"          # fixed（× allocation 權重）
+
+# 多幣種倉位分配（嚴格回測篩選後）
+portfolio:
+  cash_reserve: 0
+  allocation:
+    ETHUSDT: 1.00          # ETH（嚴格版 Sharpe 0.65）
+    SOLUSDT: 1.00          # SOL（嚴格版 Sharpe 1.30）
+    # 總曝險 200%，5x 槓桿下保證金佔 40%
+
+# 實盤專屬配置
 live:
   kline_cache: true           # 增量 K 線快取（策略從 bar 0 跑到最新，與回測一致）
   flip_confirmation: false    # 方向切換 2-tick 確認（快取模式下不需要）
+  prefer_limit_order: true    # Maker 優先（0.02% vs 0.04%）
 
 # Telegram 通知（可與現貨使用不同 Bot）
 notification:
@@ -1647,6 +1688,7 @@ risk:
    - 合約 max_drawdown_pct 設定更保守（如 10-15%）
    - 新手先用 `allocation: 0.35`，熟悉後再加大
    - 總曝險 > 100% 前先看懂 [§10.12 多幣種倉位分配](#1012-多幣種倉位分配--new)
+   - ⚠️ 加幣前務必跑嚴格回測（含 `funding_rate` + `slippage_model`），避免「快樂表」
 
 ### 10.10 Binance 帳戶模式說明
 
@@ -1712,14 +1754,14 @@ Binance Futures 有兩種持倉模式：
 #### 配置範例
 
 ```yaml
-# 多幣種倉位分配
+# 多幣種倉位分配（嚴格回測篩選後）
 portfolio:
   cash_reserve: 0           # 不保留現金
   allocation:
-    BTCUSDT: 1.00           # 100% 權益分配給 BTC
-    ETHUSDT: 1.00           # 100% 權益分配給 ETH
-    SOLUSDT: 1.00           # 100% 權益分配給 SOL
-    # 總曝險 300%（三幣各 100%），5x 槓桿下保證金佔 60%
+    ETHUSDT: 1.00           # 100% 權益分配給 ETH（嚴格版 Sharpe 0.65）
+    SOLUSDT: 1.00           # 100% 權益分配給 SOL（嚴格版 Sharpe 1.30）
+    # 總曝險 200%（雙幣各 100%），5x 槓桿下保證金佔 40%
+    # ⚠️ BTC/AVAX/LINK/XRP/BNB 在嚴格版（含 Funding Rate + Volume Slippage）全部爆虧
 ```
 
 **計算公式**：
@@ -1740,10 +1782,10 @@ portfolio:
 | 風格 | cash_reserve | allocation | 總曝險 | MDD 預估 |
 |------|-------------|------------|--------|----------|
 | 保守 | 0.30 | 自動平均（不寫 allocation） | ~70% | ~10% |
-| 平衡 | 0.10 | BTC 0.45 + ETH 0.45 | ~90% | ~15% |
-| 激進 | 0.00 | BTC 1.00 + ETH 1.00 + SOL 1.00 | 300% | ~38% |
+| 平衡 | 0.10 | ETH 0.45 + SOL 0.45 | ~90% | ~15% |
+| 激進 | 0.00 | ETH 1.00 + SOL 1.00 | 200% | ~40% |
 
-> ⚠️ **總曝險 > 100%** 代表你在用槓桿放大倉位。MDD 也會等比放大。300% 曝險下 5x 槓桿保證金佔 60%，回撤最大到 38%（離 65% 熔斷線還有 27% 緩衝）。
+> ⚠️ **總曝險 > 100%** 代表你在用槓桿放大倉位。MDD 也會等比放大。200% 曝險下 5x 槓桿保證金佔 40%，回撤最大到 40%（離 65% 熔斷線還有 25% 緩衝）。
 
 **沒寫 `allocation` 時**：系統自動平均分配。2 個幣 + 30% 現金 = 每個幣 35%。
 
@@ -1969,40 +2011,42 @@ python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BT
 # 自訂權重 (BTC 70% + ETH 30%)
 python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT --weights 0.7 0.3
 
-# 三幣種組合
-python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT SOLUSDT --weights 0.5 0.3 0.2
+# 雙幣種組合（當前生產配置）
+python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml --symbols ETHUSDT SOLUSDT --weights 0.5 0.5
 ```
 
 ### 12.2 組合回測結果範例
 
 ```
 📊 組合配置:
-   BTCUSDT: 50.0%
    ETHUSDT: 50.0%
+   SOLUSDT: 50.0%
 
-📅 共同時間範圍: 2017-08-17 → 2026-02-09
-  BTCUSDT: 回報 41764.97%, MDD -17.56%
-  ETHUSDT: 回報 1065444.70%, MDD -26.80%
+📅 共同時間範圍: 2022-01-01 → 2026-02-17
+  ETHUSDT: Sharpe 0.65, 3/4 年正
+  SOLUSDT: Sharpe 1.30, 4/4 年正
 
 ======================================================================
-  組合回測結果: BTCUSDT + ETHUSDT
+  組合回測結果: ETHUSDT + SOLUSDT（嚴格版，含 Funding Rate + Volume Slippage）
 ======================================================================
 
 指標                                           組合策略        組合 Buy&Hold
 ----------------------------------------------------------------------
-Total Return [%]                        553604.83            1036.55
-Annualized Return [%]                      176.53              33.22
-Max Drawdown [%]                            22.80              87.47
-Sharpe Ratio                                 4.30               0.76
+Total Return [%]                           436.00             xxx.xx
+Sharpe Ratio                                 1.32               x.xx
+Max Drawdown [%]                            39.80              xx.xx
 ```
+
+> ⚠️ 以上為「嚴格版」回測結果（含 Funding Rate + Volume Slippage 成本）。簡易版（不含成本）數字會高很多，但不可信。
 
 ### 12.3 組合優化建議
 
 | 配置 | 特點 | 適合 |
 |------|------|------|
-| BTC 70% + ETH 30% | Sharpe 最高，回撤最低 | 穩健型 |
-| BTC 50% + ETH 50% | 平衡收益與風險 | 平衡型 |
-| BTC 30% + ETH 70% | 收益最高，風險較大 | 進取型 |
+| ETH 50% + SOL 50% | 平衡收益與風險 | ⭐ 推薦（嚴格回測驗證） |
+| ETH 100% + SOL 100% | 收益最高，槓桿放大 | 激進型（目前生產配置） |
+
+> ⚠️ 加入新幣前務必跑嚴格回測（`funding_rate.enabled: true` + `slippage_model.enabled: true`），避免「快樂表」。
 
 ### 12.4 輸出文件
 
@@ -2221,11 +2265,16 @@ live:
 # 1. 配置 Swap（Oracle Cloud 1GB RAM 必備，只需跑一次）
 bash scripts/setup_swap.sh
 
-# 2. 用 tmux 背景啟動
-tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+# 2. 用 tmux 背景啟動（含自動重啟）
+tmux kill-session -t trading 2>/dev/null
+tmux new -d -s trading 'while true; do
+  cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
+  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real;
+  echo "⚠️ Runner 退出，10秒後自動重啟..."; sleep 10;
+done'
 
 # 3. 檢查狀態
-sleep 5 && cat logs/websocket.log
+sleep 10 && tmux capture-pane -t trading -p | tail -20
 ```
 
 ### 17.3 日常管理
@@ -2236,11 +2285,11 @@ tmux attach -t trading
 # (Ctrl+B 然後 D 離開，程式繼續跑)
 
 # 不進 tmux，直接看最近 log
-tail -50 logs/websocket.log
+tmux capture-pane -t trading -p | tail -50
 
 # 重啟
 tmux kill-session -t trading
-tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real 2>&1 | tee logs/websocket.log"
+# 然後重新執行上方 tmux new 指令
 ```
 
 ### 17.4 注意事項
@@ -2253,15 +2302,16 @@ tmux new -d -s trading "cd ~/quant-binance-spot && source .venv/bin/activate && 
 ### 17.5 架構（Oracle Cloud 1GB RAM 可跑）
 
 ```
-WebSocket Runner
-├── 連線 Binance Futures WebSocket
-│   └── 訂閱 btcusdt@kline_1h, ethusdt@kline_1h, solusdt@kline_1h
-├── Rolling DataFrame（每幣 365 根 K 線，~1MB）
-├── K 線收盤事件
-│   ├── 更新 DataFrame
-│   ├── 產生信號（generate_signal）
-│   ├── 執行交易（broker.execute）
-│   └── 寫入 SQLite + Telegram 通知
+WebSocketRunner (繼承 BaseRunner)
+├── BaseRunner 提供：
+│   ├── 14 個共享安全機制（熔斷/Adaptive SL/倉位計算/防震盪/...）
+│   ├── SignalResult dataclass（型別安全信號傳遞）
+│   └── SL/TP 管理、Telegram 通知、日誌記錄
+├── WebSocketRunner 負責：
+│   ├── 連線 Binance Futures WebSocket
+│   │   └── 訂閱 ethusdt@kline_1h, solusdt@kline_1h
+│   ├── Rolling DataFrame（每幣 365 根 K 線，~1MB）
+│   └── K 線收盤事件 → 呼叫 BaseRunner 共用邏輯
 └── 記憶體：~50MB（不載入 vectorbt）
 ```
 
@@ -2875,8 +2925,7 @@ portfolio:
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 1.00  # 100% 權益
-    ETHUSDT: 1.00
+    ETHUSDT: 1.00  # 100% 權益
     SOLUSDT: 1.00
 ```
 
@@ -2945,12 +2994,47 @@ python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --dry-run -
 
 # 下一次 cron 執行後檢查快取檔
 ls -la reports/futures/rsi_adx_atr/live/kline_cache/
-# 應看到 BTCUSDT.parquet、ETHUSDT.parquet 和 SOLUSDT.parquet
+# 應看到 ETHUSDT.parquet 和 SOLUSDT.parquet
 ```
 
 > ⚠️ **黃金法則**：每次 `git pull` 後都執行 `./scripts/setup_cron.sh --update`，養成習慣就不會踩坑。
 
-### Q14: 出現不明交易（bot log 裡沒有記錄）？ ⭐ NEW
+### Q14: 回測數據漂亮但實盤不行（「快樂表」）？ ⭐ NEW
+
+**症狀**：回測顯示高 Sharpe / 高收益，但實際交易虧損。
+
+**常見原因**：
+1. **Funding Rate 未開啟**：合約持倉有資金費率成本，回測不含此成本會嚴重高估
+2. **Volume Slippage 未開啟**：大單交易有市場衝擊，固定滑點低估真實成本
+3. **不同腳本走不同路徑**：組合回測繞過了成本模型
+
+**解決方法**：
+
+```yaml
+# config 中必須開啟（合約模式）
+backtest:
+  funding_rate:
+    enabled: true        # ⭐ 必須
+  slippage_model:
+    enabled: true        # ⭐ 必須
+```
+
+```bash
+# 嚴格回測（含所有成本模型）— 預設行為
+python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml
+
+# 簡易回測（跳過成本模型，僅供快速對比）
+python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --simple
+```
+
+**系統防護機制**：
+- `validate_backtest_config()` 會在合約模式下自動警告未開啟的成本模型
+- `BacktestResult` dataclass 標準化回測輸出，所有腳本共用同一套成本邏輯
+- 組合回測 (`run_portfolio_backtest.py`) 已重構為呼叫 `run_symbol_backtest`，不再繞過成本
+
+**教訓**：AVAX/LINK/XRP/BNB 在簡易回測下看似不錯，嚴格版全部爆虧。**永遠用嚴格版做決策**。
+
+### Q15: 出現不明交易（bot log 裡沒有記錄）？
 
 **症狀**：在 Binance 交易記錄中看到某個時間的交易，但 bot 的所有 log 文件都沒有對應記錄。
 
