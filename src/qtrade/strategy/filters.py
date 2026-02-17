@@ -478,6 +478,101 @@ def htf_soft_trend_filter(
     return pd.Series(result, index=raw_pos.index)
 
 
+def efficiency_ratio_filter(
+    df: pd.DataFrame,
+    raw_pos: pd.Series,
+    er_period: int = 10,
+    er_mode: str = "gate",
+    er_min: float = 0.20,
+    er_threshold_low: float = 0.20,
+    er_threshold_high: float = 0.50,
+    weight_at_low: float = 0.30,
+    weight_at_high: float = 1.0,
+) -> pd.Series:
+    """
+    Efficiency Ratio 震盪過濾器
+
+    Kaufman Efficiency Ratio 衡量價格移動的「效率」：
+        ER = |淨位移| / 總路徑
+        ER → 1 = 趨勢（價格走直線），ER → 0 = 震盪（價格來回走）
+
+    支援兩種模式：
+
+    1. **gate（硬閘門）**：ER < er_min 時不允許新開倉，已有倉位不受影響。
+       類似 ADX filter 的行為 — 只擋入場，不強制出場，不產生額外交易。
+       **推薦使用**：避免倉位頻繁微調造成交易摩擦。
+
+    2. **scale（軟縮放）**：根據 ER 值線性縮放倉位大小。
+       ER 高 → 全倉，ER 低 → 降倉。
+       注意：ER 每 bar 都在變，會導致倉位持續微調 → 增加交易次數。
+
+    Args:
+        df:                 K 線數據
+        raw_pos:            原始持倉信號 [-1, 1]
+        er_period:          ER 回看週期（預設 10 bars = Kaufman 建議值）
+        er_mode:            "gate"（硬閘門，推薦）或 "scale"（軟縮放）
+        er_min:             gate 模式的最低 ER（低於此值不開新倉）
+        er_threshold_low:   scale 模式的低 ER 閾值
+        er_threshold_high:  scale 模式的高 ER 閾值
+        weight_at_low:      scale 模式低 ER 時的倉位權重
+        weight_at_high:     scale 模式高 ER 時的倉位權重
+
+    Returns:
+        過濾後的持倉序列
+    """
+    from ..indicators.efficiency_ratio import calculate_efficiency_ratio
+
+    er = calculate_efficiency_ratio(df["close"], period=er_period).values
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+
+    if er_mode == "gate":
+        # ── Gate 模式：只擋新開倉，已有倉位保持不變 ──
+        position_state = 0  # 0=flat, 1=long, -1=short
+
+        for i in range(len(raw)):
+            er_ok = not np.isnan(er[i]) and er[i] >= er_min
+
+            if raw[i] > 0:  # 做多信號
+                if position_state == 1:
+                    result[i] = raw[i]  # 已有多倉 → 保持
+                elif er_ok:
+                    result[i] = raw[i]  # ER 夠高 → 允許開多
+                    position_state = 1
+                else:
+                    result[i] = 0.0     # ER 太低 → 擋掉
+            elif raw[i] < 0:  # 做空信號
+                if position_state == -1:
+                    result[i] = raw[i]  # 已有空倉 → 保持
+                elif er_ok:
+                    result[i] = raw[i]  # ER 夠高 → 允許開空
+                    position_state = -1
+                else:
+                    result[i] = 0.0     # ER 太低 → 擋掉
+            else:
+                result[i] = 0.0
+                position_state = 0
+
+    else:  # scale 模式
+        # ── Scale 模式：根據 ER 值連續縮放倉位 ──
+        for i in range(len(raw)):
+            if raw[i] == 0 or np.isnan(er[i]):
+                result[i] = 0.0 if raw[i] == 0 else raw[i]
+                continue
+
+            if er[i] <= er_threshold_low:
+                w = weight_at_low
+            elif er[i] >= er_threshold_high:
+                w = weight_at_high
+            else:
+                ratio = (er[i] - er_threshold_low) / (er_threshold_high - er_threshold_low)
+                w = weight_at_low + ratio * (weight_at_high - weight_at_low)
+
+            result[i] = raw[i] * w
+
+    return pd.Series(result, index=raw_pos.index)
+
+
 def funding_rate_filter(
     df: pd.DataFrame,
     raw_pos: pd.Series,

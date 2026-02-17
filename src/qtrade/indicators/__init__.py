@@ -7,6 +7,7 @@
 - 趨勢類: EMA, SMA, WMA, MACD, ADX
 - 動量類: RSI, Stochastic
 - 波動類: Bollinger Bands, ATR
+- Regime: Efficiency Ratio, Choppiness Index
 - 成交量: OBV, VWAP
 """
 from __future__ import annotations
@@ -19,6 +20,7 @@ from .atr import calculate_atr, calculate_atr_percent, calculate_true_range
 from .stochastic import calculate_stochastic
 from .adx import calculate_adx
 from .volume import calculate_obv, calculate_vwap
+from .efficiency_ratio import calculate_efficiency_ratio, calculate_choppiness_index
 
 __all__ = [
     # 趨勢
@@ -36,6 +38,9 @@ __all__ = [
     "calculate_atr",
     "calculate_atr_percent",
     "calculate_true_range",
+    # Regime
+    "calculate_efficiency_ratio",
+    "calculate_choppiness_index",
     # 成交量
     "calculate_obv",
     "calculate_vwap",

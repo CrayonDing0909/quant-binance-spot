@@ -21,7 +21,10 @@ from .base import StrategyContext
 from . import register_strategy
 from ..indicators import calculate_rsi, calculate_adx, calculate_atr
 from .exit_rules import apply_exit_rules
-from .filters import trend_filter, htf_trend_filter, htf_soft_trend_filter, volatility_filter, funding_rate_filter
+from .filters import (
+    trend_filter, htf_trend_filter, htf_soft_trend_filter,
+    volatility_filter, funding_rate_filter, efficiency_ratio_filter,
+)
 from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
 
@@ -259,6 +262,22 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             align_weight=float(params.get("htf_align_weight", 1.0)),
             counter_weight=float(params.get("htf_counter_weight", 0.5)),
             neutral_weight=float(params.get("htf_neutral_weight", 0.75)),
+        )
+
+    # ── Efficiency Ratio 震盪過濾（可選，降低震盪市進場）──
+    # 支援 gate（只擋新開倉）和 scale（連續縮放）兩種模式
+    er_period = params.get("er_period")
+    if er_period is not None:
+        er_mode = str(params.get("er_mode", "gate"))
+        pos = efficiency_ratio_filter(
+            df, pos,
+            er_period=int(er_period),
+            er_mode=er_mode,
+            er_min=float(params.get("er_min", 0.20)),
+            er_threshold_low=float(params.get("er_threshold_low", 0.20)),
+            er_threshold_high=float(params.get("er_threshold_high", 0.50)),
+            weight_at_low=float(params.get("er_weight_at_low", 0.30)),
+            weight_at_high=float(params.get("er_weight_at_high", 1.0)),
         )
 
     # 根據市場類型 clip 信號範圍

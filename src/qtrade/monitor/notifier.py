@@ -293,13 +293,21 @@ class TelegramNotifier:
                 emoji = "⚪"
                 signal_label = "FLAT"
             
+            # 指標行
+            ind_parts = [
+                f"RSI={ind.get('rsi', '?')}",
+                f"ADX={ind.get('adx', '?')}",
+                f"+DI={ind.get('plus_di', '?')} -DI={ind.get('minus_di', '?')}",
+            ]
+            if "er" in ind:
+                ind_parts.append(f"ER={ind['er']}")
+            ind_str = " | ".join(ind_parts)
+
             sig_lines = (
                 f"{emoji} <b>{sig['symbol']}</b>: "
                 f"{signal_label}, "
                 f"${sig['price']:,.2f}\n"
-                f"   RSI={ind.get('rsi', '?')} | "
-                f"ADX={ind.get('adx', '?')} | "
-                f"+DI={ind.get('plus_di', '?')} -DI={ind.get('minus_di', '?')}"
+                f"   {ind_str}"
             )
             
             # 附加持倉 + SL/TP 資訊（由 runner 注入）

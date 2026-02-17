@@ -160,6 +160,13 @@ def generate_signal(
         atr_period = int(params.get("atr_period", 14))
         atr = calculate_atr(df, atr_period)
         indicators["atr"] = round(float(atr.iloc[-1]), 2)
+
+        # Efficiency Ratio（如果啟用）
+        er_period = params.get("er_period")
+        if er_period is not None:
+            from ..indicators import calculate_efficiency_ratio
+            er = calculate_efficiency_ratio(df["close"], period=int(er_period))
+            indicators["er"] = round(float(er.iloc[-1]), 3)
     except Exception:
         pass  # 指標計算失敗不影響信號
 
