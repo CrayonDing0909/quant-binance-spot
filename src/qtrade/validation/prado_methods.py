@@ -295,7 +295,7 @@ def combinatorial_purged_cv(
         symbol, data_path, full_cfg, strategy_name,
         data_dir=data_dir,
     )
-    returns = res["pf"].returns()  # 每 bar 的收益率
+    returns = res.pf.returns()  # 每 bar 的收益率
     n = len(returns)
     split_size = n // n_splits
 

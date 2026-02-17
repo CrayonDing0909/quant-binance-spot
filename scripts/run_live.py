@@ -183,9 +183,9 @@ def cmd_run(args, cfg) -> None:
             signals = runner.run_once()
             print(f"\n{'─'*50}")
             for sig in signals:
-                ind = sig["indicators"]
-                print(f"  {sig['symbol']}: signal={sig['signal']:.0%}, "
-                      f"price={sig['price']:.2f}, "
+                ind = sig.indicators
+                print(f"  {sig.symbol}: signal={sig.signal:.0%}, "
+                      f"price={sig.price:.2f}, "
                       f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
 
             # 列印帳戶餘額
@@ -264,8 +264,8 @@ def cmd_run(args, cfg) -> None:
             signals = runner.run_once()
             print(f"\n{'─'*50}")
             for sig in signals:
-                ind = sig["indicators"]
-                signal_val = sig['signal']
+                ind = sig.indicators
+                signal_val = sig.signal
                 # 支援做空信號顯示
                 if signal_val > 0.5:
                     signal_str = f"LONG {signal_val:.0%}"
@@ -273,12 +273,12 @@ def cmd_run(args, cfg) -> None:
                     signal_str = f"SHORT {abs(signal_val):.0%}"
                 else:
                     signal_str = f"FLAT {signal_val:.0%}"
-                print(f"  {sig['symbol']}: {signal_str}, "
-                      f"price={sig['price']:.2f}, "
+                print(f"  {sig.symbol}: {signal_str}, "
+                      f"price={sig.price:.2f}, "
                       f"RSI={ind.get('rsi', '?')}, ADX={ind.get('adx', '?')}")
 
             # 列印帳戶狀態
-            prices = {s["symbol"]: s["price"] for s in signals if s["price"] > 0}
+            prices = {s.symbol: s.price for s in signals if s.price > 0}
             print(f"\n{broker.summary(prices)}")
 
             # 心跳監控

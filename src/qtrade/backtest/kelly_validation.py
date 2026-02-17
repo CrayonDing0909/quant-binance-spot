@@ -364,19 +364,19 @@ def kelly_backtest_comparison(
     base_result = run_symbol_backtest(symbol, data_path, cfg, strategy_name)
     
     # 使用基礎回測返回的 df（已日期過濾），確保長度與 pos 一致
-    df = base_result["df"]
+    df = base_result.df
     period_start = df.index[0].strftime("%Y-%m-%d")
     period_end = df.index[-1].strftime("%Y-%m-%d")
     
     # 從 Portfolio 物件提取交易紀錄
-    pf = base_result.get("pf")
+    pf = base_result.pf
     if pf is not None:
         base_trades = extract_trades_from_portfolio(pf)
     else:
-        base_trades = base_result.get("trades", [])
+        base_trades = []
     
     # 獲取基礎 position 訊號（用於後續縮放）
-    base_pos = base_result.get("pos")
+    base_pos = base_result.pos
     
     # 計算 Kelly 統計
     kelly_stats = calculate_kelly_stats(base_trades)
@@ -428,6 +428,9 @@ def kelly_backtest_comparison(
                     kelly_exec_price = open_
 
                 # 使用縮放後的倉位執行回測
+                # NOTE: 此處直接構建 VBT Portfolio（繞過 run_symbol_backtest），
+                # 因此不包含 funding rate / volume slippage 成本模型。
+                # Kelly 比較的是相對差異，絕對收益可能偏樂觀。
                 test_pf = vbt.Portfolio.from_orders(
                     close=close,
                     size=scaled_pos,
@@ -436,7 +439,7 @@ def kelly_backtest_comparison(
                     fees=fee,
                     slippage=slippage,
                     init_cash=initial_cash,
-                    freq="1h",
+                    freq=cfg.get("interval", "1h"),
                     direction=kelly_vbt_direction,
                 )
                 stats = test_pf.stats()
@@ -583,11 +586,11 @@ def quick_kelly_check(symbol: str, data_path: Path, cfg: dict) -> str:
     result = run_symbol_backtest(symbol, data_path, cfg)
     
     # 從 Portfolio 物件提取交易紀錄
-    pf = result.get("pf")
+    pf = result.pf
     if pf is not None:
         trades = extract_trades_from_portfolio(pf)
     else:
-        trades = result.get("trades", [])
+        trades = []
     
     suitable, reason = is_strategy_suitable_for_kelly(trades)
     

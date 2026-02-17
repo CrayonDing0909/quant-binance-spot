@@ -5,6 +5,7 @@ Signal Generator — 即時信號產生器
 設計為復用回測策略程式碼，無需改寫策略。
 """
 from __future__ import annotations
+from dataclasses import dataclass, field
 from pathlib import Path
 import pandas as pd
 
@@ -19,6 +20,54 @@ logger = get_logger("signal_gen")
 
 # 策略至少需要多少根 K 線才能計算指標
 MIN_BARS = 300
+
+
+@dataclass
+class PositionInfo:
+    """即時持倉資訊（由 Runner 注入，供 Telegram 顯示）"""
+    pct: float = 0.0
+    entry: float = 0.0
+    qty: float = 0.0
+    side: str = ""           # "LONG" / "SHORT" / ""
+    sl: float | None = None  # 止損價
+    tp: float | None = None  # 止盈價
+
+
+@dataclass
+class SignalResult:
+    """
+    標準化信號結果
+
+    取代原有的 raw dict，提供型別安全和 IDE 自動補全。
+    """
+    symbol: str
+    signal: float               # 目標倉位 [-1, 1]（futures）或 [0, 1]（spot）
+    price: float                # 當前價格
+    timestamp: str              # 最新 K 線時間
+    strategy: str               # 策略名稱
+    indicators: dict = field(default_factory=dict)   # RSI, ADX, ATR, ER 等
+    position_info: PositionInfo = field(default_factory=PositionInfo)  # Runner 注入
+
+    def to_dict(self) -> dict:
+        """序列化為 dict（JSON 輸出用）"""
+        d = {
+            "symbol": self.symbol,
+            "signal": self.signal,
+            "price": self.price,
+            "timestamp": self.timestamp,
+            "strategy": self.strategy,
+            "indicators": self.indicators,
+        }
+        if self.position_info and self.position_info.pct != 0:
+            d["_position"] = {
+                "pct": self.position_info.pct,
+                "entry": self.position_info.entry,
+                "qty": self.position_info.qty,
+                "side": self.position_info.side,
+                "sl": self.position_info.sl,
+                "tp": self.position_info.tp,
+            }
+        return d
 
 
 def fetch_recent_klines(
@@ -84,7 +133,7 @@ def generate_signal(
     df: pd.DataFrame | None = None,
     market_type: str = "spot",
     direction: str = "both",
-) -> dict:
+) -> SignalResult:
     """
     生成單個交易對的信號
 
@@ -99,14 +148,7 @@ def generate_signal(
         direction: 交易方向 "both", "long_only", "short_only"
 
     Returns:
-        {
-            "symbol": str,
-            "signal": float,          # 目標倉位 [-1, 1]（futures）或 [0, 1]（spot）
-            "price": float,           # 當前價格
-            "timestamp": str,         # 最新 K 線時間
-            "strategy": str,
-            "indicators": dict,       # 關鍵指標值（除錯用）
-        }
+        SignalResult 標準化信號結果
     """
     # 獲取數據
     if df is None:
@@ -114,14 +156,10 @@ def generate_signal(
 
     if len(df) < 50:
         logger.warning(f"⚠️  {symbol}: 數據不足 ({len(df)} bars)")
-        return {
-            "symbol": symbol,
-            "signal": 0.0,
-            "price": 0.0,
-            "timestamp": "",
-            "strategy": strategy_name,
-            "indicators": {},
-        }
+        return SignalResult(
+            symbol=symbol, signal=0.0, price=0.0,
+            timestamp="", strategy=strategy_name,
+        )
 
     # 運行策略（傳入正確的 market_type 和 direction）
     ctx = StrategyContext(
@@ -172,14 +210,14 @@ def generate_signal(
     except Exception:
         pass  # 指標計算失敗不影響信號
 
-    result = {
-        "symbol": symbol,
-        "signal": latest_signal,
-        "price": latest_price,
-        "timestamp": latest_time,
-        "strategy": strategy_name,
-        "indicators": indicators,
-    }
+    result = SignalResult(
+        symbol=symbol,
+        signal=latest_signal,
+        price=latest_price,
+        timestamp=latest_time,
+        strategy=strategy_name,
+        indicators=indicators,
+    )
 
     logger.info(
         f"📊 {symbol}: signal={latest_signal:.1f}, price={latest_price:.2f}, "

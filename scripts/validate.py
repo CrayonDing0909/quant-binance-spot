@@ -205,11 +205,11 @@ def run_monte_carlo(
             )
             
             # 從 Portfolio 物件提取收益率
-            pf = bt_result.get("pf")
+            pf = bt_result.pf
             if pf is not None:
                 returns = pf.returns()
             else:
-                returns = bt_result.get("returns")
+                returns = None
             
             if returns is None or len(returns) == 0:
                 print(f"    ⚠️  無收益數據")

@@ -255,7 +255,7 @@ class TelegramNotifier:
 
     def send_signal_summary(
         self, 
-        signals: list[dict], 
+        signals: list, 
         mode: str = "PAPER",
         has_trade: bool = False,
     ) -> bool:
@@ -263,7 +263,7 @@ class TelegramNotifier:
         發送信號摘要（每個 tick 結束後）
         
         Args:
-            signals: 信號列表
+            signals: SignalResult 列表
             mode: PAPER / REAL
             has_trade: 這次 tick 是否有交易
         """
@@ -278,11 +278,12 @@ class TelegramNotifier:
         lines = [f"📊 <b>Signal Tick</b> [{mode}] @ {now}\n{trade_status}\n"]
 
         for sig in signals:
-            ind = sig.get("indicators", {})
-            signal_pct = sig["signal"]
+            ind = sig.indicators if hasattr(sig, "indicators") else sig.get("indicators", {})
+            signal_pct = sig.signal if hasattr(sig, "signal") else sig.get("signal", 0)
+            symbol = sig.symbol if hasattr(sig, "symbol") else sig.get("symbol", "?")
+            price = sig.price if hasattr(sig, "price") else sig.get("price", 0)
             
             # 支援做空信號：[-1, 1]
-            # 🟢 = 做多 (> 0.5)，🔴 = 做空 (< -0.5)，⚪ = 空倉
             if signal_pct > 0.01:
                 emoji = "🟢"
                 signal_label = f"LONG {signal_pct:.0%}"
@@ -304,28 +305,27 @@ class TelegramNotifier:
             ind_str = " | ".join(ind_parts)
 
             sig_lines = (
-                f"{emoji} <b>{sig['symbol']}</b>: "
+                f"{emoji} <b>{symbol}</b>: "
                 f"{signal_label}, "
-                f"${sig['price']:,.2f}\n"
+                f"${price:,.2f}\n"
                 f"   {ind_str}"
             )
             
             # 附加持倉 + SL/TP 資訊（由 runner 注入）
-            pos_info = sig.get("_position", {})
-            pos_pct = pos_info.get("pct", 0)
-            if abs(pos_pct) > 0.01:
-                side = pos_info.get("side", "?")
-                entry = pos_info.get("entry", 0)
-                qty = pos_info.get("qty", 0)
+            pos_info = getattr(sig, "position_info", None)
+            if pos_info and abs(pos_info.pct) > 0.01:
+                side = pos_info.side or "?"
+                entry = pos_info.entry or 0
+                qty = pos_info.qty or 0
                 is_long = side == "LONG"
                 
-                pos_str = f"\n   📦 {side} {pos_pct:+.0%}"
+                pos_str = f"\n   📦 {side} {pos_info.pct:+.0%}"
                 if entry > 0:
                     pos_str += f" @ ${entry:,.2f}"
                 sig_lines += pos_str
                 
-                sl = pos_info.get("sl")
-                tp = pos_info.get("tp")
+                sl = pos_info.sl
+                tp = pos_info.tp
                 if sl and entry > 0 and qty > 0:
                     sl_pnl = self._estimate_pnl(entry, sl, qty, is_long=is_long, is_short=not is_long)
                     pnl_str = f" (<b>{sl_pnl:+.2f}</b>)" if sl_pnl is not None else ""

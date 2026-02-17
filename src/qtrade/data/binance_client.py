@@ -74,7 +74,12 @@ class BinanceHTTP:
     - 自動重試：網路錯誤 / 5xx / 429 自動指數退避重試（最多 3 次）
     - 自動切換：HTTP 451 地區封鎖自動切換備用端點
     - 也可透過環境變數 BINANCE_BASE_URL 手動指定
+
+    子類可覆寫 _FALLBACK_ENDPOINTS 提供不同的備用端點列表。
     """
+
+    # 子類可覆寫此列表（例如 BinanceFuturesHTTP 覆寫為 fapi 端點）
+    _FALLBACK_ENDPOINTS = BINANCE_ENDPOINTS
 
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or os.getenv("BINANCE_BASE_URL", "https://api.binance.com")).rstrip("/")
@@ -141,7 +146,7 @@ class BinanceHTTP:
     def _try_fallback_endpoints(self, path: str, params: dict | None) -> dict | list:
         """嘗試所有備用端點，找到能用的就切換過去"""
         self._fallback_tested = True
-        for endpoint in BINANCE_ENDPOINTS:
+        for endpoint in self._FALLBACK_ENDPOINTS:
             if endpoint.rstrip("/") == self.base_url:
                 continue  # 跳過已失敗的
             url = f"{endpoint.rstrip('/')}{path}"

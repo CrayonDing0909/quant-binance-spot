@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from .run_backtest import run_symbol_backtest
+from .run_backtest import run_symbol_backtest, BacktestResult, validate_backtest_config
 from .metrics import (
     pretty_stats,
     benchmark_buy_and_hold,
@@ -76,6 +76,8 @@ from ..validation import (
 __all__ = [
     # Core
     "run_symbol_backtest",
+    "BacktestResult",
+    "validate_backtest_config",
     # Metrics
     "pretty_stats",
     "benchmark_buy_and_hold",

@@ -364,6 +364,8 @@ def capacity_analysis(
             else:
                 cap_exec_price = df["open"]
 
+            # NOTE: 此處直接構建 VBT Portfolio（繞過 run_symbol_backtest），
+            # 因為需要遍歷不同 capital_levels。不含 funding rate 成本模型。
             pf = vbt.Portfolio.from_orders(
                 close=df["close"],
                 size=pos,
@@ -372,7 +374,7 @@ def capacity_analysis(
                 fees=fee,
                 slippage=slip_result.slippage_array,
                 init_cash=capital,
-                freq="1h",
+                freq=cfg.get("interval", "1h"),
                 direction=vbt_direction,
             )
 

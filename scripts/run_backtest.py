@@ -92,6 +92,11 @@ def main() -> None:
         default=None,
         help="參數組合數（用於 Deflated Sharpe Ratio 校正多重測試偏差）"
     )
+    parser.add_argument(
+        "--simple",
+        action="store_true",
+        help="⚡ 快速模式：關閉 FR/Slippage 成本模型（僅供快速迭代，結果不可信）"
+    )
 
     args = parser.parse_args()
 
@@ -168,6 +173,10 @@ def main() -> None:
         # 命令列 --direction 覆蓋
         if args.direction:
             bt_cfg["direction"] = args.direction
+        # Simple mode：關閉成本模型
+        if args.simple:
+            bt_cfg["funding_rate"] = {"enabled": False}
+            bt_cfg["slippage_model"] = {"enabled": False}
         # 根據 market_type 選擇數據路徑
         data_path = cfg.data_dir / "binance" / market_type / cfg.market.interval / f"{sym}.parquet"
 
@@ -185,20 +194,23 @@ def main() -> None:
             sym, data_path, bt_cfg, strategy_name,
             data_dir=cfg.data_dir,
         )
-        pf = res["pf"]
-        pf_bh = res["pf_bh"]
+        pf = res.pf
+        pf_bh = res.pf_bh
+        
+        # 顯示成本模型狀態
+        print(f"💰 成本模型: {res.cost_summary()}")
         
         # 顯示實際回測資料範圍
-        df = res["df"]
+        df = res.df
         print(f"📅 資料範圍: {df.index[0].strftime('%Y-%m-%d %H:%M')} → {df.index[-1].strftime('%Y-%m-%d %H:%M')} ({len(df):,} bars)")
 
         # ── 0. 成本模型摘要（如果啟用）────────────────
-        if res.get("slippage_result"):
-            sr = res["slippage_result"]
+        if res.slippage_result:
+            sr = res.slippage_result
             print(f"\n📊 滑點模型: avg={sr.avg_slippage_bps:.1f}bps, max={sr.max_slippage_bps:.1f}bps, 高衝擊bar={sr.high_impact_bars}")
 
-        if res.get("funding_cost"):
-            fc = res["funding_cost"]
+        if res.funding_cost:
+            fc = res.funding_cost
             if fc.total_cost >= 0:
                 print(f"💰 Funding 支出: ${fc.total_cost:,.2f} ({fc.total_cost_pct*100:.2f}%), 年化={fc.annualized_cost_pct*100:.2f}%/yr, 結算={fc.n_settlements}次")
             else:
@@ -213,8 +225,8 @@ def main() -> None:
         print(report.to_string())
 
         # 如果有 funding 調整，顯示調整後的核心指標
-        if res.get("adjusted_stats"):
-            adj = res["adjusted_stats"]
+        if res.adjusted_stats:
+            adj = res.adjusted_stats
             orig_stats = pf.stats()
             print(f"\n{'─'*50}")
             print(f"  {sym}  Funding Rate 調整後績效")
@@ -235,10 +247,10 @@ def main() -> None:
         print(f"\n✅ 統計報告: {stats_path}")
 
         # 儲存調整後的統計
-        if res.get("adjusted_stats"):
+        if res.adjusted_stats:
             import pandas as _pd
             adj_path = report_dir / f"stats_funding_adjusted_{sym}.csv"
-            _pd.Series(res["adjusted_stats"]).to_csv(adj_path)
+            _pd.Series(res.adjusted_stats).to_csv(adj_path)
             print(f"✅ Funding 調整報告: {adj_path}")
 
         # ── 2. 交易摘要 ────────────────────────────────
@@ -255,7 +267,7 @@ def main() -> None:
 
         # ── 3. Long / Short 分開統計（合約模式）────────
         if market_type == "futures" and direction == "both":
-            ls_analysis = long_short_split_analysis(pf, res["pos"])
+            ls_analysis = long_short_split_analysis(pf, res.pos)
             if ls_analysis["df"] is not None and not ls_analysis["df"].empty:
                 print(f"\n{'─'*50}")
                 print(f"  {sym}  Long / Short 分開統計")
@@ -278,7 +290,7 @@ def main() -> None:
         # ── 5. 資金曲線圖（含 Buy & Hold）───────────────
         plot_path = report_dir / f"equity_curve_{sym}.png"
         plot_backtest_summary(
-            pf, res["df"], res["pos"], sym, plot_path,
+            pf, res.df, res.pos, sym, plot_path,
             pf_benchmark=pf_bh,
             strategy_name=strategy_name,
         )

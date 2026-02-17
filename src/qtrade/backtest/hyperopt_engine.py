@@ -255,7 +255,7 @@ class HyperoptEngine:
                 )
                 
                 # 計算目標值
-                stats = result["stats"]
+                stats = result.stats
                 obj_value = objective_fn(stats)
                 
                 # 記錄額外指標（用於分析）
@@ -522,7 +522,8 @@ RSI_ADX_ATR_PARAM_SPACE = {
     "cooldown_bars": ParamSpace.integer("cooldown_bars", 3, 12),
 }
 
-# EMA Cross 策略的參數空間
+# EMA Cross 策略的參數空間（預留，策略尚未實現）
+# 注意：使用前需先實現 ema_cross 策略並用 @register_strategy("ema_cross") 註冊
 EMA_CROSS_PARAM_SPACE = {
     "fast_period": ParamSpace.integer("fast_period", 5, 20),
     "slow_period": ParamSpace.integer("slow_period", 20, 100),

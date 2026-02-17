@@ -52,7 +52,7 @@ def grid_search(
         
         try:
             res = run_symbol_backtest(symbol, data_path, cfg, cfg.get("strategy_name"))
-            stats = res["stats"]
+            stats = res.stats
             
             result = {name: val for name, val in zip(param_names, combo)}
             result.update({

@@ -31,19 +31,19 @@ import pandas as pd
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BacktestFunction(Protocol):
-    """回測函數介面"""
+    """回測函數介面（返回 BacktestResult 或 dict）"""
     def __call__(
         self,
         symbol: str,
         data_path: Path,
         cfg: dict,
         strategy_name: str | None = None,
-    ) -> dict:
+    ) -> object:
         """
         執行單一資產回測
         
         Returns:
-            包含 "stats" 的字典
+            BacktestResult（推薦）或包含 "stats" 的字典（向後相容）
         """
         ...
 
@@ -250,12 +250,12 @@ class BaseValidator(ABC):
         symbol: str,
         data_path: Path,
         cfg: dict,
-    ) -> dict | None:
+    ) -> object | None:
         """
         安全執行回測
         
         Returns:
-            回測結果或 None（若失敗）
+            BacktestResult 或 None（若失敗）
         """
         try:
             return self._backtest_func(
@@ -268,8 +268,10 @@ class BaseValidator(ABC):
             warnings.warn(f"回測失敗 {symbol}: {e}")
             return None
     
-    def _extract_stats(self, result: dict | None) -> dict:
-        """提取統計數據"""
+    def _extract_stats(self, result) -> dict:
+        """
+        提取統計數據（相容 BacktestResult dataclass 和 raw dict）
+        """
         if result is None:
             return {
                 "Sharpe Ratio": 0.0,
@@ -277,6 +279,10 @@ class BaseValidator(ABC):
                 "Max Drawdown [%]": 0.0,
                 "Win Rate [%]": 0.0,
             }
+        # BacktestResult dataclass
+        if hasattr(result, "stats"):
+            return result.stats
+        # Legacy dict
         return result.get("stats", {})
     
     def _calculate_degradation(

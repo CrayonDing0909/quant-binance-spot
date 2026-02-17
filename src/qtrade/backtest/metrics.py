@@ -23,7 +23,8 @@ def pretty_stats(stats: pd.Series) -> pd.Series:
 
 
 def benchmark_buy_and_hold(df: pd.DataFrame, initial_cash: float,
-                           fee_bps: float = 0, slippage_bps: float = 0) -> vbt.Portfolio:
+                           fee_bps: float = 0, slippage_bps: float = 0,
+                           interval: str = "1h") -> vbt.Portfolio:
     """
     計算 Buy & Hold 基準
     
@@ -47,7 +48,7 @@ def benchmark_buy_and_hold(df: pd.DataFrame, initial_cash: float,
         fees=fee,
         slippage=slippage,
         init_cash=initial_cash,
-        freq="1h",
+        freq=interval,
         direction="longonly",
     )
     return pf_bh

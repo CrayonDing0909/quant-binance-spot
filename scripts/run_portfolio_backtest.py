@@ -1,17 +1,29 @@
 """
 組合回測腳本 - 同時回測多個幣種的組合表現
 
+⚠️  重構重點（v2.0）：
+    所有幣種的回測都透過 run_symbol_backtest() 執行，
+    確保 Funding Rate / Volume Slippage 等成本模型一致。
+    舊版直接建 VBT Portfolio 會繞過成本模型，產生「快樂表」。
+
 支援：
 - 等權重分配（預設）
 - 自訂權重分配
-- 組合績效統計
+- 從 config 讀取 portfolio.allocation 權重
+- 組合績效統計（含成本調整）
 
 使用範例：
+    # 使用 config 中的 allocation 權重
+    python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml
+
     # 等權重 BTC + ETH 組合
-    python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT
-    
-    # 自訂權重 (BTC 60%, ETH 40%)
-    python scripts/run_portfolio_backtest.py -c config/rsi_adx_atr.yaml --symbols BTCUSDT ETHUSDT --weights 0.6 0.4
+    python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml --symbols ETHUSDT SOLUSDT
+
+    # 自訂權重 (ETH 60%, SOL 40%)
+    python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml --symbols ETHUSDT SOLUSDT --weights 0.6 0.4
+
+    # 快速模式（關閉成本模型，用於快速迭代）
+    python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml --simple
 """
 from __future__ import annotations
 import argparse
@@ -22,11 +34,10 @@ import numpy as np
 import json
 
 from qtrade.config import load_config
-from qtrade.data.storage import load_klines
-from qtrade.data.quality import validate_data_quality, clean_data
-from qtrade.strategy.base import StrategyContext
-from qtrade.strategy import get_strategy
-from qtrade.backtest.run_backtest import to_vbt_direction, clip_positions_by_direction
+from qtrade.backtest.run_backtest import (
+    run_symbol_backtest,
+    BacktestResult,
+)
 
 
 def run_portfolio_backtest(
@@ -35,182 +46,148 @@ def run_portfolio_backtest(
     cfg,
     output_dir: Path,
     direction: str | None = None,
+    simple_mode: bool = False,
 ) -> dict:
     """
-    執行組合回測
-    
+    執行組合回測（透過 run_symbol_backtest 確保成本一致性）
+
     Args:
         symbols: 交易對列表
         weights: 權重列表（與 symbols 對應）
-        cfg: 配置對象
+        cfg: AppConfig 配置對象
         output_dir: 輸出目錄
         direction: 交易方向覆蓋（None 則自動從 config 判斷）
-    
+        simple_mode: True = 關閉 FR/Slippage 成本模型（快速迭代用）
+
     Returns:
-        組合回測結果
+        組合回測結果 dict
     """
-    import vectorbt as vbt
-    
     # 正規化權重
     weights = np.array(weights)
     weights = weights / weights.sum()
-    
+
+    market_type = cfg.market_type_str
+    direction = direction or cfg.direction
+
     print(f"\n📊 組合配置:")
     for sym, w in zip(symbols, weights):
         print(f"   {sym}: {w*100:.1f}%")
-    print()
-    
-    # 載入所有數據
-    market_type = cfg.market_type_str
-    interval = cfg.market.interval
-    
-    # 交易方向（參數優先 → config 自動判斷）
-    direction = direction or cfg.direction
-    vbt_direction = to_vbt_direction(direction)
-    
-    print(f"📈 交易方向: {direction} (vbt: {vbt_direction})")
+    print(f"\n📈 交易方向: {direction}")
     print(f"🏷️  市場類型: {market_type}")
-    
-    all_data = {}
-    all_positions = {}
-    min_start = None
-    max_end = None
-    
-    # 獲取策略和參數
-    strategy_name = cfg.strategy.name
-    strategy_func = get_strategy(strategy_name)
-    base_params = cfg.strategy.params
-    symbol_overrides = cfg.strategy.symbol_overrides or {}
-    
-    # 設定目標時間範圍（從 config 讀取）
-    cfg_start = cfg.market.start
-    cfg_end = cfg.market.end
-    
-    for symbol in symbols:
-        data_path = cfg.data_dir / "binance" / market_type / interval / f"{symbol}.parquet"
-        df = load_klines(data_path)
-        df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
-        all_data[symbol] = df
-    
-    # 先在完整數據上計算策略信號（確保指標 warmup 正確）
-    for symbol in symbols:
-        df = all_data[symbol]
-        params = base_params.copy()
-        if symbol in symbol_overrides:
-            params.update(symbol_overrides[symbol])
-        
-        ctx = StrategyContext(
-            symbol=symbol,
-            interval=interval,
-            market_type=market_type,
-            direction=direction,
-        )
-        pos = strategy_func(df, ctx, params)
-        pos = clip_positions_by_direction(pos, market_type, direction)
-        all_positions[symbol] = pos
-    
-    # 應用日期過濾
-    if cfg_start:
-        start_ts = pd.Timestamp(cfg_start, tz="UTC") if all_data[symbols[0]].index.tz is not None else pd.Timestamp(cfg_start)
-        for symbol in symbols:
-            mask = all_data[symbol].index >= start_ts
-            all_data[symbol] = all_data[symbol].loc[mask]
-            all_positions[symbol] = all_positions[symbol].loc[mask]
-    
-    if cfg_end:
-        end_ts = pd.Timestamp(cfg_end, tz="UTC") if all_data[symbols[0]].index.tz is not None else pd.Timestamp(cfg_end)
-        for symbol in symbols:
-            mask = all_data[symbol].index <= end_ts
-            all_data[symbol] = all_data[symbol].loc[mask]
-            all_positions[symbol] = all_positions[symbol].loc[mask]
-    
-    # 對齊所有數據到共同時間範圍
-    for symbol in symbols:
-        df = all_data[symbol]
-        if min_start is None or df.index[0] > min_start:
-            min_start = df.index[0]
-        if max_end is None or df.index[-1] < max_end:
-            max_end = df.index[-1]
-    
-    print(f"📅 共同時間範圍: {min_start} → {max_end}")
-    if cfg_start:
-        print(f"   (config start: {cfg_start})")
-    
-    # 對齊所有數據到共同時間範圍
-    for symbol in symbols:
-        all_data[symbol] = all_data[symbol].loc[min_start:max_end]
-        all_positions[symbol] = all_positions[symbol].loc[min_start:max_end]
-    
-    # 回測參數
+    if simple_mode:
+        print(f"⚡ 模式: SIMPLE（成本模型關閉，僅供快速迭代）")
+    else:
+        print(f"🔒 模式: STRICT（含 Funding Rate + Volume Slippage）")
+    print()
+
+    # ── 使用 run_symbol_backtest 統一入口 ─────────────────
+    # 這確保每個幣種都經過完整的成本模型處理
+    per_symbol_results: dict[str, BacktestResult] = {}
     initial_cash = cfg.backtest.initial_cash
-    fee = cfg.backtest.fee_bps / 10000
-    slippage = cfg.backtest.slippage_bps / 10000
-    
-    # 使用 vectorbt 計算各幣種的淨值曲線
-    equity_curves = {}
-    
+
     for symbol in symbols:
-        df = all_data[symbol]
-        pos = all_positions[symbol]
-        
-        # 構建執行價格（消除 SL/TP look-ahead bias）
-        exit_exec_prices = pos.attrs.get("exit_exec_prices")
-        if exit_exec_prices is not None:
-            exit_exec_prices = exit_exec_prices.reindex(pos.index)
-            exec_price = df["open"].copy()
-            sl_tp_mask = exit_exec_prices.notna()
-            exec_price[sl_tp_mask] = exit_exec_prices[sl_tp_mask]
-        else:
-            exec_price = df["open"]
-        
-        # 用 vectorbt 計算（使用修正後的執行價格）
-        pf = vbt.Portfolio.from_orders(
-            close=df["close"],
-            size=pos,
-            size_type="targetpercent",
-            price=exec_price,
-            fees=fee,
-            slippage=slippage,
-            init_cash=initial_cash,
-            freq="1h",
-            direction=vbt_direction,
+        # 準備回測配置（統一用 to_backtest_dict）
+        bt_cfg = cfg.to_backtest_dict(symbol=symbol)
+
+        # 如果命令列覆蓋 direction
+        if direction:
+            bt_cfg["direction"] = direction
+
+        # Simple mode：關閉成本模型
+        if simple_mode:
+            bt_cfg["funding_rate"] = {"enabled": False}
+            bt_cfg["slippage_model"] = {"enabled": False}
+
+        data_path = (
+            cfg.data_dir / "binance" / market_type
+            / cfg.market.interval / f"{symbol}.parquet"
         )
-        
-        equity_curves[symbol] = pf.value()
-        print(f"  {symbol}: 回報 {pf.total_return()*100:.2f}%, MDD {pf.max_drawdown()*100:.2f}%")
-    
+
+        if not data_path.exists():
+            print(f"⚠️  {symbol}: 數據不存在 ({data_path})")
+            continue
+
+        res = run_symbol_backtest(
+            symbol, data_path, bt_cfg,
+            strategy_name=cfg.strategy.name,
+            data_dir=cfg.data_dir,
+        )
+        per_symbol_results[symbol] = res
+
+        # 顯示單幣結果
+        pf = res.pf
+        print(
+            f"  {symbol}: "
+            f"Return {res.total_return_pct():+.1f}%, "
+            f"Sharpe {res.sharpe():.2f}, "
+            f"MDD {res.max_drawdown_pct():.1f}% "
+            f"[{res.cost_summary()}]"
+        )
+
+    if not per_symbol_results:
+        print("❌ 沒有成功的回測結果")
+        return {}
+
+    # ── 組合資金曲線 ─────────────────────────────────────
+    # 使用 adjusted equity（含成本）如果有的話
+    active_symbols = list(per_symbol_results.keys())
+    active_weights = np.array([
+        weights[symbols.index(s)] for s in active_symbols
+    ])
+    active_weights = active_weights / active_weights.sum()  # 重新正規化
+
+    # 取得每個幣的資金曲線
+    equity_curves = {}
+    for sym, res in per_symbol_results.items():
+        equity_curves[sym] = res.equity()
+
+    # 對齊到共同時間範圍
+    min_start = max(eq.index[0] for eq in equity_curves.values())
+    max_end = min(eq.index[-1] for eq in equity_curves.values())
+    print(f"\n📅 共同時間範圍: {min_start} → {max_end}")
+
+    for sym in active_symbols:
+        equity_curves[sym] = equity_curves[sym].loc[min_start:max_end]
+
     # 標準化淨值曲線（都從 1 開始）
     normalized = {}
-    for symbol in symbols:
-        eq = equity_curves[symbol]
-        normalized[symbol] = eq / eq.iloc[0]
-    
+    for sym in active_symbols:
+        eq = equity_curves[sym]
+        normalized[sym] = eq / eq.iloc[0]
+
     # 組合淨值 = 加權平均
-    portfolio_normalized = sum(normalized[s] * w for s, w in zip(symbols, weights))
+    portfolio_normalized = sum(
+        normalized[s] * w for s, w in zip(active_symbols, active_weights)
+    )
     portfolio_equity = portfolio_normalized * initial_cash
-    
+
     # Buy & Hold 組合
     bh_normalized = {}
-    for symbol in symbols:
-        df = all_data[symbol]
+    for sym in active_symbols:
+        df = per_symbol_results[sym].df
         bh_eq = df["close"] / df["close"].iloc[0]
-        bh_normalized[symbol] = bh_eq
-    bh_portfolio_normalized = sum(bh_normalized[s] * w for s, w in zip(symbols, weights))
+        bh_eq = bh_eq.loc[min_start:max_end]
+        bh_normalized[sym] = bh_eq
+    bh_portfolio_normalized = sum(
+        bh_normalized[s] * w for s, w in zip(active_symbols, active_weights)
+    )
     bh_equity = bh_portfolio_normalized * initial_cash
-    
-    # 計算組合收益率序列（用於統計）
+
+    # 計算組合收益率序列
     portfolio_returns = portfolio_equity.pct_change().fillna(0)
     bh_returns = bh_equity.pct_change().fillna(0)
-    
+
     # 計算統計指標
     stats = calculate_portfolio_stats(portfolio_returns, portfolio_equity, initial_cash)
     bh_stats = calculate_portfolio_stats(bh_returns, bh_equity, initial_cash)
-    
-    # 輸出結果
+
+    # ── 輸出結果 ─────────────────────────────────────────
     print("\n" + "=" * 70)
-    print(f"  組合回測結果: {' + '.join(symbols)}")
+    print(f"  組合回測結果: {' + '.join(active_symbols)}")
+    mode_label = "SIMPLE（無成本）" if simple_mode else "STRICT（含 FR + Slippage）"
+    print(f"  模式: {mode_label}")
     print("=" * 70)
-    
+
     print(f"\n{'指標':<30} {'組合策略':>18} {'組合 Buy&Hold':>18}")
     print("-" * 70)
     print(f"{'Start':<30} {str(min_start)[:10]:>18} {str(min_start)[:10]:>18}")
@@ -221,69 +198,105 @@ def run_portfolio_backtest(
     print(f"{'Sharpe Ratio':<30} {stats['sharpe']:>18.2f} {bh_stats['sharpe']:>18.2f}")
     print(f"{'Sortino Ratio':<30} {stats['sortino']:>18.2f} {bh_stats['sortino']:>18.2f}")
     print(f"{'Calmar Ratio':<30} {stats['calmar']:>18.2f} {bh_stats['calmar']:>18.2f}")
-    
-    # 繪製組合曲線
+
+    # ── 成本模型影響摘要 ────────────────────────────────
+    if not simple_mode:
+        print(f"\n{'─'*70}")
+        print(f"  💰 成本模型影響:")
+        total_funding = 0.0
+        for sym, res in per_symbol_results.items():
+            if res.funding_cost:
+                fc = res.funding_cost
+                total_funding += fc.total_cost
+                fr_sign = "支出" if fc.total_cost >= 0 else "收入"
+                print(
+                    f"    {sym}: Funding {fr_sign} "
+                    f"${abs(fc.total_cost):,.0f} "
+                    f"({fc.total_cost_pct*100:+.2f}%)"
+                )
+            if res.slippage_result:
+                sr = res.slippage_result
+                print(
+                    f"    {sym}: Slippage avg={sr.avg_slippage_bps:.1f}bps, "
+                    f"high_impact={sr.high_impact_bars} bars"
+                )
+
+    # ── 繪圖 ─────────────────────────────────────────────
     plot_portfolio_equity(
-        portfolio_equity, 
-        bh_equity, 
-        symbols, 
-        weights,
-        output_dir / "portfolio_equity_curve.png"
+        portfolio_equity,
+        bh_equity,
+        active_symbols,
+        active_weights,
+        output_dir / "portfolio_equity_curve.png",
+        mode_label=mode_label,
     )
-    
-    # 儲存結果
+
+    # ── 儲存結果 ─────────────────────────────────────────
     results = {
-        "symbols": symbols,
-        "weights": weights.tolist(),
+        "symbols": active_symbols,
+        "weights": active_weights.tolist(),
         "start": str(min_start),
         "end": str(max_end),
+        "mode": "simple" if simple_mode else "strict",
         "strategy_stats": stats,
         "buyhold_stats": bh_stats,
+        "per_symbol": {
+            sym: {
+                "total_return_pct": res.total_return_pct(),
+                "sharpe": res.sharpe(),
+                "max_drawdown_pct": res.max_drawdown_pct(),
+                "funding_rate_enabled": res.funding_rate_enabled,
+                "slippage_model_enabled": res.slippage_model_enabled,
+            }
+            for sym, res in per_symbol_results.items()
+        },
     }
-    
+
     with open(output_dir / "portfolio_stats.json", "w") as f:
         json.dump(results, f, indent=2, default=str)
-    
+
     # 儲存資金曲線
     equity_df = pd.DataFrame({
         "strategy": portfolio_equity,
         "buyhold": bh_equity,
     })
     equity_df.to_csv(output_dir / "portfolio_equity.csv")
-    
+
     print(f"\n✅ 組合資金曲線圖: {output_dir / 'portfolio_equity_curve.png'}")
     print(f"✅ 組合統計: {output_dir / 'portfolio_stats.json'}")
-    
+
     return results
 
 
-def calculate_portfolio_stats(returns: pd.Series, equity: pd.Series, initial_cash: float) -> dict:
+def calculate_portfolio_stats(
+    returns: pd.Series, equity: pd.Series, initial_cash: float
+) -> dict:
     """計算組合統計指標"""
-    # 總收益
     total_return = (equity.iloc[-1] - initial_cash) / initial_cash
-    
-    # 年化收益（假設每年 252 * 24 小時，1h 數據）
+
     n_periods = len(returns)
     years = n_periods / (365 * 24)
     annual_return = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0
-    
-    # 最大回撤
+
     rolling_max = equity.expanding().max()
     drawdown = (equity - rolling_max) / rolling_max
     max_drawdown = abs(drawdown.min())
-    
-    # Sharpe Ratio（年化）
-    excess_returns = returns - 0  # 假設無風險利率為 0
-    sharpe = np.sqrt(365 * 24) * excess_returns.mean() / excess_returns.std() if excess_returns.std() > 0 else 0
-    
-    # Sortino Ratio
+
+    excess_returns = returns - 0
+    sharpe = (
+        np.sqrt(365 * 24) * excess_returns.mean() / excess_returns.std()
+        if excess_returns.std() > 0 else 0
+    )
+
     downside_returns = returns[returns < 0]
     downside_std = downside_returns.std() if len(downside_returns) > 0 else 0.001
-    sortino = np.sqrt(365 * 24) * returns.mean() / downside_std if downside_std > 0 else 0
-    
-    # Calmar Ratio
+    sortino = (
+        np.sqrt(365 * 24) * returns.mean() / downside_std
+        if downside_std > 0 else 0
+    )
+
     calmar = annual_return / max_drawdown if max_drawdown > 0 else 0
-    
+
     return {
         "total_return": total_return,
         "annual_return": annual_return,
@@ -300,77 +313,140 @@ def plot_portfolio_equity(
     symbols: list[str],
     weights: np.ndarray,
     save_path: Path,
+    mode_label: str = "",
 ):
     """繪製組合資金曲線"""
     import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-    
-    fig, axes = plt.subplots(2, 1, figsize=(14, 10), gridspec_kw={'height_ratios': [3, 1]})
-    
-    # 組合名稱
+
+    fig, axes = plt.subplots(
+        2, 1, figsize=(14, 10), gridspec_kw={"height_ratios": [3, 1]}
+    )
+
     weight_str = " + ".join([f"{s} {w*100:.0f}%" for s, w in zip(symbols, weights)])
-    
+
     # 資金曲線
     ax1 = axes[0]
-    ax1.plot(strategy_equity.index, strategy_equity.values, label="Portfolio Strategy", color="blue", linewidth=1.5)
-    ax1.plot(bh_equity.index, bh_equity.values, label="Portfolio Buy & Hold", color="gray", linestyle="--", alpha=0.7)
-    
-    # 標註最終收益
+    ax1.plot(
+        strategy_equity.index, strategy_equity.values,
+        label="Portfolio Strategy", color="blue", linewidth=1.5,
+    )
+    ax1.plot(
+        bh_equity.index, bh_equity.values,
+        label="Portfolio Buy & Hold", color="gray", linestyle="--", alpha=0.7,
+    )
+
     final_strat = (strategy_equity.iloc[-1] / strategy_equity.iloc[0] - 1) * 100
     final_bh = (bh_equity.iloc[-1] / bh_equity.iloc[0] - 1) * 100
-    ax1.annotate(f"+{final_strat:.1f}%", xy=(strategy_equity.index[-1], strategy_equity.iloc[-1]),
-                 fontsize=10, color="blue", fontweight="bold")
-    ax1.annotate(f"+{final_bh:.1f}%", xy=(bh_equity.index[-1], bh_equity.iloc[-1]),
-                 fontsize=10, color="gray")
-    
-    ax1.set_title(f"Portfolio Backtest: {weight_str}", fontsize=14, fontweight="bold")
+    ax1.annotate(
+        f"+{final_strat:.1f}%",
+        xy=(strategy_equity.index[-1], strategy_equity.iloc[-1]),
+        fontsize=10, color="blue", fontweight="bold",
+    )
+    ax1.annotate(
+        f"+{final_bh:.1f}%",
+        xy=(bh_equity.index[-1], bh_equity.iloc[-1]),
+        fontsize=10, color="gray",
+    )
+
+    title = f"Portfolio Backtest: {weight_str}"
+    if mode_label:
+        title += f"  [{mode_label}]"
+    ax1.set_title(title, fontsize=14, fontweight="bold")
     ax1.set_ylabel("Portfolio Value")
     ax1.legend(loc="upper left")
     ax1.grid(True, alpha=0.3)
     ax1.set_yscale("log")
-    
+
     # 回撤曲線
     ax2 = axes[1]
     rolling_max = strategy_equity.expanding().max()
     drawdown = (strategy_equity - rolling_max) / rolling_max * 100
-    ax2.fill_between(drawdown.index, drawdown.values, 0, color="red", alpha=0.3, label="Strategy DD")
-    
+    ax2.fill_between(
+        drawdown.index, drawdown.values, 0,
+        color="red", alpha=0.3, label="Strategy DD",
+    )
+
     bh_rolling_max = bh_equity.expanding().max()
     bh_drawdown = (bh_equity - bh_rolling_max) / bh_rolling_max * 100
-    ax2.plot(bh_drawdown.index, bh_drawdown.values, color="gray", linestyle="--", alpha=0.5, label="B&H DD")
-    
+    ax2.plot(
+        bh_drawdown.index, bh_drawdown.values,
+        color="gray", linestyle="--", alpha=0.5, label="B&H DD",
+    )
+
     ax2.set_ylabel("Drawdown [%]")
     ax2.set_xlabel("Date")
     ax2.legend(loc="lower left")
     ax2.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="組合回測")
-    parser.add_argument("-c", "--config", type=str, default="config/rsi_adx_atr.yaml", help="配置檔案")
-    parser.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"], help="交易對列表")
-    parser.add_argument("--weights", nargs="+", type=float, default=None, help="權重列表（與 symbols 對應）")
-    parser.add_argument("--direction", "-d", type=str, choices=["both", "long_only", "short_only"], default=None,
-                        help="交易方向（預設從 config 讀取）")
-    parser.add_argument("--output-dir", type=str, default=None, help="輸出目錄")
-    
+    parser = argparse.ArgumentParser(
+        description="組合回測（v2.0 — 統一成本模型）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "-c", "--config", type=str,
+        default="config/rsi_adx_atr.yaml",
+        help="配置檔案",
+    )
+    parser.add_argument(
+        "--symbols", nargs="+", default=None,
+        help="交易對列表（預設從 config 讀取）",
+    )
+    parser.add_argument(
+        "--weights", nargs="+", type=float, default=None,
+        help="權重列表（預設從 config portfolio.allocation 讀取）",
+    )
+    parser.add_argument(
+        "--direction", "-d", type=str,
+        choices=["both", "long_only", "short_only"],
+        default=None,
+        help="交易方向（預設從 config 讀取）",
+    )
+    parser.add_argument(
+        "--output-dir", type=str, default=None,
+        help="輸出目錄",
+    )
+    parser.add_argument(
+        "--simple", action="store_true",
+        help="⚡ 快速模式：關閉 FR/Slippage 成本模型（僅供快速迭代，結果不可信）",
+    )
+
     args = parser.parse_args()
-    
+
     # 載入配置
     cfg = load_config(args.config)
-    
+
+    # 確定交易對
+    symbols = args.symbols or cfg.market.symbols
+    if not symbols:
+        print("❌ 未指定交易對，且 config 中也沒有設定")
+        return
+
     # 設定權重
-    if args.weights is None:
-        weights = [1.0 / len(args.symbols)] * len(args.symbols)  # 等權重
-    else:
-        if len(args.weights) != len(args.symbols):
-            raise ValueError(f"權重數量 ({len(args.weights)}) 與交易對數量 ({len(args.symbols)}) 不符")
+    if args.weights is not None:
+        if len(args.weights) != len(symbols):
+            raise ValueError(
+                f"權重數量 ({len(args.weights)}) "
+                f"與交易對數量 ({len(symbols)}) 不符"
+            )
         weights = args.weights
-    
+    elif cfg.portfolio.allocation:
+        # 從 config 的 portfolio.allocation 讀取
+        weights = []
+        for sym in symbols:
+            w = cfg.portfolio.get_weight(sym, len(symbols))
+            weights.append(w)
+        print(f"📋 使用 config portfolio.allocation 權重")
+    else:
+        weights = [1.0 / len(symbols)] * len(symbols)
+        print(f"📋 使用等權重分配")
+
     # 設定輸出目錄
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.output_dir:
@@ -378,12 +454,16 @@ def main():
     else:
         output_dir = cfg.get_report_dir("portfolio") / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"📊 組合回測: {' + '.join(args.symbols)}")
+
+    print(f"📊 組合回測: {' + '.join(symbols)}")
     print(f"📁 輸出目錄: {output_dir}")
-    
+
     # 執行回測
-    run_portfolio_backtest(args.symbols, weights, cfg, output_dir, direction=args.direction)
+    run_portfolio_backtest(
+        symbols, weights, cfg, output_dir,
+        direction=args.direction,
+        simple_mode=args.simple,
+    )
 
 
 if __name__ == "__main__":

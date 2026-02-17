@@ -209,6 +209,9 @@ def apply_exit_rules(
 
             if triggered_exit:
                 # 記錄 SL/TP 出場價格（用於消除 look-ahead bias）
+                # 優先級：SL > TP（保守處理）
+                # 當同一 bar 的 low 碰 SL 且 high 碰 TP 時，
+                # 無法確定 intra-bar 的真實順序，取 SL（較差結果）避免高估收益。
                 if exit_by_sl:
                     exec_prices[i] = sl_price
                 elif exit_by_tp:
@@ -273,7 +276,7 @@ def apply_exit_rules(
                 triggered_exit = True
 
             if triggered_exit:
-                # 記錄 SL/TP 出場價格
+                # 記錄 SL/TP 出場價格（同多倉邏輯：SL 優先，保守處理）
                 if exit_by_sl:
                     exec_prices[i] = sl_price
                 elif exit_by_tp:

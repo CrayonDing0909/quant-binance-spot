@@ -938,12 +938,18 @@ class TelegramCommandBot(TelegramBot):
         except Exception as e:
             return f"❌ 信號生成失敗: {e}"
 
-    def _format_signal_line(self, sig: dict) -> str:
-        """格式化單個幣種的信號 + 即時持倉/SL/TP"""
-        signal_pct = sig.get("signal", 0)
-        price = sig.get("price", 0)
-        symbol = sig.get("symbol", "?")
-        ind = sig.get("indicators", {})
+    def _format_signal_line(self, sig) -> str:
+        """格式化單個幣種的信號 + 即時持倉/SL/TP（支援 SignalResult 和 dict）"""
+        if hasattr(sig, "signal"):  # SignalResult
+            signal_pct = sig.signal
+            price = sig.price
+            symbol = sig.symbol
+            ind = sig.indicators
+        else:  # dict (from JSON cache)
+            signal_pct = sig.get("signal", 0)
+            price = sig.get("price", 0)
+            symbol = sig.get("symbol", "?")
+            ind = sig.get("indicators", {})
 
         if signal_pct > 0.5:
             emoji, label = "🟢", f"LONG {signal_pct:.0%}"

@@ -98,7 +98,7 @@ def walk_forward_analysis(
                 symbol, train_tmp, wf_cfg, strategy_name,
                 data_dir=data_dir,
             )
-            train_stats = train_res["stats"]
+            train_stats = train_res.stats
         except Exception as e:
             print(f" ❌ train failed: {e}")
             train_tmp.unlink(missing_ok=True)
@@ -125,7 +125,7 @@ def walk_forward_analysis(
                 symbol, test_tmp, test_cfg, strategy_name,
                 data_dir=data_dir,
             )
-            test_stats = test_res["stats"]
+            test_stats = test_res.stats
         except Exception as e:
             print(f" ❌ test failed: {e}")
             train_tmp.unlink(missing_ok=True)
@@ -304,7 +304,7 @@ def parameter_sensitivity_analysis(
                 symbol, data_path, cfg, cfg.get("strategy_name"),
                 data_dir=data_dir,
             )
-            stats = res["stats"]
+            stats = res.stats
         except Exception as e:
             print(f"  ⚠️  {params} failed: {e}")
             continue
