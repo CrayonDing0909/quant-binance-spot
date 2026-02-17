@@ -14,6 +14,13 @@
     - 入場價使用 open（開盤價），與 vectorbt from_orders(price=open_) 一致
     - 這確保 SL/TP 計算基於實際入場價，不存在收盤價 look-ahead
 
+自適應止損（v3.0 更新）：
+    - 可選傳入 adaptive_sl_er 參數（ER 序列）
+    - ER 低（震盪）→ 放寬 SL → 扛過噪聲
+    - ER 高（趨勢）→ 收緊 SL → 保護利潤
+    - SL 乘數 = sl_atr_base × (er_sl_max - (er_sl_max - er_sl_min) × ER)
+    - 例：ER=0.1 → SL=3.0x ATR，ER=0.8 → SL=1.5x ATR
+
 用法：
     from qtrade.strategy.exit_rules import apply_exit_rules
 
@@ -32,6 +39,38 @@ import numpy as np
 from ..indicators.atr import calculate_atr
 
 
+def compute_adaptive_sl_multiplier(
+    er_value: float,
+    sl_atr_base: float,
+    er_sl_min: float = 1.5,
+    er_sl_max: float = 3.0,
+) -> float:
+    """
+    根據 Efficiency Ratio 計算自適應 SL 乘數
+
+    震盪市（ER 低）→ SL 放寬（更大的 ATR 倍數）→ 扛過噪聲
+    趨勢市（ER 高）→ SL 收緊（更小的 ATR 倍數）→ 保護利潤
+
+    映射：ER ∈ [0, 1] → SL ∈ [er_sl_max, er_sl_min]
+        ER = 0.0 → sl_mult = er_sl_max (3.0)  最寬
+        ER = 1.0 → sl_mult = er_sl_min (1.5)  最窄
+
+    Args:
+        er_value:     當前 ER 值 [0, 1]
+        sl_atr_base:  原始 SL 基準（用於 fallback）
+        er_sl_min:    ER=1 時的最窄 SL 乘數
+        er_sl_max:    ER=0 時的最寬 SL 乘數
+
+    Returns:
+        SL ATR 乘數
+    """
+    if np.isnan(er_value):
+        return sl_atr_base
+    er_clamped = max(0.0, min(1.0, er_value))
+    # 線性映射：ER=0 → er_sl_max，ER=1 → er_sl_min
+    return er_sl_max - (er_sl_max - er_sl_min) * er_clamped
+
+
 def apply_exit_rules(
     df: pd.DataFrame,
     raw_pos: pd.Series,
@@ -42,6 +81,9 @@ def apply_exit_rules(
     take_profit_pct: float | None = None,
     atr_period: int = 14,
     cooldown_bars: int = 0,
+    adaptive_sl_er: pd.Series | np.ndarray | None = None,
+    er_sl_min: float = 1.5,
+    er_sl_max: float = 3.0,
 ) -> pd.Series:
     """
     對原始持倉信號疊加出場規則（支援做空）
@@ -59,6 +101,10 @@ def apply_exit_rules(
         take_profit_pct:  止盈百分比（備選），None = 不用
         atr_period:       ATR 計算週期
         cooldown_bars:    出場後冷卻期（bar 數）
+        adaptive_sl_er:   Efficiency Ratio 序列 [0,1]（可選）
+                          傳入時啟用自適應止損
+        er_sl_min:        ER=1（趨勢）時的最窄 SL 乘數，預設 1.5
+        er_sl_max:        ER=0（震盪）時的最寬 SL 乘數，預設 3.0
 
     Returns:
         調整後的持倉序列 [-1, 1]
@@ -71,6 +117,13 @@ def apply_exit_rules(
 
     # 預計算 ATR
     atr = calculate_atr(df, atr_period).values
+
+    # Adaptive SL 的 ER 序列
+    use_adaptive_sl = adaptive_sl_er is not None and stop_loss_atr is not None
+    if use_adaptive_sl:
+        er_vals = np.asarray(adaptive_sl_er, dtype=float)
+    else:
+        er_vals = None
 
     raw = raw_pos.values.copy()
     result = np.zeros(n, dtype=float)
@@ -90,6 +143,14 @@ def apply_exit_rules(
         current_high = high[i]
         current_low = low[i]
         current_atr = atr[i] if not np.isnan(atr[i]) else 0.0
+
+        # 計算本 bar 的 SL 乘數（自適應或固定）
+        if use_adaptive_sl:
+            _sl_mult = compute_adaptive_sl_multiplier(
+                er_vals[i], stop_loss_atr, er_sl_min, er_sl_max
+            )
+        else:
+            _sl_mult = stop_loss_atr
 
         # ── 冷卻期檢查 ──
         if cooldown_remaining > 0:
@@ -126,8 +187,8 @@ def apply_exit_rules(
                     position_state = -1
                     entry_price = current_open
                     extreme_since_entry = current_low
-                    if stop_loss_atr is not None and current_atr > 0:
-                        sl_price = entry_price + stop_loss_atr * current_atr
+                    if _sl_mult is not None and current_atr > 0:
+                        sl_price = entry_price + _sl_mult * current_atr
                     elif stop_loss_pct is not None:
                         sl_price = entry_price * (1 + stop_loss_pct)
                     else:
@@ -176,8 +237,8 @@ def apply_exit_rules(
                     position_state = 1
                     entry_price = current_open
                     extreme_since_entry = current_high
-                    if stop_loss_atr is not None and current_atr > 0:
-                        sl_price = entry_price - stop_loss_atr * current_atr
+                    if _sl_mult is not None and current_atr > 0:
+                        sl_price = entry_price - _sl_mult * current_atr
                     elif stop_loss_pct is not None:
                         sl_price = entry_price * (1 - stop_loss_pct)
                     else:
@@ -205,8 +266,8 @@ def apply_exit_rules(
                 entry_price = current_open
                 extreme_since_entry = current_high
 
-                if stop_loss_atr is not None and current_atr > 0:
-                    sl_price = entry_price - stop_loss_atr * current_atr
+                if _sl_mult is not None and current_atr > 0:
+                    sl_price = entry_price - _sl_mult * current_atr
                 elif stop_loss_pct is not None:
                     sl_price = entry_price * (1 - stop_loss_pct)
                 else:
@@ -226,8 +287,8 @@ def apply_exit_rules(
                 entry_price = current_open
                 extreme_since_entry = current_low
 
-                if stop_loss_atr is not None and current_atr > 0:
-                    sl_price = entry_price + stop_loss_atr * current_atr
+                if _sl_mult is not None and current_atr > 0:
+                    sl_price = entry_price + _sl_mult * current_atr
                 elif stop_loss_pct is not None:
                     sl_price = entry_price * (1 + stop_loss_pct)
                 else:

@@ -161,8 +161,10 @@ def generate_signal(
         atr = calculate_atr(df, atr_period)
         indicators["atr"] = round(float(atr.iloc[-1]), 2)
 
-        # Efficiency Ratio（如果啟用）
-        er_period = params.get("er_period")
+        # Efficiency Ratio（ER filter 或 adaptive SL 啟用時計算）
+        er_period = params.get("er_period") or (
+            params.get("adaptive_sl_er_period", 10) if params.get("adaptive_sl") else None
+        )
         if er_period is not None:
             from ..indicators import calculate_efficiency_ratio
             er = calculate_efficiency_ratio(df["close"], period=int(er_period))

@@ -240,6 +240,13 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         )
 
     # ── ATR 止損 / 止盈 / 移動止損 ──
+    # 自適應止損：如果啟用，ER 低（震盪）放寬 SL，ER 高（趨勢）收緊 SL
+    adaptive_sl_er = None
+    if params.get("adaptive_sl", False):
+        from ..indicators.efficiency_ratio import calculate_efficiency_ratio
+        _er_period = int(params.get("adaptive_sl_er_period", 10))
+        adaptive_sl_er = calculate_efficiency_ratio(df["close"], period=_er_period)
+
     pos = apply_exit_rules(
         df, filtered_pos,
         stop_loss_atr=params.get("stop_loss_atr", 2.0),
@@ -247,6 +254,9 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         trailing_stop_atr=params.get("trailing_stop_atr", None),
         atr_period=int(params.get("atr_period", 14)),
         cooldown_bars=int(params.get("cooldown_bars", 6)),
+        adaptive_sl_er=adaptive_sl_er,
+        er_sl_min=float(params.get("er_sl_min", 1.5)),
+        er_sl_max=float(params.get("er_sl_max", 3.0)),
     )
 
     # ── 多時間框架「軟」過濾（在 exit rules 之後縮放倉位大小）──

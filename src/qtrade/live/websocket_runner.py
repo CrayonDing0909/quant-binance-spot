@@ -574,15 +574,28 @@ class WebSocketRunner:
             take_profit_atr = params.get("take_profit_atr")
             atr_value = indicators.get("atr")
 
+            # 自適應止損：根據 ER 調整 SL 乘數
+            sl_mult = float(stop_loss_atr) if stop_loss_atr else None
+            if sl_mult and params.get("adaptive_sl", False):
+                er_value = indicators.get("er")
+                if er_value is not None:
+                    from ..strategy.exit_rules import compute_adaptive_sl_multiplier
+                    sl_mult = compute_adaptive_sl_multiplier(
+                        er_value, sl_mult,
+                        er_sl_min=float(params.get("er_sl_min", 1.5)),
+                        er_sl_max=float(params.get("er_sl_max", 3.0)),
+                    )
+                    logger.info(f"🔧 {symbol}: Adaptive SL: ER={er_value:.3f} → SL={sl_mult:.2f}x ATR")
+
             if atr_value and target_pct != 0:
                 if target_pct > 0:
-                    if stop_loss_atr:
-                        stop_loss_price = price - float(stop_loss_atr) * float(atr_value)
+                    if sl_mult:
+                        stop_loss_price = price - sl_mult * float(atr_value)
                     if take_profit_atr:
                         take_profit_price = price + float(take_profit_atr) * float(atr_value)
                 elif target_pct < 0:
-                    if stop_loss_atr:
-                        stop_loss_price = price + float(stop_loss_atr) * float(atr_value)
+                    if sl_mult:
+                        stop_loss_price = price + sl_mult * float(atr_value)
                     if take_profit_atr:
                         take_profit_price = price - float(take_profit_atr) * float(atr_value)
 
@@ -899,14 +912,26 @@ class WebSocketRunner:
                             has_tp = False
                             break
 
-            # 補掛 SL
+            # 補掛 SL（支援自適應止損）
             if not has_sl and stop_loss_atr:
+                _sl_mult = float(stop_loss_atr)
+                if params.get("adaptive_sl", False):
+                    er_value = sig.get("indicators", {}).get("er")
+                    if er_value is not None:
+                        from ..strategy.exit_rules import compute_adaptive_sl_multiplier
+                        _sl_mult = compute_adaptive_sl_multiplier(
+                            er_value, _sl_mult,
+                            er_sl_min=float(params.get("er_sl_min", 1.5)),
+                            er_sl_max=float(params.get("er_sl_max", 3.0)),
+                        )
+
                 if actual_pct > 0:
-                    sl_price = price - float(stop_loss_atr) * float(atr_value)
+                    sl_price = price - _sl_mult * float(atr_value)
                 else:
-                    sl_price = price + float(stop_loss_atr) * float(atr_value)
+                    sl_price = price + _sl_mult * float(atr_value)
                 logger.info(
                     f"🔄 {symbol}: 補掛止損單 SL=${sl_price:,.2f} [{position_side}]"
+                    + (f" (adaptive: {_sl_mult:.2f}x ATR)" if params.get("adaptive_sl") else "")
                 )
                 self.broker.place_stop_loss(
                     symbol=symbol, stop_price=sl_price,

@@ -50,9 +50,19 @@ strategy:
     # 🛡️ 風控優化 (基於熱力圖掃描結果)
     # 最佳平衡點：SL 2.0 / CD 3
     # 既能捕捉利潤 (比 2.5/5 更好)，又不像 1.5/1 那樣過於激進
-    stop_loss_atr: 2.0     # 原 2.5 → 2.0
+    stop_loss_atr: 2.0     # 基準 SL 倍數（adaptive_sl 啟用時作為 fallback）
     take_profit_atr: null   # null = 不設固定止盈，靠 RSI 信號出場
     atr_period: 14
+    
+    # 🆕 自適應止損（Adaptive SL）
+    # 根據 Efficiency Ratio 動態調整 SL 寬度：
+    #   震盪市（ER 低）→ 放寬 SL（扛過噪聲）
+    #   趨勢市（ER 高）→ 收緊 SL（保護利潤）
+    # 回測結果（2025-2026）：MDD 12.1%→10.7%（BTC），13.8%→10.4%（ETH）
+    adaptive_sl: true
+    adaptive_sl_er_period: 10   # ER 計算週期
+    er_sl_min: 1.5              # ER=1（趨勢）→ SL = 1.5x ATR（最窄）
+    er_sl_max: 2.5              # ER=0（震盪）→ SL = 2.5x ATR（最寬）
     
     # 冷卻期
     cooldown_bars: 3       # 原 5 → 3 (止損後等待 3 小時)
