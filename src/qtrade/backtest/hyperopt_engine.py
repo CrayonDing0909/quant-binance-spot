@@ -1000,6 +1000,11 @@ RSI_ADX_ATR_EXTENDED_PARAM_SPACE = {
     
     # 波動率過濾
     "min_atr_ratio": ParamSpace.float("min_atr_ratio", 0.003, 0.010, step=0.001),
+    
+    # 波動率 Regime 倉位縮放
+    "vol_regime_low_pct": ParamSpace.float("vol_regime_low_pct", 20, 50, step=5),
+    "vol_regime_low_weight": ParamSpace.float("vol_regime_low_weight", 0.3, 0.7, step=0.1),
+    "vol_regime_lookback": ParamSpace.integer("vol_regime_lookback", 96, 336),  # 4天~14天
 }
 
 # EMA Cross 策略的參數空間（預留）
@@ -1009,11 +1014,43 @@ EMA_CROSS_PARAM_SPACE = {
     "signal_period": ParamSpace.integer("signal_period", 5, 15),
 }
 
+# TSMOM 策略 — 核心參數
+TSMOM_PARAM_SPACE = {
+    "lookback": ParamSpace.integer("lookback", 48, 720),
+    "vol_target": ParamSpace.float("vol_target", 0.05, 0.30, step=0.05),
+}
+
+# TSMOM + EMA — 擴展參數
+TSMOM_EMA_PARAM_SPACE = {
+    "lookback": ParamSpace.integer("lookback", 48, 720),
+    "vol_target": ParamSpace.float("vol_target", 0.05, 0.30, step=0.05),
+    "ema_fast": ParamSpace.integer("ema_fast", 10, 30),
+    "ema_slow": ParamSpace.integer("ema_slow", 30, 100),
+    "agree_weight": ParamSpace.float("agree_weight", 0.8, 1.2, step=0.1),
+    "disagree_weight": ParamSpace.float("disagree_weight", 0.1, 0.5, step=0.1),
+}
+
+# TSMOM Multi + EMA — 全參數空間
+TSMOM_MULTI_EMA_PARAM_SPACE = {
+    "vol_target": ParamSpace.float("vol_target", 0.05, 0.30, step=0.05),
+    "ema_fast": ParamSpace.integer("ema_fast", 10, 30),
+    "ema_slow": ParamSpace.integer("ema_slow", 30, 100),
+    "agree_weight": ParamSpace.float("agree_weight", 0.8, 1.2, step=0.1),
+    "disagree_weight": ParamSpace.float("disagree_weight", 0.1, 0.5, step=0.1),
+    "vol_regime_enabled": ParamSpace.categorical("vol_regime_enabled", [True, False]),
+    "vol_regime_lookback": ParamSpace.integer("vol_regime_lookback", 100, 300),
+    "vol_regime_low_pct": ParamSpace.float("vol_regime_low_pct", 20.0, 40.0, step=5.0),
+    "vol_regime_low_weight": ParamSpace.float("vol_regime_low_weight", 0.3, 0.7, step=0.1),
+}
+
 # 預定義空間名稱查找
 PREDEFINED_SPACES = {
     "rsi_adx_atr": RSI_ADX_ATR_PARAM_SPACE,
     "rsi_adx_atr_extended": RSI_ADX_ATR_EXTENDED_PARAM_SPACE,
     "ema_cross": EMA_CROSS_PARAM_SPACE,
+    "tsmom": TSMOM_PARAM_SPACE,
+    "tsmom_ema": TSMOM_EMA_PARAM_SPACE,
+    "tsmom_multi_ema": TSMOM_MULTI_EMA_PARAM_SPACE,
 }
 
 

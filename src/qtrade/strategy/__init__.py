@@ -23,3 +23,4 @@ def get_strategy(name: str) -> Callable:
 
 # 導入策略模組以觸發註冊
 from . import rsi_adx_atr_strategy  # noqa: E402
+from . import tsmom_strategy  # noqa: E402

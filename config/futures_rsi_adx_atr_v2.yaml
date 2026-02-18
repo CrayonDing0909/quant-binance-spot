@@ -1,0 +1,123 @@
+# ═══════════════════════════════════════════════════════════
+# 合約策略 v2：基於 A/B 測試的保守改進版
+# ═══════════════════════════════════════════════════════════
+#
+# v1 → v2 唯一改動：ETH 配置從 1.0 → 0.5
+#
+# 實驗結論（2026-02-17）：
+#   ❌ trailing_stop_atr=2.5 → 災難（均值回歸策略不適用 trailing stop）
+#   ❌ htf_mode=hard           → 殺太多交易，ETH 翻負
+#   ❌ counter_weight=0.0      → 中性，但砍 37% 收益
+#   ❌ 收緊 RSI quantile       → 配合 trailing 一起測的，也是負面
+#   ✅ v1 參數已經是最優       → 不動
+#
+# 唯一改動理由：
+#   ETH PF 1.06 → edge 太薄，不值得 full allocation
+#   減半後：風險減半，如果 alpha 消失損失有限
+#
+# 下一步：用修復後的 WFA（含 adjusted_stats）重新驗證
+#   python scripts/validate.py -c config/futures_rsi_adx_atr_v2.yaml --all
+
+market:
+  symbols: ["ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 5
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "rsi_adx_atr"
+  params:
+    # 所有參數與 v1 完全相同
+    rsi_mode: "dynamic"
+    rsi_period: 10
+    rsi_lookback_days: 14
+    rsi_quantile_low: 0.10
+    rsi_quantile_high: 0.90
+    oversold: 30
+    overbought: 80
+    min_adx: 15
+    short_min_adx: 20
+    adx_period: 14
+    use_funding_filter: true
+    fr_max_pos: 0.0002
+    fr_max_neg: -0.0002
+    stop_loss_atr: 2.0
+    take_profit_atr: null
+    atr_period: 14
+    adaptive_sl: true
+    adaptive_sl_er_period: 10
+    er_sl_min: 1.5
+    er_sl_max: 2.5
+    cooldown_bars: 3
+    min_hold_bars: 2
+    min_atr_ratio: 0.005
+    vol_filter_mode: "absolute"
+    htf_interval: "4h"
+    htf_mode: "soft"
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    htf_align_weight: 1.0
+    htf_counter_weight: 0.5    # 保持不變（實驗證明 0.0 更差）
+    htf_neutral_weight: 0.75
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: true
+    base_bps: 2
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.65
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+  kelly_fraction: 0.25
+  target_volatility: 0.50
+  vol_lookback: 168
+
+# 🔧 v2 唯一改動：ETH 減半
+portfolio:
+  cash_reserve: 0
+  allocation:
+    ETHUSDT: 0.50              # v1: 1.0 → v2: 0.5（PF 1.06 不值得 full allocation）
+    SOLUSDT: 1.00              # 不變（SOL PF 1.20，主力 alpha）
+    # 總曝險 150%（1.5x），5x 槓桿下保證金用 30%
+    # 省下的 50% ETH 曝險可以等新策略 or 新幣種
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔴 [FUTURES-v2]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

@@ -1,0 +1,106 @@
+# 合約策略配置：TSMOM（Time-Series Momentum）
+#
+# 策略原理：
+#   1. 過去 N 期報酬 > 0 → 做多，< 0 → 做空
+#   2. 波動率目標縮放 → 自動控制曝險
+#   3. 多 lookback 集成 + EMA 趨勢對齊 → 穩健度↑
+#
+# 學術基礎：Moskowitz, Ooi & Pedersen (2012)
+# 加密適用性：強趨勢市場 + 信號慢變 + 1-bar delay 影響小
+#
+# 回測結果（2019-2026, signal_delay=1, fee=4.5bps, slippage=3bps）：
+#   tsmom_ema:   ETH Sharpe=0.65 MDD=18% | SOL Sharpe=1.22 MDD=12.4%
+#   tsmom_multi: ETH Sharpe=0.97 MDD=25% | SOL Sharpe=0.86 MDD=13.4%
+#   2024-2026:   ETH Sharpe=0.55 MDD=15% | SOL Sharpe=0.77 MDD=10.2%
+#
+# 使用方式：
+#   python scripts/download_data.py -c config/futures_tsmom.yaml
+#   python scripts/run_backtest.py -c config/futures_tsmom.yaml
+#   python scripts/run_live.py -c config/futures_tsmom.yaml --paper
+
+market:
+  symbols: ["ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 5
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  # 可選策略名：tsmom / tsmom_multi / tsmom_ema / tsmom_multi_ema
+  name: "tsmom_ema"
+  params:
+    # ── 核心 TSMOM 參數 ──
+    lookback: 168              # 回看期（小時數），168 = 7天
+    vol_target: 0.15           # 年化波動率目標，15%
+    
+    # ── EMA 趨勢對齊（tsmom_ema / tsmom_multi_ema 使用）──
+    ema_fast: 20               # 快速 EMA 週期
+    ema_slow: 50               # 慢速 EMA 週期
+    agree_weight: 1.0          # TSMOM 與 EMA 方向一致 → 全倉
+    disagree_weight: 0.3       # 不一致 → 降到 30%
+    
+    # ── 多 Lookback（tsmom_multi / tsmom_multi_ema 使用）──
+    # lookbacks: [72, 168, 336, 720]  # 3d/7d/14d/30d 等權集成
+    
+    # ── 波動率 Regime 縮放（可選）──
+    vol_regime_enabled: false
+    vol_regime_lookback: 168
+    vol_regime_low_pct: 30.0
+    vol_regime_low_weight: 0.5
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: true
+    base_bps: 2
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.65
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    ETHUSDT: 1.00
+    SOLUSDT: 1.00
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔵 [TSMOM]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

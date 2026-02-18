@@ -484,7 +484,12 @@ Available objectives: %(objectives)s
             return
     
     # ── 回測配置 ──
-    base_bt_cfg = cfg.to_backtest_dict()
+    # 單幣種模式：傳 symbol 讓 symbol_overrides 生效
+    # 多幣種模式：不傳 symbol，用全局 base params
+    if args.symbol and len(symbol_data) == 1:
+        base_bt_cfg = cfg.to_backtest_dict(symbol=args.symbol)
+    else:
+        base_bt_cfg = cfg.to_backtest_dict()
     
     # ── 印出 Banner ──
     if not args.quiet:

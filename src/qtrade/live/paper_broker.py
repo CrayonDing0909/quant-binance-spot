@@ -202,6 +202,7 @@ class PaperBroker:
         current_price: float,
         reason: str = "signal",
         stop_loss_price: float | None = None,  # v2.0: 介面對齊（Paper 模式不使用）
+        take_profit_price: float | None = None,  # v2.0: 介面對齊（Paper 模式不使用）
     ) -> TradeRecord | None:
         """
         執行目標倉位調整

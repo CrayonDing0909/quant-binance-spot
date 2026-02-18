@@ -1,6 +1,6 @@
 # 📍 專案地圖 & 指令速查
 
-> **最後更新**: 2026-02-17 | **主力配置**: `config/futures_rsi_adx_atr.yaml`
+> **最後更新**: 2026-02-18 | **主力配置**: `config/futures_tsmom.yaml`
 >
 > 這份文件是整個專案的「儀表板」。其他文件太長不想看？只看這份。
 
@@ -106,7 +106,8 @@
 
 | 配置檔 | 用途 | Oracle 部署 |
 |--------|------|:-----------:|
-| `futures_rsi_adx_atr.yaml` | **合約 RSI+ADX+ATR v3.1（ETH+SOL 雙幣，嚴格回測篩選）** | ✅ |
+| `futures_tsmom.yaml` | **⭐ 合約 TSMOM（Time-Series Momentum + EMA 對齊，ETH+SOL 雙幣）** | ✅ |
+| `futures_rsi_adx_atr.yaml` | 合約 RSI+ADX+ATR v3.1（⚠️ 發現 look-ahead bias，已停用） | ❌ |
 
 ### 📊 回測 / 研究用
 
@@ -146,10 +147,11 @@
 src/qtrade/
 ├── config.py              ← 統一配置管理（AppConfig, load_config）
 ├── strategy/              ← 策略庫
-│   ├── rsi_adx_atr_strategy.py  ← ⭐ 主力策略（Dynamic RSI + Funding + Vol Filter + HTF Soft）
-│   ├── base.py                  ← StrategyContext
+│   ├── tsmom_strategy.py        ← ⭐ 主力策略（TSMOM 動量 + EMA 對齊 + 波動率目標）
+│   ├── rsi_adx_atr_strategy.py  ← RSI 均值回歸（已停用，look-ahead bias）
+│   ├── base.py                  ← StrategyContext（含 signal_delay）
 │   ├── exit_rules.py            ← SL/TP/RSI Exit + Adaptive SL 邏輯
-│   └── filters.py               ← ⭐ 過濾器（Funding Rate / 波動率 / HTF 軟趨勢 / ER）
+│   └── filters.py               ← 過濾器（Funding Rate / 波動率 / HTF 軟趨勢 / ER）
 ├── indicators/            ← 技術指標（RSI, ADX, ATR, EMA, Efficiency Ratio...）
 ├── backtest/
 │   ├── run_backtest.py    ← 回測引擎 (run_symbol_backtest → ⭐ BacktestResult dataclass)
@@ -209,7 +211,7 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 
 ---
 
-## 🚧 當前專案狀態 (2026-02-17)
+## 🚧 當前專案狀態 (2026-02-18)
 
 ### ✅ 已完成
 
@@ -246,25 +248,36 @@ reports/{market_type}/{strategy}/{run_type}/{timestamp}/
 | **Ensemble 實盤** | 組合策略實盤驗證 | 🟡 中 | 需累積 Paper Trading 數據 |
 | **15m/4h 回測** | 不同時間框架績效比較 | 🔵 低 | 配置已備，需下載對應數據 |
 
+### 🆕 重大變更 (2026-02-18)
+
+| 項目 | 內容 | 狀態 |
+|------|------|------|
+| **Look-Ahead Bias 修復** | RSI 策略發現系統性 look-ahead（close[i] 信號在 open[i] 執行），修正後 RSI 均值回歸虧損 -85%~-93% | ✅ 已修復 |
+| **TSMOM 策略** | 新開發 Time-Series Momentum 策略（4 個變體），通過 5 項 look-ahead 審計 | ✅ 已完成 |
+| **signal_delay 機制** | StrategyContext 新增 signal_delay，trade_on=next_open 時自動延遲 1 bar | ✅ 已完成 |
+| **策略切換** | 主力從 `rsi_adx_atr` → `tsmom_ema`（動量策略取代均值回歸） | ✅ 已完成 |
+
 ### ⚠️ 已知風險
 
-- **Alpha 衰減**: RSI IC 從 2023 (+0.065) → 2026 (+0.018)，衰減 72%（已用 Dynamic RSI + IC 監控緩解）
-- **因子假多樣化**: RSI/BB/MACD/OBV 相關 |r| > 0.5（本質同一因子，Ensemble 僅用低相關配對）
-- 以上研究結論已整合進 v3.1 策略中
+- **RSI 均值回歸已死**: 修正 look-ahead 後返回 -85%~-93%，Alpha 100% 來自看到未來（均值回歸是 bar 內效應）
+- **TSMOM 預期績效**: Sharpe 0.3~1.0，年化 5%~30%，MDD 8%~25%（某些年份可能微負）
+- **動量因子風險**: 動量策略在趨勢反轉時會虧損（如 V 型反轉），需靠多 lookback 集成分散
 
 ---
 
 ## 🏗️ 當前 Oracle 部署配置
 
 ```
-交易對:    ETHUSDT, SOLUSDT（雙幣，嚴格回測篩選）
-策略:      rsi_adx_atr v3.1（Dynamic RSI + Funding Filter + Vol Filter + HTF Soft + Adaptive SL）
+交易對:    ETHUSDT, SOLUSDT（雙幣）
+策略:      tsmom_ema（Time-Series Momentum + EMA 趨勢對齊）
+           lookback=168(7d), vol_target=15%, ema=20/50
+           agree=1.0, disagree=0.3, vol_regime=off
 倉位分配:  各 100%（總曝險 200%）
 槓桿:      5x ISOLATED（保證金佔用 40%）
 倉位計算:  fixed（× allocation 權重）
 執行模式:  WebSocket 事件驅動（tmux session: trading）
 執行架構:  BaseRunner → WebSocketRunner（繼承，共享 14 個安全機制）
-熔斷線:    65%（歷史 MDD 39.8%，緩衝 25.2%）
+熔斷線:    65%
 ```
 
 ---
@@ -281,21 +294,17 @@ bash scripts/setup_swap.sh
 tmux kill-session -t trading 2>/dev/null
 tmux new -d -s trading 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
-  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real;
+  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_tsmom.yaml --real;
   echo "⚠️ Runner 退出，10秒後自動重啟..."; sleep 10;
 done'
 
 # 3. 等待啟動後查看日誌
 sleep 10 && tmux capture-pane -t trading -p | tail -20
 
-# 4. （可選）設定 Alpha Decay 監控 cron
-# crontab -e 加入：
-# 0 1 * * 0 cd ~/quant-binance-spot && source .venv/bin/activate && bash scripts/cron_alpha_monitor.sh >> logs/alpha_monitor.log 2>&1
-
-# 5. 查看 log
+# 4. 查看 log
 tmux attach -t trading       # 進入 tmux（Ctrl+B D 離開）
 
-# 6. 重啟
+# 5. 重啟
 tmux kill-session -t trading
 # 然後重新執行步驟 2
 ```
@@ -304,7 +313,7 @@ tmux kill-session -t trading
 
 ```bash
 # crontab -e
-5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once >> logs/futures_live.log 2>&1
+5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_tsmom.yaml --real --once >> logs/futures_live.log 2>&1
 ```
 
 > ⚠️ **兩種方式不可同時使用**。用 WebSocket 時要把 cron 裡的 `run_live.py` 註解掉。
@@ -319,12 +328,12 @@ git stash && git pull   # stash 本地改動再拉
 
 # 如果加了新幣，下載 K 線 + Funding Rate
 source .venv/bin/activate
-PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml
-PYTHONPATH=src python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate
+PYTHONPATH=src python scripts/download_data.py -c config/futures_tsmom.yaml
+PYTHONPATH=src python scripts/download_data.py -c config/futures_tsmom.yaml --funding-rate
 
 # 重啟 runner
 tmux attach -t trading   # Ctrl+C 停舊的
-PYTHONPATH=src python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real
+PYTHONPATH=src python scripts/run_websocket.py -c config/futures_tsmom.yaml --real
 # Ctrl+B, d 離開（或直接關 SSH 視窗）
 ```
 

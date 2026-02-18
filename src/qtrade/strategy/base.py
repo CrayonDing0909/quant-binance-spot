@@ -18,11 +18,13 @@ class StrategyContext:
         interval: K 線週期
         market_type: 市場類型 "spot" 或 "futures"
         direction: 交易方向 "both", "long_only", "short_only"
+        signal_delay: 信號延遲 bar 數（trade_on=next_open → 1）
     """
     symbol: str
     interval: str = "1h"
     market_type: str = "spot"
     direction: str = "both"  # "both", "long_only", "short_only"
+    signal_delay: int = 0    # 0=同bar執行, 1=next_open（消除 look-ahead）
 
     @property
     def supports_short(self) -> bool:

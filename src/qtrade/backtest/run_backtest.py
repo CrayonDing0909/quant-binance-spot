@@ -405,11 +405,16 @@ def run_symbol_backtest(
     if resolved["clean_data_before"]:
         df = clean_data(df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
 
+    # ── trade_on=next_open → signal_delay=1（消除 look-ahead bias）──
+    trade_on = cfg.get("trade_on", "next_open")
+    signal_delay = 1 if trade_on == "next_open" else 0
+
     ctx = StrategyContext(
         symbol=symbol,
         interval=cfg.get("interval", "1h"),
         market_type=mt,
         direction=dr,
+        signal_delay=signal_delay,
     )
 
     # 獲取策略函數

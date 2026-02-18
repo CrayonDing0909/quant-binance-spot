@@ -90,7 +90,7 @@ strategy:
     htf_align_weight: 1.0          # 順趨勢權重
     htf_counter_weight: 0.5        # 逆趨勢權重
     htf_neutral_weight: 0.75       # 無趨勢權重
-
+    
   # 移除舊的靜態閾值覆寫，使用統一的動態邏輯
   symbol_overrides: {}
 

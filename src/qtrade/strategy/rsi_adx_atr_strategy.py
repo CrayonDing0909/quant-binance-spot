@@ -246,6 +246,16 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             current_interval=current_interval,
         )
 
+    # ── trade_on=next_open 信號延遲（消除 look-ahead bias）──
+    # 回測中，指標信號 pos[i] 使用 close[i]（bar 結束時才知道），
+    # 但 VBT 在 open[i] 執行（bar 開始時）→ 這是 look-ahead。
+    # 修正：shift(1) 使信號延遲 1 bar，在 exit_rules 之前做，
+    # 確保 SL/TP 的入場價（open[i+1]）與 VBT 執行價一致。
+    # 實盤不受影響（signal_delay=0）。
+    _signal_delay = getattr(ctx, "signal_delay", 0)
+    if _signal_delay > 0:
+        filtered_pos = filtered_pos.shift(_signal_delay).fillna(0.0)
+
     # ── ATR 止損 / 止盈 / 移動止損 ──
     # 自適應止損：如果啟用，ER 低（震盪）放寬 SL，ER 高（趨勢）收緊 SL
     adaptive_sl_er = None
