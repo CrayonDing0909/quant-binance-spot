@@ -1,0 +1,85 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Dual-Momentum Rotation Strategy — Production Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 策略概述：
+#   1. 絕對動量 (Absolute Momentum):
+#      - BTC > SMA(200) → Risk-On (投資最強資產)
+#      - BTC < SMA(200) → Risk-Off (持有 USDT 現金)
+#
+#   2. 相對動量 (Relative Momentum):
+#      - 計算 BTC, ETH, SOL, BNB 的 90 天回報
+#      - 選擇最強的 Top-1 資產
+#
+#   3. 波動率定標 (Volatility Targeting):
+#      - 目標波動率 40%
+#      - 槓桿 = 目標波動率 / 當前波動率，上限 2.0×
+#
+# 回測績效 (2020-2026):
+#   Total Return:  +1,515%  (BTC B&H: +832%)
+#   Sharpe Ratio:  1.557    (BTC B&H: 0.906)
+#   Max Drawdown:  -32.0%   (BTC B&H: -76.6%)
+#   CAGR:          +57.4%   (BTC B&H: +43.9%)
+#
+# 調倉頻率：每週一次 (Cron Job)
+#   UTC+8 每週一 08:00 → 腳本生成信號 → Telegram 通知 → 手動調倉
+#
+# 使用方式：
+#   # 回測
+#   python scripts/research_dual_momentum.py
+#
+#   # 每週信號 (手動觸發)
+#   PYTHONPATH=src python scripts/cron_dual_momentum.py --dry-run
+#
+#   # Cron 設定 (UTC Mon 00:00 = UTC+8 Mon 08:00)
+#   0 0 * * 1 cd /path/to/project && .venv/bin/python scripts/cron_dual_momentum.py
+#
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── 資產池 ──
+universe:
+  BTC: "BTC-USD"       # Bitcoin
+  ETH: "ETH-USD"       # Ethereum
+  SOL: "SOL-USD"       # Solana
+  BNB: "BNB-USD"       # BNB Chain
+
+# ── 絕對動量：市場體制過濾 ──
+regime:
+  indicator: "BTC_SMA"
+  sma_window: 200        # 200-day Simple Moving Average
+  # Rule: BTC > SMA(200) → Risk-On; BTC < SMA(200) → Risk-Off
+
+# ── 相對動量：資產選擇 ──
+momentum:
+  lookback: 90           # 90-day return
+  top_n: 1               # 選擇 Top-1 最強資產
+  rebalance_days: 7      # 每 7 天重新評估
+
+# ── 波動率定標：風險管理 ──
+volatility_targeting:
+  window: 30             # 30-day rolling std dev
+  target: 0.40           # 40% annualized target volatility
+  max_leverage: 2.0      # 最大槓桿上限
+  min_leverage: 0.0      # 可以完全空倉
+
+# ── 交易成本 ──
+costs:
+  rebalance_fee_bps: 10  # 0.10% 單次調倉成本（含滑點）
+
+# ── 回測設定 ──
+backtest:
+  start_date: "2020-01-01"
+  end_date: null          # null = 到現在
+  initial_cash: 10000
+
+# ── Telegram 通知 ──
+notification:
+  telegram_bot_token: ${DM_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${DM_TELEGRAM_CHAT_ID}
+  prefix: "🔄 [Dual-Momentum]"
+  enabled: true
+
+# ── 輸出 ──
+output:
+  report_dir: "./reports/dual_momentum"
+  signal_log: "./reports/dual_momentum/signal_history.csv"
