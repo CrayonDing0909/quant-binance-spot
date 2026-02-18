@@ -699,6 +699,68 @@ def time_of_day_filter(
     return pd.Series(result, index=raw_pos.index)
 
 
+def volatility_regime_scaler(
+    df: pd.DataFrame,
+    raw_pos: pd.Series,
+    atr_period: int = 14,
+    lookback: int = 168,
+    low_vol_percentile: float = 30.0,
+    low_vol_weight: float = 0.5,
+) -> pd.Series:
+    """
+    波動率 Regime 倉位縮放器
+
+    根據歷史波動率百分位動態調整倉位大小：
+    - 高波動（ATR percentile > threshold）→ 全倉
+    - 低波動（ATR percentile ≤ threshold）→ 降倉（low_vol_weight）
+
+    原理：
+        Regime 分析顯示策略在高波動期 Sharpe 是低波動期的 2-3 倍。
+        低波動時 edge 小、手續費佔比大 → 減小倉位可降低磨損。
+        與 volatility_filter（二元閘門）不同，本函數是連續縮放器：
+        - volatility_filter: 低波動 → 完全不開倉
+        - regime_scaler:     低波動 → 倉位打折，仍保留交易機會
+
+    Args:
+        df:                  K 線數據
+        raw_pos:             原始持倉信號 [-1, 1]
+        atr_period:          ATR 計算週期
+        lookback:            滾動百分位回看 bar 數（預設 168 = 1h × 7 天）
+        low_vol_percentile:  低波動閾值百分位（低於此值為低波動 regime）
+        low_vol_weight:      低波動時倉位權重（預設 0.5 = 半倉）
+
+    Returns:
+        縮放後的持倉序列
+    """
+    atr = calculate_atr(df, atr_period)
+    close = df["close"]
+    atr_ratio = atr / close
+
+    # 滾動百分位排名（0~1 → 0~100）
+    atr_pct = atr_ratio.rolling(lookback, min_periods=max(lookback // 2, 1)).rank(pct=True) * 100
+
+    raw = raw_pos.values.copy()
+    pct = atr_pct.values
+    result = np.zeros(len(raw), dtype=float)
+
+    for i in range(len(raw)):
+        if raw[i] == 0:
+            result[i] = 0.0
+            continue
+
+        if np.isnan(pct[i]):
+            # 資料不足時保持原倉位
+            result[i] = raw[i]
+            continue
+
+        if pct[i] <= low_vol_percentile:
+            result[i] = raw[i] * low_vol_weight
+        else:
+            result[i] = raw[i]
+
+    return pd.Series(result, index=raw_pos.index)
+
+
 def funding_rate_filter(
     df: pd.DataFrame,
     raw_pos: pd.Series,

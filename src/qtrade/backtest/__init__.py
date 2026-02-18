@@ -38,8 +38,13 @@ from .hyperopt_engine import (
     OptimizationResult,
     WalkForwardValidator,
     RSI_ADX_ATR_PARAM_SPACE,
+    RSI_ADX_ATR_EXTENDED_PARAM_SPACE,
     EMA_CROSS_PARAM_SPACE,
+    PREDEFINED_SPACES,
     OBJECTIVES,
+    get_param_space,
+    split_data_for_oos,
+    cleanup_oos_files,
 )
 
 # 向後相容: 從新的 validation 模組導入
@@ -102,8 +107,13 @@ __all__ = [
     "OptimizationResult",
     "WalkForwardValidator",
     "RSI_ADX_ATR_PARAM_SPACE",
+    "RSI_ADX_ATR_EXTENDED_PARAM_SPACE",
     "EMA_CROSS_PARAM_SPACE",
+    "PREDEFINED_SPACES",
     "OBJECTIVES",
+    "get_param_space",
+    "split_data_for_oos",
+    "cleanup_oos_files",
     # Validation (backwards compatible, prefer qtrade.validation)
     "walk_forward_analysis",
     "parameter_sensitivity_analysis",

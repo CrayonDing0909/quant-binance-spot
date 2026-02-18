@@ -24,7 +24,7 @@ from .exit_rules import apply_exit_rules
 from .filters import (
     trend_filter, htf_trend_filter, htf_soft_trend_filter,
     volatility_filter, funding_rate_filter, efficiency_ratio_filter,
-    smooth_positions, time_of_day_filter,
+    smooth_positions, time_of_day_filter, volatility_regime_scaler,
 )
 from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
@@ -296,6 +296,17 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             er_threshold_high=float(params.get("er_threshold_high", 0.50)),
             weight_at_low=float(params.get("er_weight_at_low", 0.30)),
             weight_at_high=float(params.get("er_weight_at_high", 1.0)),
+        )
+
+    # ── 波動率 Regime 倉位縮放（低波動期降倉）──
+    vol_regime_enabled = params.get("vol_regime_enabled", False)
+    if vol_regime_enabled:
+        pos = volatility_regime_scaler(
+            df, pos,
+            atr_period=int(params.get("atr_period", 14)),
+            lookback=int(params.get("vol_regime_lookback", 168)),
+            low_vol_percentile=float(params.get("vol_regime_low_pct", 30.0)),
+            low_vol_weight=float(params.get("vol_regime_low_weight", 0.5)),
         )
 
     # ── 倉位平滑（減少 HTF 權重微調造成的假交易）──

@@ -1,0 +1,143 @@
+# 優化版合約策略配置：RSI + ADX + ATR
+# 
+# 改動對比（vs futures_rsi_adx_atr.yaml）：
+#
+#   全局變更（兩幣共用）：
+#     - vol_regime_enabled: true（低波動期倉位打 5 折）
+#
+#   ETH 專屬優化（via symbol_overrides，SOL 不受影響）：
+#     - min_adx: 15 → 20（做多門檻提高，過濾弱趨勢 long，PF 1.02 → 1.10）
+#     - min_hold_bars: 2 → 4（減少短命交易，降低手續費磨損）
+#     - rsi_quantile: 0.10/0.90 → 0.05/0.95（更嚴格進場門檻）
+#
+#   倉位調整：
+#     - ETH: 1.00 → 0.50（ETH edge 薄，降低曝險）
+#     - SOL: 1.00 維持
+#
+# 設計原則：
+#   SOL Sharpe 1.29 已經很好 → 不動它
+#   ETH Sharpe 0.65 需要幫助 → 針對性優化
+#   Regime scaler 對兩幣都有正面效果 → 全局啟用
+
+market:
+  symbols: ["ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 5
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "rsi_adx_atr"
+  params:
+    # === 以下全局參數保持不變（SOL 用這些） ===
+    rsi_mode: "dynamic"
+    rsi_period: 10
+    rsi_lookback_days: 14
+    rsi_quantile_low: 0.10
+    rsi_quantile_high: 0.90
+    oversold: 30
+    overbought: 80
+
+    min_adx: 15
+    short_min_adx: 20
+    adx_period: 14
+
+    use_funding_filter: true
+    fr_max_pos: 0.0002
+    fr_max_neg: -0.0002
+
+    stop_loss_atr: 2.0
+    take_profit_atr: null
+    atr_period: 14
+
+    adaptive_sl: true
+    adaptive_sl_er_period: 10
+    er_sl_min: 1.5
+    er_sl_max: 2.5
+
+    cooldown_bars: 3
+    min_hold_bars: 2
+
+    min_atr_ratio: 0.005
+    vol_filter_mode: "absolute"
+
+    htf_interval: "4h"
+    htf_mode: "soft"
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    htf_align_weight: 1.0
+    htf_counter_weight: 0.5
+    htf_neutral_weight: 0.75
+
+    # 🆕 Tier 2: 波動率 Regime 倉位縮放（全局啟用）
+    # 低波動期倉位打折 → 降低磨損
+    # Regime 分析：高波動 Sharpe 是低波動的 2-3 倍
+    vol_regime_enabled: true
+    vol_regime_lookback: 168    # 7 天回看
+    vol_regime_low_pct: 30.0    # 低於 30th percentile = 低波動
+    vol_regime_low_weight: 0.5  # 低波動時倉位 50%
+
+  # === ETH 專屬優化（SOL 不受影響）===
+  symbol_overrides:
+    ETHUSDT:
+      min_adx: 20               # 做多 ADX 門檻提高（過濾弱趨勢 long）
+      min_hold_bars: 4          # 更長持倉（減少短命交易）
+      rsi_quantile_low: 0.05    # 更嚴格進場（只做極端超賣/超買）
+      rsi_quantile_high: 0.95
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 4
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: true
+    base_bps: 2
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.65
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+  kelly_fraction: 0.25
+  target_volatility: 0.50
+  vol_lookback: 168
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    ETHUSDT: 0.50              # ← 降低：1.00 → 0.50（ETH edge 薄）
+    SOLUSDT: 1.00              # SOL 全倉不動
+    # 總曝險 150%（vs 原本 200%）
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔴 [FUTURES]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

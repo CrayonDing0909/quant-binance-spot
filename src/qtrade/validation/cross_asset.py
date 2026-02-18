@@ -271,6 +271,7 @@ class BaseValidator(ABC):
     def _extract_stats(self, result) -> dict:
         """
         提取統計數據（相容 BacktestResult dataclass 和 raw dict）
+        優先使用 adjusted_stats（含 funding rate 成本），更貼近真實績效。
         """
         if result is None:
             return {
@@ -279,9 +280,10 @@ class BaseValidator(ABC):
                 "Max Drawdown [%]": 0.0,
                 "Win Rate [%]": 0.0,
             }
-        # BacktestResult dataclass
+        # BacktestResult dataclass — 優先取 adjusted_stats
         if hasattr(result, "stats"):
-            return result.stats
+            adj = getattr(result, "adjusted_stats", None)
+            return adj if adj else result.stats
         # Legacy dict
         return result.get("stats", {})
     

@@ -133,9 +133,11 @@ def walk_forward_analysis(
             continue
 
         # 如果有 adjusted_stats（含 funding 成本），優先使用
-        train_adj = train_res.get("adjusted_stats")
-        test_adj = test_res.get("adjusted_stats")
+        # BacktestResult 是 dataclass，不能用 .get()
+        train_adj = getattr(train_res, "adjusted_stats", None)
+        test_adj = getattr(test_res, "adjusted_stats", None)
 
+        # adjusted_stats 是 dict；stats 是 pd.Series — 兩者都支援 .get()
         train_ret = (train_adj or train_stats).get("Total Return [%]", 0)
         test_ret = (test_adj or test_stats).get("Total Return [%]", 0)
         train_sharpe = (train_adj or train_stats).get("Sharpe Ratio", 0)
