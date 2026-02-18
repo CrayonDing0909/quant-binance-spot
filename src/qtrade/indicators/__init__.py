@@ -21,6 +21,7 @@ from .stochastic import calculate_stochastic
 from .adx import calculate_adx
 from .volume import calculate_obv, calculate_vwap
 from .efficiency_ratio import calculate_efficiency_ratio, calculate_choppiness_index
+from .cci import calculate_cci
 
 __all__ = [
     # 趨勢
@@ -33,6 +34,7 @@ __all__ = [
     "calculate_rsi",
     "calculate_rsi_divergence",
     "calculate_stochastic",
+    "calculate_cci",
     # 波動
     "calculate_bollinger_bands",
     "calculate_atr",

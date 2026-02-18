@@ -1044,6 +1044,27 @@ TSMOM_MULTI_EMA_PARAM_SPACE = {
 }
 
 # 預定義空間名稱查找
+XSMOM_PARAM_SPACE = {
+    "lookbacks": ParamSpace.categorical("lookbacks", [
+        "[336,720,1440]", "[336,720]", "[720,1440]", "[336,720,1440,2160]",
+    ]),
+    "skip_recent": ParamSpace.integer("skip_recent", 0, 72, step=24),
+    "use_residual": ParamSpace.categorical("use_residual", [True, False]),
+    "long_threshold": ParamSpace.float("long_threshold", 0.6, 0.8, step=0.05),
+    "short_threshold": ParamSpace.float("short_threshold", 0.2, 0.4, step=0.05),
+    "vol_target": ParamSpace.float("vol_target", 0.10, 0.30, step=0.05),
+    "scale_mode": ParamSpace.categorical("scale_mode", ["threshold", "linear"]),
+}
+
+XSMOM_TSMOM_PARAM_SPACE = {
+    **XSMOM_PARAM_SPACE,
+    "xsmom_weight": ParamSpace.float("xsmom_weight", 0.2, 0.5, step=0.1),
+    "tsmom_weight": ParamSpace.float("tsmom_weight", 0.5, 0.8, step=0.1),
+    "tsmom_lookback": ParamSpace.integer("tsmom_lookback", 72, 336, step=24),
+    "ema_fast": ParamSpace.integer("ema_fast", 10, 30),
+    "ema_slow": ParamSpace.integer("ema_slow", 40, 80),
+}
+
 PREDEFINED_SPACES = {
     "rsi_adx_atr": RSI_ADX_ATR_PARAM_SPACE,
     "rsi_adx_atr_extended": RSI_ADX_ATR_EXTENDED_PARAM_SPACE,
@@ -1051,6 +1072,8 @@ PREDEFINED_SPACES = {
     "tsmom": TSMOM_PARAM_SPACE,
     "tsmom_ema": TSMOM_EMA_PARAM_SPACE,
     "tsmom_multi_ema": TSMOM_MULTI_EMA_PARAM_SPACE,
+    "xsmom": XSMOM_PARAM_SPACE,
+    "xsmom_tsmom": XSMOM_TSMOM_PARAM_SPACE,
 }
 
 

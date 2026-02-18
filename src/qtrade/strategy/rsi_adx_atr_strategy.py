@@ -29,7 +29,7 @@ from .filters import (
 from ..data.funding_rate import load_funding_rates, get_funding_rate_path, align_funding_to_klines
 
 
-@register_strategy("rsi_adx_atr")
+@register_strategy("rsi_adx_atr", auto_delay=False)  # 手動 delay：需在 exit_rules 之前 shift
 def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.Series:
     """
     RSI 回調入場 + ADX 趨勢過濾 + ATR 動態止損
@@ -336,7 +336,7 @@ def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     return result
 
 
-@register_strategy("rsi_adx_atr_trailing")
+@register_strategy("rsi_adx_atr_trailing", auto_delay=False)  # 手動 delay
 def generate_positions_trailing(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.Series:
     """
     同 rsi_adx_atr，但預設啟用移動止損

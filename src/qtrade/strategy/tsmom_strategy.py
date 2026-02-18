@@ -16,11 +16,11 @@ TSMOM（Time-Series Momentum）策略
     1. tsmom         — 單 lookback TSMOM
     2. tsmom_multi   — 多 lookback 集成（最穩健）
     3. tsmom_ema     — TSMOM + EMA 趨勢對齊（最佳風險調整）
+    4. tsmom_multi_ema — 多 lookback + EMA（終極版）
 
-回測結果（2019-2026, signal_delay=1, fee=4.5bps）：
-    tsmom_multi:  ETH Sharpe=0.97 MDD=25% | SOL Sharpe=0.86 MDD=13%
-    tsmom_ema:    ETH Sharpe=0.65 MDD=18% | SOL Sharpe=1.22 MDD=12%
-    近期(2024-26): ETH Sharpe=0.55-1.01 | SOL Sharpe=0.29-0.77 | MDD < 15%
+Note:
+    signal_delay 和 direction clip 由 @register_strategy 框架自動處理，
+    策略函數只需回傳 raw position [-1, 1]。
 """
 from __future__ import annotations
 
@@ -93,20 +93,7 @@ def generate_tsmom(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.S
     lookback = int(params.get("lookback", 168))
     vol_target = float(params.get("vol_target", 0.15))
 
-    pos = _tsmom_signal(df["close"], lookback, vol_target)
-
-    # signal_delay
-    _signal_delay = getattr(ctx, "signal_delay", 0)
-    if _signal_delay > 0:
-        pos = pos.shift(_signal_delay).fillna(0.0)
-
-    # direction clip
-    if not ctx.can_short:
-        pos = pos.clip(lower=0.0)
-    if not ctx.can_long:
-        pos = pos.clip(upper=0.0)
-
-    return pos
+    return _tsmom_signal(df["close"], lookback, vol_target)
 
 
 # ──────────────────────────────────────────────
@@ -138,17 +125,12 @@ def generate_tsmom_multi(df: pd.DataFrame, ctx: StrategyContext, params: dict) -
     vol_target = float(params.get("vol_target", 0.15))
 
     # 多 lookback 信號等權平均
-    signals = []
-    for lb in lookbacks:
-        s = _tsmom_signal(df["close"], lb, vol_target)
-        signals.append(s)
-
+    signals = [_tsmom_signal(df["close"], lb, vol_target) for lb in lookbacks]
     pos = sum(signals) / len(signals)
     pos = pos.clip(-1.0, 1.0)
 
     # 波動率 regime 縮放（可選）
-    vol_regime_enabled = params.get("vol_regime_enabled", False)
-    if vol_regime_enabled:
+    if params.get("vol_regime_enabled", False):
         pos = volatility_regime_scaler(
             df, pos,
             atr_period=int(params.get("atr_period", 14)),
@@ -156,17 +138,6 @@ def generate_tsmom_multi(df: pd.DataFrame, ctx: StrategyContext, params: dict) -
             low_vol_percentile=float(params.get("vol_regime_low_pct", 30.0)),
             low_vol_weight=float(params.get("vol_regime_low_weight", 0.5)),
         )
-
-    # signal_delay
-    _signal_delay = getattr(ctx, "signal_delay", 0)
-    if _signal_delay > 0:
-        pos = pos.shift(_signal_delay).fillna(0.0)
-
-    # direction clip
-    if not ctx.can_short:
-        pos = pos.clip(lower=0.0)
-    if not ctx.can_long:
-        pos = pos.clip(upper=0.0)
 
     return pos
 
@@ -185,11 +156,6 @@ def generate_tsmom_ema(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
         2. EMA 交叉判斷中期趨勢方向
         3. TSMOM 方向與 EMA 趨勢一致 → 全倉
         4. 不一致 → 大幅降倉（預設 30%）
-    
-    這樣的組合能：
-        - 趨勢明確時大膽持倉
-        - 趨勢不明或逆趨勢時保守
-        - MDD 控制在 12-18%
 
     params:
         lookback:           TSMOM 回看期（預設 168 = 7 天）
@@ -222,12 +188,10 @@ def generate_tsmom_ema(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
     pos = tsmom.copy()
     pos[agree] *= agree_weight
     pos[~agree] *= disagree_weight
-
     pos = pos.clip(-1.0, 1.0)
 
     # 波動率 regime 縮放（可選）
-    vol_regime_enabled = params.get("vol_regime_enabled", False)
-    if vol_regime_enabled:
+    if params.get("vol_regime_enabled", False):
         pos = volatility_regime_scaler(
             df, pos,
             atr_period=int(params.get("atr_period", 14)),
@@ -235,17 +199,6 @@ def generate_tsmom_ema(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             low_vol_percentile=float(params.get("vol_regime_low_pct", 30.0)),
             low_vol_weight=float(params.get("vol_regime_low_weight", 0.5)),
         )
-
-    # signal_delay
-    _signal_delay = getattr(ctx, "signal_delay", 0)
-    if _signal_delay > 0:
-        pos = pos.shift(_signal_delay).fillna(0.0)
-
-    # direction clip
-    if not ctx.can_short:
-        pos = pos.clip(lower=0.0)
-    if not ctx.can_long:
-        pos = pos.clip(upper=0.0)
 
     return pos
 
@@ -263,7 +216,7 @@ def generate_tsmom_multi_ema(df: pd.DataFrame, ctx: StrategyContext, params: dic
         1. 多 lookback TSMOM 信號等權集成
         2. EMA 趨勢對齊過濾
         3. 波動率 regime 縮放
-    
+
     params:
         lookbacks:          lookback 列表
         vol_target:         波動率目標
@@ -302,8 +255,7 @@ def generate_tsmom_multi_ema(df: pd.DataFrame, ctx: StrategyContext, params: dic
     pos = pos.clip(-1.0, 1.0)
 
     # 波動率 regime 縮放
-    vol_regime_enabled = params.get("vol_regime_enabled", False)
-    if vol_regime_enabled:
+    if params.get("vol_regime_enabled", False):
         pos = volatility_regime_scaler(
             df, pos,
             atr_period=int(params.get("atr_period", 14)),
@@ -311,16 +263,5 @@ def generate_tsmom_multi_ema(df: pd.DataFrame, ctx: StrategyContext, params: dic
             low_vol_percentile=float(params.get("vol_regime_low_pct", 30.0)),
             low_vol_weight=float(params.get("vol_regime_low_weight", 0.5)),
         )
-
-    # signal_delay
-    _signal_delay = getattr(ctx, "signal_delay", 0)
-    if _signal_delay > 0:
-        pos = pos.shift(_signal_delay).fillna(0.0)
-
-    # direction clip
-    if not ctx.can_short:
-        pos = pos.clip(lower=0.0)
-    if not ctx.can_long:
-        pos = pos.clip(upper=0.0)
 
     return pos
