@@ -480,7 +480,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         slippage_model=slippage_model_cfg,
     )
 
-    return AppConfig(
+    app_cfg = AppConfig(
         market=market,
         backtest=backtest_cfg,
         strategy=StrategyConfig(
@@ -497,3 +497,6 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         notification=notification,
         live=live_cfg,
     )
+    # 附加原始配置路徑（供 ensemble 路由等需要重讀 YAML 的功能使用）
+    object.__setattr__(app_cfg, "_config_path", str(path))
+    return app_cfg
