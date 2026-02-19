@@ -1,0 +1,214 @@
+# 合約策略配置：Alt Ensemble（NW + TSMOM 多策略組合）
+#
+# 組合邏輯（Alt Ensemble — 基於實證最佳 per-symbol assignment）：
+#   - BTCUSDT → nw_envelope_regime（TSMOM 全虧，NW 持平但 MDD 僅 12%）
+#   - ETHUSDT → tsmom_multi_ema（SR 0.46, +22%, 唯一正 alpha 的 TSMOM 變體）
+#   - SOLUSDT → tsmom_ema（SR 1.14, +91%, MDD 14%, 遠優於 NW 的 +50%）
+#
+# 設計理念：
+#   每個 symbol 使用其實證最優策略變體
+#   NW V3 在 BTC 作為低波防守 sleeve（MDD 12% vs TSMOM 25%）
+#   TSMOM 在 ETH/SOL 捕捉動量 alpha
+#
+# 支援兩種權重模式：
+#   weight_mode: "fixed"      → 固定權重 (BTC 0.35 / ETH 0.35 / SOL 0.30)
+#   weight_mode: "vol_parity" → 波動率反比分配，含上下限 (20%~50%)
+#
+# 使用方式：
+#   # 固定權重組合回測
+#   python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml
+#
+#   # 波動率平價權重
+#   python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --weight-mode vol_parity
+#
+#   # 單幣回測（自動使用該幣對應的策略）
+#   python scripts/run_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --symbol BTCUSDT
+#   python scripts/run_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --symbol SOLUSDT
+#
+#   # Walk-Forward 驗證
+#   python scripts/run_walk_forward.py -c config/futures_ensemble_nw_tsmom.yaml --splits 5
+#
+#   # 成本敏感度
+#   python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --cost-mult 0.5
+#   python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --cost-mult 1.5
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 5
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+# ═══════════════════════════════════════════════════════════
+# 預設策略（不在 ensemble.strategies 中的 symbol 使用此策略）
+# ═══════════════════════════════════════════════════════════
+strategy:
+  name: "tsmom_multi_ema"
+  params:
+    lookbacks: [72, 168, 336, 720]
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.3
+    vol_regime_enabled: false
+
+  symbol_overrides: {}
+
+# ═══════════════════════════════════════════════════════════
+# Ensemble: 每個 symbol 可以有獨立的 strategy + params
+# ═══════════════════════════════════════════════════════════
+ensemble:
+  enabled: true
+
+  # 權重模式: "fixed" 或 "vol_parity"
+  weight_mode: "fixed"
+
+  # 固定權重
+  fixed_weights:
+    BTCUSDT: 0.35
+    ETHUSDT: 0.35
+    SOLUSDT: 0.30
+
+  # 波動率平價參數
+  vol_parity:
+    lookback: 720       # 30天 rolling vol
+    min_weight: 0.20    # 最低配置
+    max_weight: 0.50    # 最高配置
+
+  # per-symbol 策略路由
+  # 選擇理由（基於 2022-01 → 2026-02 回測 + 成本後）：
+  #   BTC: nw_envelope_regime（TSMOM 全虧，NW 持平但 MDD 僅 12%）
+  #   ETH: tsmom_multi_ema（SR 0.46, +22%, 唯一正 alpha 的 TSMOM 變體）
+  #   SOL: tsmom_ema（SR 1.14, +91%, MDD 14%, 遠優於 NW 的 +50%）
+  #
+  # 原始 assignment (TSMOM→BTC/ETH, NW→SOL): SR 0.49, MDD 12%
+  # 優化 assignment (NW→BTC, TSMOM→ETH/SOL):  SR 0.91, MDD 8% ← 採用
+  strategies:
+    BTCUSDT:
+      name: "nw_envelope_regime"
+      params:
+        # ── Ablation / MTF ──
+        use_mtf: true
+        mtf_alignment_mode: "right_ffill"
+        module_a_enabled: true
+        module_b_enabled: false
+        entry_mode: "pullback_nw"
+
+        # ── Phase B Entry Quality Filters ──
+        use_ltf_proxy: true
+        ltf_ema_fast: 20
+        ltf_ema_slow: 50
+        use_momentum_confirm: true
+        momentum_lookback: 3
+        min_pullback_depth: 0.3
+        reentry_lockout: true
+
+        # ── NW Kernel (1h) ──
+        kernel_bandwidth: 8.0
+        kernel_alpha: 1.0
+        kernel_lookback: 200
+        envelope_multiplier: 2.0
+        envelope_window: 200
+
+        # ── Regime Filter ──
+        regime_mode: "adx"
+        adx_period: 14
+        adx_threshold: 20.0
+        slope_window: 10
+        slope_threshold: 0.001
+
+        # ── 4h MTF ──
+        htf_bandwidth: 8.0
+        htf_lookback: 50
+        htf_adx_period: 14
+        htf_adx_threshold: 20.0
+        htf_slope_window: 5
+        htf_slope_threshold: 0.002
+
+        # ── Position Scaling ──
+        trend_scale: 1.0
+        range_scale: 0.5
+        mr_exit_target: "nw"
+
+        # ── Risk / Exit ──
+        atr_period: 14
+        stop_loss_atr: 3.0
+        take_profit_atr: 4.0
+        trailing_stop_atr: null
+        cooldown_bars: 8
+        max_holding_bars: 0
+        min_hold_bars: 4
+
+    ETHUSDT:
+      name: "tsmom_multi_ema"
+      params:
+        lookbacks: [72, 168, 336, 720]
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+        vol_regime_enabled: false
+
+    SOLUSDT:
+      name: "tsmom_ema"
+      params:
+        lookback: 168
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+        vol_regime_enabled: false
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.35
+    ETHUSDT: 0.35
+    SOLUSDT: 0.30
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🟣 [ENSEMBLE]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

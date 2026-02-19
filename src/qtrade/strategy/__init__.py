@@ -100,3 +100,4 @@ def list_strategies() -> list[str]:
 from . import rsi_adx_atr_strategy  # noqa: E402
 from . import tsmom_strategy  # noqa: E402
 from . import xsmom_strategy  # noqa: E402
+from . import nw_envelope_regime_strategy  # noqa: E402

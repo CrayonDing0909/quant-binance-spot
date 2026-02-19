@@ -1,0 +1,141 @@
+# ════════════════════════════════════════════════════════════════
+# 合約策略配置：Alt Ensemble (ETH+SOL TSMOM, Debounce ON)
+#
+# 驗收狀態：Conditional Go (2026-02-19)
+# 前提：30 天 paper trade 通過後方可切 real
+#
+# 策略路由：
+#   ETHUSDT → tsmom_multi_ema (disagree_weight=0, debounce ON)
+#   SOLUSDT → tsmom_ema       (disagree_weight=0, debounce ON)
+#   BTCUSDT → 不交易（cash 0 exposure）
+#
+# 權重：ETH 54% / SOL 46%
+#
+# 使用方式：
+#   # Paper Trading（WebSocket 模式）
+#   python scripts/run_websocket.py -c config/futures_alt_ensemble.yaml --paper
+#
+#   # Real Trading（通過 30 天 paper 後）
+#   python scripts/run_websocket.py -c config/futures_alt_ensemble.yaml --real
+#
+#   # 風控監控
+#   python scripts/risk_guard.py -c config/risk_guard_alt_ensemble.yaml --dry-run
+#
+#   # 回測驗證
+#   python scripts/run_backtest.py -c config/futures_alt_ensemble.yaml --symbol ETHUSDT
+#   python scripts/run_backtest.py -c config/futures_alt_ensemble.yaml --symbol SOLUSDT
+#   python scripts/run_portfolio_backtest.py -c config/futures_alt_ensemble.yaml
+# ════════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 5
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+# ═══════════════════════════════════════════════════════════
+# 預設策略（不在 ensemble.strategies 中的 symbol 使用此策略）
+# ═══════════════════════════════════════════════════════════
+strategy:
+  name: "tsmom_multi_ema"
+  params:
+    lookbacks: [72, 168, 336, 720]
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.0   # Debounce ON
+    vol_regime_enabled: false
+
+  symbol_overrides: {}
+
+# ═══════════════════════════════════════════════════════════
+# Ensemble: 每個 symbol 獨立策略 + 參數
+# ═══════════════════════════════════════════════════════════
+ensemble:
+  enabled: true
+
+  weight_mode: "fixed"
+
+  fixed_weights:
+    ETHUSDT: 0.54
+    SOLUSDT: 0.46
+
+  vol_parity:
+    lookback: 720
+    min_weight: 0.30
+    max_weight: 0.70
+
+  strategies:
+    ETHUSDT:
+      name: "tsmom_multi_ema"
+      params:
+        lookbacks: [72, 168, 336, 720]
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.0   # Debounce ON
+        vol_regime_enabled: false
+
+    SOLUSDT:
+      name: "tsmom_ema"
+      params:
+        lookback: 168
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.0   # Debounce ON
+        vol_regime_enabled: false
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.12    # 12% — 與 risk_guard 的 FLATTEN_ALL 閾值一致
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    ETHUSDT: 0.54
+    SOLUSDT: 0.46
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🟣 [ALT-ENS]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

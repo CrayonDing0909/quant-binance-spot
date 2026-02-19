@@ -66,6 +66,10 @@ class BaseRunner(ABC):
         self.trade_count = 0
         self.start_time: float | None = None
 
+        # Ensemble 路由：per-symbol 策略名與參數（從 YAML ensemble.strategies 載入）
+        self._ensemble_strategies: dict[str, dict] = {}
+        self._load_ensemble_strategies()
+
         # Telegram
         self.notifier = notifier or TelegramNotifier.from_config(cfg.notification)
 
@@ -106,6 +110,51 @@ class BaseRunner(ABC):
     def _log(self):
         """子類可覆寫以使用專用 logger"""
         return logger
+
+    # ══════════════════════════════════════════════════════════
+    #  Ensemble 路由
+    # ══════════════════════════════════════════════════════════
+
+    def _load_ensemble_strategies(self) -> None:
+        """
+        從 config YAML 的 ensemble.strategies 載入 per-symbol 策略路由。
+
+        若 ensemble.enabled=true 且有 strategies map，
+        則 _get_strategy_for_symbol() 會回傳 symbol 專屬策略名與參數，
+        否則 fallback 到全域 strategy.name + strategy.params。
+        """
+        try:
+            import yaml
+            cfg_path = getattr(self.cfg, '_config_path', None)
+            if cfg_path is None:
+                return
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f)
+            ens = raw.get("ensemble")
+            if ens and ens.get("enabled", False):
+                strategies = ens.get("strategies", {})
+                if strategies:
+                    self._ensemble_strategies = strategies
+                    routing = ", ".join(
+                        f"{s}→{v['name']}" for s, v in strategies.items()
+                    )
+                    self._log.info(f"🧩 Ensemble 模式啟用: {routing}")
+        except Exception as e:
+            self._log.debug(f"Ensemble 配置載入失敗（使用全域策略）: {e}")
+
+    def _get_strategy_for_symbol(self, symbol: str) -> tuple[str, dict]:
+        """
+        取得指定 symbol 的策略名稱和參數。
+
+        優先使用 ensemble.strategies 路由，否則 fallback 到全域策略。
+
+        Returns:
+            (strategy_name, params)
+        """
+        if self._ensemble_strategies and symbol in self._ensemble_strategies:
+            sym_cfg = self._ensemble_strategies[symbol]
+            return sym_cfg["name"], sym_cfg.get("params", {})
+        return self.strategy_name, self.cfg.strategy.get_params(symbol)
 
     # ══════════════════════════════════════════════════════════
     #  倉位計算器

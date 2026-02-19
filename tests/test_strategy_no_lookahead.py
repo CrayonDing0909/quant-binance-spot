@@ -80,6 +80,12 @@ _DEFAULT_PARAMS = {
     "tsmom_multi": {"lookbacks": [72, 168], "vol_target": 0.15},
     "tsmom_ema": {"lookback": 72, "vol_target": 0.15, "ema_fast": 20, "ema_slow": 50},
     "tsmom_multi_ema": {"lookbacks": [72, 168], "vol_target": 0.15, "ema_fast": 20, "ema_slow": 50},
+    "nw_envelope_regime": {
+        "kernel_bandwidth": 8.0, "kernel_lookback": 100, "envelope_multiplier": 2.5,
+        "envelope_window": 100, "adx_period": 14, "adx_threshold": 25.0,
+        "slope_window": 10, "slope_threshold": 0.001, "atr_period": 14,
+        "stop_loss_atr": 2.0, "take_profit_atr": 3.0, "cooldown_bars": 3,
+    },
 }
 
 # 需要 universe 數據的策略（在假數據測試中跳過，因為無法載入 parquet）
@@ -89,7 +95,7 @@ _NEEDS_UNIVERSE = {"xsmom", "xsmom_tsmom"}
 _ALL_STRATEGIES = [s for s in list_strategies() if s not in _NEEDS_UNIVERSE]
 
 # 需要跳過框架延遲測試的策略（auto_delay=False，自行管理 delay）
-_MANUAL_DELAY_STRATEGIES = {"rsi_adx_atr", "rsi_adx_atr_trailing"}
+_MANUAL_DELAY_STRATEGIES = {"rsi_adx_atr", "rsi_adx_atr_trailing", "nwkl", "nw_envelope_regime"}
 
 
 def _get_params(name: str) -> dict:

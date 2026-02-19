@@ -1,97 +1,103 @@
-# 合約策略配置：NWKL v3.1（Nadaraya-Watson + Lorentzian k-NN Classifier）
+# 合約策略配置：NW Envelope + Regime Filter + MTF Gating V3
 #
-# v3.1 Dynamic Volatility Envelope — Long-Only + Panic Override
+# 策略：Nadaraya-Watson Envelope + ADX Regime + 4h MTF + Trend Pullback
 #
-# 核心改動：
-#   1. 動態波動率包絡線（v3.1 新增）：
-#      - Z_vol = (ATR - μ(ATR, 168)) / σ(ATR, 168)
-#      - 低波動（Z < -1）→ 1.5× MAE（牛市淺回調）
-#      - 正常             → 2.0× MAE
-#      - 高波動（Z > 2）  → 3.0× MAE（避免接刀）
-#   2. LONG-ONLY 強制：移除所有空倉邏輯，只做低位買入
-#   3. Panic Override：(ADX < 30) OR (RSI < 12) → 極端超賣時覆蓋 ADX 限制
-#   4. 支持市價單 / Post-Only 限價單
-#   5. 2× Leverage：低曝光（~2.4%）下安全槓桿
+# V3 修復（MTF look-ahead audit 後重建）：
+#   1. MTF 對齊改為 right_ffill（causal, 0h 額外延遲）
+#   2. 新增 Phase B entry quality filters:
+#      - LTF proxy (EMA 20/50 cross) → 1h 即時方向確認
+#      - Momentum confirmation (3h lookback) → 避免 catching falling knives
+#      - Pullback depth filter (0.3) → 只在夠深的回踩入場
+#      - Re-entry lockout → 出場後需回穿 NW 才重入
+#   3. 所有 anti-lookahead 測試 PASS（online/offline, truncation, boundary, causality）
 #
-# 預期表現（2022-2023 ETHUSDT 1H，Market Orders）：
-#   Sharpe > 1.0，MDD < 20%
+# Causal 回測結果（2022-01 → 2026-02, 全樣本, 含 fee+slippage+funding）：
+#   BTC: -1.2%, SR=-0.06, MDD=7.0%,  412 trades, WR 51.7%
+#   ETH: -1.1%, SR=-0.07, MDD=6.1%,  315 trades, WR 60.3%
+#   SOL: +13.2%, SR=+0.79, MDD=4.9%, 578 trades, WR 62.6%
 #
-# 學術基礎：
-#   - Nadaraya (1964), Watson (1964): Kernel Regression
-#   - Rational Quadratic Kernel: Rasmussen & Williams (2006)
-#   - Lorentzian Distance: ln(1 + |x - y|)，對離群值更穩健
+# 結論：SOL 有真實 causal alpha, BTC/ETH capital preservation, MaxDD 可控
 #
 # 使用方式：
 #   python scripts/download_data.py -c config/futures_nwkl.yaml
-#   python scripts/research_nwkl.py --symbol ETHUSDT --start 2022-01-01 --end 2023-12-31
 #   python scripts/run_backtest.py -c config/futures_nwkl.yaml
+#   python scripts/run_backtest.py -c config/futures_nwkl.yaml --symbol BTCUSDT
+#   python scripts/run_portfolio_backtest.py -c config/futures_nwkl.yaml
+#   python scripts/run_walk_forward.py -c config/futures_nwkl.yaml --splits 5
 #   python scripts/run_live.py -c config/futures_nwkl.yaml --paper
 
 market:
-  symbols: ["ETHUSDT"]
+  symbols: ["ETHUSDT", "BTCUSDT", "SOLUSDT"]
   interval: "1h"
   start: "2022-01-01"
   end: null
   market_type: "futures"
 
 futures:
-  leverage: 2                    # ← v3.0: 2× leverage
+  leverage: 3
   margin_type: "ISOLATED"
   position_mode: "ONE_WAY"
-  direction: "long_only"         # ← v3.0: Long-Only 強制
+  direction: "both"
 
 strategy:
-  name: "nwkl"
+  name: "nw_envelope_regime"
   params:
-    # ── Kernel Regression ──
-    kernel_bandwidth: 3.0        # h：平滑度
-    kernel_alpha: 1.0            # α：RQ kernel 尾部權重
-    kernel_lookback: 100         # 因果回看窗口
-    envelope_multiplier: 2.0     # 正常波動區包絡線倍數
-    envelope_window: 200         # MAE 滾動窗口
+    # ═══ Ablation Control ═══
+    use_mtf: true                  # 4h MTF regime gating（核心！）
+    mtf_alignment_mode: "right_ffill"   # 無偏 MTF 對齊（最小延遲，causal）
+    module_a_enabled: true         # Module A: 趨勢跟隨
+    module_b_enabled: false        # Module B: MR 在 crypto 上效果差
+    entry_mode: "pullback_nw"      # NW 中心回踩 — 最佳 risk-adjusted
 
-    # ── Dynamic Volatility Envelope (v3.1 新增) ──
-    dynamic_envelope: true       # 啟用動態波動率包絡線
-    vol_zscore_window: 168       # ATR Z-score 窗口（168 = 1 週 hourly）
-    envelope_mult_low: 1.5      # 低波動倍數（Z < -1.0）→ 牛市淺回調
-    envelope_mult_high: 3.0     # 高波動倍數（Z > 2.0） → 避免接刀
-    vol_zscore_low: -1.0        # 低波動 Z-score 閾值
-    vol_zscore_high: 2.0        # 高波動 Z-score 閾值
+    # ═══ Phase B: Entry Quality Filters ═══
+    use_ltf_proxy: true            # 1h EMA cross 確認 → 降低 regime 延遲
+    ltf_ema_fast: 20               # 1h EMA fast period
+    ltf_ema_slow: 50               # 1h EMA slow period
+    use_momentum_confirm: true     # 動量恢復確認 → 避免 catching falling knives
+    momentum_lookback: 3           # 3h 動量回看
+    min_pullback_depth: 0.3        # 回踩深度門檻（0-1, 0=不過濾）
+    reentry_lockout: true          # 出場後需回穿 NW 才能同方向重入
 
-    # ── Lorentzian k-NN Classifier ──
-    knn_k: 8                     # 最近鄰數量
-    training_window: 2000        # 訓練窗口大小
-    prediction_horizon: 4        # 標籤生成的未來 bars
+    # ═══ Nadaraya-Watson Kernel (1h) ═══
+    kernel_bandwidth: 8.0
+    kernel_alpha: 1.0
+    kernel_lookback: 200
+    envelope_multiplier: 2.0
+    envelope_window: 200
 
-    # ── Feature Engineering ──
-    rsi_period: 14
-    cci_period: 20
+    # ═══ Regime Filter ═══
+    regime_mode: "adx"
     adx_period: 14
-    feature_norm_window: 500     # 特徵 z-score 標準化窗口
+    adx_threshold: 20.0
+    slope_window: 10
+    slope_threshold: 0.001
 
-    # ── Regime Filter + Panic Override ──
-    adx_filter_enabled: true     # 啟用 ADX 過濾器
-    adx_filter_threshold: 30     # Normal: ADX < 30 才允許入場
-    rsi_panic_threshold: 12      # Panic: RSI < 12 覆蓋 ADX 限制
+    # ═══ 4h MTF Parameters ═══
+    htf_bandwidth: 8.0
+    htf_lookback: 50
+    htf_adx_period: 14
+    htf_adx_threshold: 20.0
+    htf_slope_window: 5
+    htf_slope_threshold: 0.002
 
-    # ── Execution ──
-    use_limit_orders: false      # ← v3.1: Market Orders（fill rate 更高）
-    limit_order_expiry: 3        # 限價單到期 bars（use_limit_orders=true 時使用）
+    # ═══ Position Scaling ═══
+    trend_scale: 1.0
+    range_scale: 0.5
+    mr_exit_target: "nw"
 
-    # ── Risk Management ──
-    use_atr_stop: true           # 使用 ATR 動態止損
-    atr_stop_multiplier: 1.5     # ATR 止損倍數
+    # ═══ Risk / Exit ═══
     atr_period: 14
-    stop_loss_pct: 0.02          # 固定止損（use_atr_stop=false 時使用）
-
-    # ── Take Profit ──
-    tp_mode: "band"              # "band"/"mean"/"atr"
-    tp_atr_multiplier: 1.5       # ATR 止盈倍數（tp_mode="atr" 時使用）
+    stop_loss_atr: 3.0             # 寬止損：讓趨勢奔跑
+    take_profit_atr: 4.0           # 有目標止盈
+    trailing_stop_atr: null
+    cooldown_bars: 8               # SL 後冷卻
+    max_holding_bars: 0
+    min_hold_bars: 4               # 最少持倉
 
 backtest:
   initial_cash: 10000
-  fee_bps: 5                     # ← v3.1: 0.05% taker fee (market orders)
-  slippage_bps: 3                # ← v3.1: 0.03% slippage
+  fee_bps: 5
+  slippage_bps: 3
   trade_on: "next_open"
   validate_data: true
   clean_data: true
@@ -102,30 +108,34 @@ backtest:
     use_historical: true
 
   slippage_model:
-    enabled: false               # Post-Only 不需要滑點模型
+    enabled: false
 
 risk:
   max_drawdown_pct: 0.30
 
 position_sizing:
-  method: "fixed"
+  method: "volatility"
   position_pct: 1.0
+  target_volatility: 0.25
+  vol_lookback: 168
 
 portfolio:
   cash_reserve: 0
   allocation:
-    ETHUSDT: 1.00
+    ETHUSDT: 0.40
+    BTCUSDT: 0.30
+    SOLUSDT: 0.30
 
 live:
   kline_cache: true
   flip_confirmation: false
-  prefer_limit_order: true       # Post-Only
+  prefer_limit_order: true
   limit_order_timeout_s: 10
 
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
   telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
-  prefix: "🟣 [NWKL v3.1]"
+  prefix: "🟡 [NW-Regime-V2]"
   enabled: true
 
 output:

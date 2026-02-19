@@ -11,6 +11,8 @@
 - 自訂權重分配
 - 從 config 讀取 portfolio.allocation 權重
 - 組合績效統計（含成本調整）
+- **Ensemble 模式**：每個 symbol 使用不同策略（v3.0 新增）
+- **Vol-Parity 權重**：基於波動率反比分配權重（v3.0 新增）
 
 使用範例：
     # 使用 config 中的 allocation 權重
@@ -24,6 +26,16 @@
 
     # 快速模式（關閉成本模型，用於快速迭代）
     python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml --simple
+
+    # Ensemble 模式（per-symbol 策略路由，從 config ensemble 段讀取）
+    python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml
+
+    # Ensemble + 波動率平價權重
+    python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --weight-mode vol_parity
+
+    # 成本敏感度測試
+    python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --cost-mult 0.5
+    python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --cost-mult 1.5
 """
 from __future__ import annotations
 import argparse
@@ -32,12 +44,84 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 import json
+import yaml
 
 from qtrade.config import load_config
 from qtrade.backtest.run_backtest import (
     run_symbol_backtest,
     BacktestResult,
 )
+from qtrade.data.storage import load_klines
+
+
+def compute_vol_parity_weights(
+    symbols: list[str],
+    cfg,
+    lookback: int = 720,
+    min_weight: float = 0.20,
+    max_weight: float = 0.50,
+) -> dict[str, float]:
+    """
+    計算波動率反比（Risk Parity 近似）權重
+
+    低波動 symbol → 高權重，高波動 → 低權重
+    再用 min/max 限制避免極端偏斜
+
+    Args:
+        symbols: 交易對列表
+        cfg: AppConfig
+        lookback: 波動率計算回看期（bar 數）
+        min_weight: 最低配置比例
+        max_weight: 最高配置比例
+
+    Returns:
+        {symbol: weight} dict，已正規化
+    """
+    market_type = cfg.market_type_str
+    vols = {}
+
+    for sym in symbols:
+        data_path = (
+            cfg.data_dir / "binance" / market_type
+            / cfg.market.interval / f"{sym}.parquet"
+        )
+        if not data_path.exists():
+            print(f"⚠️  {sym}: 數據不存在，無法計算波動率")
+            continue
+
+        df = load_klines(data_path)
+        returns = df["close"].pct_change()
+        # 使用最近 lookback 根 bar 的波動率
+        vol = returns.iloc[-lookback:].std() * np.sqrt(8760)  # 年化
+        vols[sym] = vol
+        print(f"  {sym}: 年化波動率 = {vol:.1%}")
+
+    if not vols:
+        return {s: 1.0 / len(symbols) for s in symbols}
+
+    # 波動率反比
+    inv_vols = {s: 1.0 / v for s, v in vols.items() if v > 0}
+    total_inv = sum(inv_vols.values())
+    raw_weights = {s: v / total_inv for s, v in inv_vols.items()}
+
+    # 應用上下限
+    clamped = {s: np.clip(w, min_weight, max_weight) for s, w in raw_weights.items()}
+
+    # 迭代正規化（多輪 clip + renorm 確保收斂）
+    for _ in range(5):
+        total = sum(clamped.values())
+        clamped = {s: w / total for s, w in clamped.items()}
+        clamped = {s: np.clip(w, min_weight, max_weight) for s, w in clamped.items()}
+
+    # 最終正規化
+    total = sum(clamped.values())
+    final = {s: w / total for s, w in clamped.items()}
+
+    print(f"\n📊 Vol-Parity 權重:")
+    for s, w in final.items():
+        print(f"   {s}: {w*100:.1f}% (vol={vols.get(s, 0):.1%})")
+
+    return final
 
 
 def run_portfolio_backtest(
@@ -47,6 +131,8 @@ def run_portfolio_backtest(
     output_dir: Path,
     direction: str | None = None,
     simple_mode: bool = False,
+    ensemble_strategies: dict | None = None,
+    cost_mult: float = 1.0,
 ) -> dict:
     """
     執行組合回測（透過 run_symbol_backtest 確保成本一致性）
@@ -58,6 +144,8 @@ def run_portfolio_backtest(
         output_dir: 輸出目錄
         direction: 交易方向覆蓋（None 則自動從 config 判斷）
         simple_mode: True = 關閉 FR/Slippage 成本模型（快速迭代用）
+        ensemble_strategies: per-symbol 策略配置（{symbol: {"name": ..., "params": ...}}）
+        cost_mult: 成本乘數（1.0 = baseline, 0.5 = 低成本, 1.5 = 高成本）
 
     Returns:
         組合回測結果 dict
@@ -69,11 +157,21 @@ def run_portfolio_backtest(
     market_type = cfg.market_type_str
     direction = direction or cfg.direction
 
+    is_ensemble = ensemble_strategies is not None and len(ensemble_strategies) > 0
+
     print(f"\n📊 組合配置:")
     for sym, w in zip(symbols, weights):
-        print(f"   {sym}: {w*100:.1f}%")
+        if is_ensemble and sym in ensemble_strategies:
+            strat_name = ensemble_strategies[sym]["name"]
+            print(f"   {sym}: {w*100:.1f}% → {strat_name}")
+        else:
+            print(f"   {sym}: {w*100:.1f}% → {cfg.strategy.name}")
     print(f"\n📈 交易方向: {direction}")
     print(f"🏷️  市場類型: {market_type}")
+    if is_ensemble:
+        print(f"🧩 模式: ENSEMBLE（per-symbol 策略路由）")
+    if cost_mult != 1.0:
+        print(f"💰 成本乘數: {cost_mult:.2f}x")
     if simple_mode:
         print(f"⚡ 模式: SIMPLE（成本模型關閉，僅供快速迭代）")
     else:
@@ -86,8 +184,16 @@ def run_portfolio_backtest(
     initial_cash = cfg.backtest.initial_cash
 
     for symbol in symbols:
-        # 準備回測配置（統一用 to_backtest_dict）
-        bt_cfg = cfg.to_backtest_dict(symbol=symbol)
+        # ── Ensemble: 決定該 symbol 使用哪個策略 ──
+        if is_ensemble and symbol in ensemble_strategies:
+            sym_strat = ensemble_strategies[symbol]
+            strategy_name = sym_strat["name"]
+            # 用 ensemble 的 params 覆蓋預設
+            bt_cfg = cfg.to_backtest_dict(symbol=symbol)
+            bt_cfg["strategy_params"] = sym_strat.get("params", bt_cfg["strategy_params"])
+        else:
+            strategy_name = cfg.strategy.name
+            bt_cfg = cfg.to_backtest_dict(symbol=symbol)
 
         # 如果命令列覆蓋 direction
         if direction:
@@ -97,6 +203,11 @@ def run_portfolio_backtest(
         if simple_mode:
             bt_cfg["funding_rate"] = {"enabled": False}
             bt_cfg["slippage_model"] = {"enabled": False}
+
+        # 成本乘數（用於敏感度分析）
+        if cost_mult != 1.0:
+            bt_cfg["fee_bps"] = bt_cfg["fee_bps"] * cost_mult
+            bt_cfg["slippage_bps"] = bt_cfg["slippage_bps"] * cost_mult
 
         data_path = (
             cfg.data_dir / "binance" / market_type
@@ -109,7 +220,7 @@ def run_portfolio_backtest(
 
         res = run_symbol_backtest(
             symbol, data_path, bt_cfg,
-            strategy_name=cfg.strategy.name,
+            strategy_name=strategy_name,
             data_dir=cfg.data_dir,
         )
         per_symbol_results[symbol] = res
@@ -117,7 +228,7 @@ def run_portfolio_backtest(
         # 顯示單幣結果
         pf = res.pf
         print(
-            f"  {symbol}: "
+            f"  {symbol} [{strategy_name}]: "
             f"Return {res.total_return_pct():+.1f}%, "
             f"Sharpe {res.sharpe():.2f}, "
             f"MDD {res.max_drawdown_pct():.1f}% "
@@ -238,10 +349,14 @@ def run_portfolio_backtest(
         "start": str(min_start),
         "end": str(max_end),
         "mode": "simple" if simple_mode else "strict",
+        "ensemble": is_ensemble,
+        "cost_mult": cost_mult,
         "strategy_stats": stats,
         "buyhold_stats": bh_stats,
         "per_symbol": {
             sym: {
+                "strategy": (ensemble_strategies.get(sym, {}).get("name", cfg.strategy.name)
+                             if is_ensemble else cfg.strategy.name),
                 "total_return_pct": res.total_return_pct(),
                 "sharpe": res.sharpe(),
                 "max_drawdown_pct": res.max_drawdown_pct(),
@@ -383,9 +498,24 @@ def plot_portfolio_equity(
     plt.close()
 
 
+def load_ensemble_config(config_path: str) -> dict | None:
+    """
+    從 YAML 配置檔讀取 ensemble 段落
+
+    Returns:
+        ensemble dict（含 strategies, weight_mode 等），若不存在則 None
+    """
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    ens = raw.get("ensemble")
+    if ens and ens.get("enabled", False):
+        return ens
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="組合回測（v2.0 — 統一成本模型）",
+        description="組合回測（v3.0 — 統一成本模型 + Ensemble 支援）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -416,11 +546,29 @@ def main():
         "--simple", action="store_true",
         help="⚡ 快速模式：關閉 FR/Slippage 成本模型（僅供快速迭代，結果不可信）",
     )
+    parser.add_argument(
+        "--weight-mode", type=str, default=None,
+        choices=["fixed", "vol_parity"],
+        help="權重模式（覆蓋 config ensemble.weight_mode）",
+    )
+    parser.add_argument(
+        "--cost-mult", type=float, default=1.0,
+        help="成本乘數（1.0=baseline, 0.5=低成本, 1.5=高成本）",
+    )
 
     args = parser.parse_args()
 
     # 載入配置
     cfg = load_config(args.config)
+
+    # ── 檢查 ensemble 配置 ──
+    ensemble_raw = load_ensemble_config(args.config)
+    ensemble_strategies = None
+    if ensemble_raw:
+        ensemble_strategies = ensemble_raw.get("strategies", {})
+        print(f"🧩 偵測到 Ensemble 配置:")
+        for sym, strat in ensemble_strategies.items():
+            print(f"   {sym} → {strat['name']}")
 
     # 確定交易對
     symbols = args.symbols or cfg.market.symbols
@@ -428,14 +576,36 @@ def main():
         print("❌ 未指定交易對，且 config 中也沒有設定")
         return
 
-    # 設定權重
+    # ── 設定權重 ──
+    weight_mode = args.weight_mode
+    if weight_mode is None and ensemble_raw:
+        weight_mode = ensemble_raw.get("weight_mode", "fixed")
+
     if args.weights is not None:
+        # 命令列明確指定 → 最高優先
         if len(args.weights) != len(symbols):
             raise ValueError(
                 f"權重數量 ({len(args.weights)}) "
                 f"與交易對數量 ({len(symbols)}) 不符"
             )
         weights = args.weights
+        print(f"📋 使用命令列指定權重")
+    elif weight_mode == "vol_parity":
+        # Vol-Parity 權重
+        vp_cfg = ensemble_raw.get("vol_parity", {}) if ensemble_raw else {}
+        vp_weights = compute_vol_parity_weights(
+            symbols, cfg,
+            lookback=vp_cfg.get("lookback", 720),
+            min_weight=vp_cfg.get("min_weight", 0.20),
+            max_weight=vp_cfg.get("max_weight", 0.50),
+        )
+        weights = [vp_weights.get(s, 1.0 / len(symbols)) for s in symbols]
+        print(f"📋 使用 vol_parity 權重")
+    elif ensemble_raw and "fixed_weights" in ensemble_raw:
+        # Ensemble 固定權重
+        fw = ensemble_raw["fixed_weights"]
+        weights = [fw.get(s, 1.0 / len(symbols)) for s in symbols]
+        print(f"📋 使用 ensemble fixed_weights")
     elif cfg.portfolio.allocation:
         # 從 config 的 portfolio.allocation 讀取
         weights = []
@@ -452,7 +622,12 @@ def main():
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = cfg.get_report_dir("portfolio") / timestamp
+        # Ensemble 模式：用 "ensemble_nw_tsmom" 作為策略名稱路徑
+        if ensemble_strategies:
+            report_base = Path(cfg.output.report_dir) / cfg.market_type_str / "ensemble_nw_tsmom" / "portfolio"
+        else:
+            report_base = cfg.get_report_dir("portfolio")
+        output_dir = report_base / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"📊 組合回測: {' + '.join(symbols)}")
@@ -463,6 +638,8 @@ def main():
         symbols, weights, cfg, output_dir,
         direction=args.direction,
         simple_mode=args.simple,
+        ensemble_strategies=ensemble_strategies,
+        cost_mult=args.cost_mult,
     )
 
 

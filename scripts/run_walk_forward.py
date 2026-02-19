@@ -3,11 +3,13 @@ Walk-Forward Analysis Script
 
 Usage:
     python scripts/run_walk_forward.py -c config/futures_rsi_adx_atr.yaml --splits 5
+    python scripts/run_walk_forward.py -c config/futures_ensemble_nw_tsmom.yaml --splits 5
 """
 import argparse
 import sys
 from pathlib import Path
 import pandas as pd
+import yaml
 from datetime import datetime
 
 # Add src to path
@@ -15,6 +17,19 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from qtrade.config import load_config
 from qtrade.validation.walk_forward import walk_forward_analysis, walk_forward_summary
+
+
+def _load_ensemble_strategy(config_path: str, symbol: str) -> tuple | None:
+    """從 ensemble 配置取得 symbol 的策略名與參數"""
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    ens = raw.get("ensemble")
+    if ens and ens.get("enabled", False):
+        strategies = ens.get("strategies", {})
+        if symbol in strategies:
+            s = strategies[symbol]
+            return s["name"], s.get("params", {})
+    return None
 
 def main():
     parser = argparse.ArgumentParser(description="Run Walk-Forward Analysis")
@@ -41,7 +56,16 @@ def main():
     print(f"Market Type: {cfg.market_type_str}")
     
     for symbol in symbols:
-        print(f"\nAnalyzing {symbol}...")
+        # ── Ensemble: 檢查 per-symbol 策略路由 ──
+        sym_strategy_name = cfg.strategy.name
+        sym_params = None
+
+        ensemble_override = _load_ensemble_strategy(str(cfg_path), symbol)
+        if ensemble_override:
+            sym_strategy_name, sym_params = ensemble_override
+            print(f"\n🧩 Ensemble: {symbol} → {sym_strategy_name}")
+        else:
+            print(f"\nAnalyzing {symbol} [{sym_strategy_name}]...")
         
         # Resolve data path
         # Try exact path first (standard structure: data_dir/binance/market_type/interval/symbol.parquet)
@@ -60,10 +84,12 @@ def main():
             continue
             
         # Prepare config dict for backtest
-        backtest_cfg = cfg.to_backtest_dict()
-        
-        # Add strategy name explicitly as it might be needed by the strategy loader
-        backtest_cfg["strategy_name"] = cfg.strategy.name
+        backtest_cfg = cfg.to_backtest_dict(symbol=symbol)
+
+        # Ensemble: 覆蓋策略名與參數
+        if sym_params is not None:
+            backtest_cfg["strategy_params"] = sym_params
+        backtest_cfg["strategy_name"] = sym_strategy_name
         
         # Run WFA
         wf_df = walk_forward_analysis(

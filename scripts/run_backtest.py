@@ -31,11 +31,30 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 from pathlib import Path
+import yaml
 from qtrade.config import load_config
 from qtrade.backtest.run_backtest import run_symbol_backtest
 from qtrade.backtest.metrics import full_report, trade_summary, trade_analysis, long_short_split_analysis
 from qtrade.backtest.plotting import plot_backtest_summary
 from qtrade.validation.prado_methods import deflated_sharpe_ratio
+
+
+def _load_ensemble_strategy(config_path: str, symbol: str) -> tuple[str, dict] | None:
+    """
+    從 ensemble 配置中取得某 symbol 的策略名與參數
+
+    Returns:
+        (strategy_name, params) 或 None（無 ensemble 或該 symbol 不在 map 中）
+    """
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    ens = raw.get("ensemble")
+    if ens and ens.get("enabled", False):
+        strategies = ens.get("strategies", {})
+        if symbol in strategies:
+            s = strategies[symbol]
+            return s["name"], s.get("params", {})
+    return None
 
 
 def main() -> None:
@@ -168,8 +187,16 @@ def main() -> None:
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
 
     for sym in symbols:
-        # 準備回測配置（使用 AppConfig 集中方法，避免手動拼裝遺漏欄位）
+        # ── Ensemble: 檢查是否有 per-symbol 策略路由 ──
+        sym_strategy_name = strategy_name
         bt_cfg = cfg.to_backtest_dict(symbol=sym)
+
+        ensemble_override = _load_ensemble_strategy(args.config, sym)
+        if ensemble_override:
+            sym_strategy_name, sym_params = ensemble_override
+            bt_cfg["strategy_params"] = sym_params
+            print(f"🧩 Ensemble: {sym} → {sym_strategy_name}")
+
         # 命令列 --direction 覆蓋
         if args.direction:
             bt_cfg["direction"] = args.direction
@@ -186,12 +213,12 @@ def main() -> None:
             continue
 
         print(f"\n{'='*60}")
-        print(f"回測: {strategy_name} - {sym} {market_emoji} [{market_label}] {direction_label}")
+        print(f"回測: {sym_strategy_name} - {sym} {market_emoji} [{market_label}] {direction_label}")
         print(f"{'='*60}")
 
         # leverage 已在 to_backtest_dict 中設定
         res = run_symbol_backtest(
-            sym, data_path, bt_cfg, strategy_name,
+            sym, data_path, bt_cfg, sym_strategy_name,
             data_dir=cfg.data_dir,
         )
         pf = res.pf

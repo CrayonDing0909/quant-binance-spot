@@ -114,7 +114,8 @@ class LiveRunner(BaseRunner):
             self.state_manager.increment_tick()
 
         for symbol in self.symbols:
-            params = self.cfg.strategy.get_params(symbol)
+            # Ensemble 路由：取得 symbol 專屬策略名與參數
+            sym_strategy, params = self._get_strategy_for_symbol(symbol)
             direction = self.cfg.direction
 
             try:
@@ -130,7 +131,7 @@ class LiveRunner(BaseRunner):
 
                 sig = generate_signal(
                     symbol=symbol,
-                    strategy_name=self.strategy_name,
+                    strategy_name=sym_strategy,
                     params=params,
                     interval=self.interval,
                     market_type=self.market_type,
