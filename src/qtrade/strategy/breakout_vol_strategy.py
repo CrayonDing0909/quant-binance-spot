@@ -462,6 +462,35 @@ def generate_breakout_vol_atr(
         scale = (vol_scale_target / rolling_vol).clip(vol_scale_floor, vol_scale_cap)
         pos = pos * scale
 
+    # ── Regime Filter（ADX chop scaler, E2）──
+    # 當 ADX 低於門檻時，將倉位縮小到 chop_scale（預設不啟用）
+    regime_filter = bool(params.get("regime_filter_enabled", False))
+    if regime_filter:
+        from ..indicators.adx import calculate_adx
+        r_adx_period = int(params.get("regime_adx_period", 14))
+        r_adx_thresh = float(params.get("regime_adx_threshold", 20))
+        r_chop_scale = float(params.get("regime_chop_scale", 0.3))
+        adx_data = calculate_adx(df, r_adx_period)
+        adx_vals = adx_data["ADX"].shift(1).fillna(0)  # lagged — no lookahead
+        chop_mask = adx_vals < r_adx_thresh
+        pos = pos.copy()
+        pos[chop_mask] = pos[chop_mask] * r_chop_scale
+
+    # ── Volume Confirmation Filter（E3）──
+    # 突破入場須 volume > MA(volume) * ratio
+    vol_confirm = bool(params.get("volume_confirm_enabled", False))
+    if vol_confirm:
+        vc_period = int(params.get("volume_confirm_period", 20))
+        vc_ratio = float(params.get("volume_confirm_ratio", 1.5))
+        vol_ma = df["volume"].rolling(vc_period).mean().shift(1)  # lagged
+        vol_ok = df["volume"] > (vol_ma * vc_ratio)
+        # only zero-out new entries (transitions from 0 to non-0)
+        pos_shifted = pos.shift(1).fillna(0)
+        new_entry = (pos != 0) & (pos_shifted == 0)
+        block = new_entry & (~vol_ok)
+        pos = pos.copy()
+        pos[block] = 0.0
+
     # ── Direction clip ──
     if not ctx.can_short:
         pos = pos.clip(lower=0.0)

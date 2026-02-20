@@ -200,6 +200,18 @@ def generate_tsmom_ema(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> 
             low_vol_weight=float(params.get("vol_regime_low_weight", 0.5)),
         )
 
+    # ── Regime Filter（ADX chop scaler, E2）──
+    if params.get("regime_filter_enabled", False):
+        from ..indicators.adx import calculate_adx
+        r_adx_period = int(params.get("regime_adx_period", 14))
+        r_adx_thresh = float(params.get("regime_adx_threshold", 20))
+        r_chop_scale = float(params.get("regime_chop_scale", 0.3))
+        adx_data = calculate_adx(df, r_adx_period)
+        adx_vals = adx_data["ADX"].shift(1).fillna(0)  # lagged — no lookahead
+        chop_mask = adx_vals < r_adx_thresh
+        pos = pos.copy()
+        pos[chop_mask] = pos[chop_mask] * r_chop_scale
+
     return pos
 
 
@@ -263,5 +275,17 @@ def generate_tsmom_multi_ema(df: pd.DataFrame, ctx: StrategyContext, params: dic
             low_vol_percentile=float(params.get("vol_regime_low_pct", 30.0)),
             low_vol_weight=float(params.get("vol_regime_low_weight", 0.5)),
         )
+
+    # ── Regime Filter（ADX chop scaler, E2）──
+    if params.get("regime_filter_enabled", False):
+        from ..indicators.adx import calculate_adx
+        r_adx_period = int(params.get("regime_adx_period", 14))
+        r_adx_thresh = float(params.get("regime_adx_threshold", 20))
+        r_chop_scale = float(params.get("regime_chop_scale", 0.3))
+        adx_data = calculate_adx(df, r_adx_period)
+        adx_vals = adx_data["ADX"].shift(1).fillna(0)  # lagged — no lookahead
+        chop_mask = adx_vals < r_adx_thresh
+        pos = pos.copy()
+        pos[chop_mask] = pos[chop_mask] * r_chop_scale
 
     return pos
