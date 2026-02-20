@@ -54,6 +54,58 @@ from qtrade.backtest.run_backtest import (
 from qtrade.data.storage import load_klines
 
 
+def apply_dd_throttle(
+    portfolio_returns: pd.Series,
+    dd_on: float = 0.10,
+    dd_off: float = 0.07,
+    scale: float = 0.70,
+) -> pd.Series:
+    """
+    Portfolio-level drawdown throttle（風控覆蓋層）
+
+    規則：
+        - 當 running DD > dd_on → gross exposure *= scale
+        - 當 running DD < dd_off → gross exposure back to 1.0
+
+    不改變策略信號，只縮放 portfolio-level 收益率。
+
+    Args:
+        portfolio_returns:  原始 portfolio 收益率序列
+        dd_on:              啟動 throttle 的 DD 門檻（預設 10%）
+        dd_off:             關閉 throttle 的 DD 門檻（預設 7%）
+        scale:              throttle 啟動時的曝險縮放倍數（預設 0.7）
+
+    Returns:
+        throttled portfolio 收益率序列
+    """
+    n = len(portfolio_returns)
+    ret_arr = portfolio_returns.values.copy()
+    throttled = np.zeros(n, dtype=float)
+
+    equity = 1.0
+    peak = 1.0
+    throttle_active = False
+
+    for i in range(n):
+        # 決定本 bar 的 exposure（基於上一 bar 的 DD 狀態）
+        current_scale = scale if throttle_active else 1.0
+        throttled[i] = ret_arr[i] * current_scale
+
+        # 更新 equity
+        equity *= (1.0 + throttled[i])
+        if equity > peak:
+            peak = equity
+
+        # 更新 DD 狀態（用於下一 bar）
+        running_dd = (peak - equity) / peak if peak > 0 else 0.0
+        if not throttle_active and running_dd > dd_on:
+            throttle_active = True
+        elif throttle_active and running_dd < dd_off:
+            throttle_active = False
+
+    return pd.Series(throttled, index=portfolio_returns.index)
+
+
 def compute_vol_parity_weights(
     symbols: list[str],
     cfg,
@@ -133,6 +185,7 @@ def run_portfolio_backtest(
     simple_mode: bool = False,
     ensemble_strategies: dict | None = None,
     cost_mult: float = 1.0,
+    dd_throttle_cfg: dict | None = None,
 ) -> dict:
     """
     執行組合回測（透過 run_symbol_backtest 確保成本一致性）
@@ -287,6 +340,19 @@ def run_portfolio_backtest(
     # 計算組合收益率序列
     portfolio_returns = portfolio_equity.pct_change().fillna(0)
     bh_returns = bh_equity.pct_change().fillna(0)
+
+    # ── DD Throttle（組合層風控覆蓋） ──
+    if dd_throttle_cfg and dd_throttle_cfg.get("enabled", False):
+        _dd_on = dd_throttle_cfg.get("dd_on", 0.10)
+        _dd_off = dd_throttle_cfg.get("dd_off", 0.07)
+        _dd_scale = dd_throttle_cfg.get("scale", 0.70)
+        print(f"🛡️  DD Throttle: ON>{_dd_on*100:.0f}% → scale {_dd_scale:.0%}, OFF<{_dd_off*100:.0f}%")
+        portfolio_returns = apply_dd_throttle(
+            portfolio_returns,
+            dd_on=_dd_on, dd_off=_dd_off, scale=_dd_scale,
+        )
+        # 用 throttled returns 重建 equity curve
+        portfolio_equity = (1 + portfolio_returns).cumprod() * initial_cash
 
     # 計算統計指標
     stats = calculate_portfolio_stats(portfolio_returns, portfolio_equity, initial_cash)
@@ -570,6 +636,15 @@ def main():
         for sym, strat in ensemble_strategies.items():
             print(f"   {sym} → {strat['name']}")
 
+    # ── 檢查 risk_overlay 配置（DD throttle 等） ──
+    with open(args.config, "r", encoding="utf-8") as _f:
+        _raw_cfg = yaml.safe_load(_f)
+    dd_throttle_cfg = None
+    risk_overlay = _raw_cfg.get("risk_overlay", {})
+    if risk_overlay and risk_overlay.get("dd_throttle", {}).get("enabled", False):
+        dd_throttle_cfg = risk_overlay["dd_throttle"]
+        print(f"🛡️  偵測到 DD Throttle 配置: ON>{dd_throttle_cfg.get('dd_on', 0.10)*100:.0f}%, scale={dd_throttle_cfg.get('scale', 0.7):.0%}")
+
     # 確定交易對
     symbols = args.symbols or cfg.market.symbols
     if not symbols:
@@ -640,6 +715,7 @@ def main():
         simple_mode=args.simple,
         ensemble_strategies=ensemble_strategies,
         cost_mult=args.cost_mult,
+        dd_throttle_cfg=dd_throttle_cfg,
     )
 
 

@@ -1,0 +1,121 @@
+# Layer 2.5 實驗 W1: 權重調整 BTC=25 / ETH=30 / SOL=45
+# 
+# 基線：A2 time-stop 72h
+# 唯一改動：降低 BTC 權重（最弱 sleeve），增加 SOL 權重（最強 sleeve）
+# 不改信號、不改 entry/exit 條件
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_ema"
+  params:
+    lookback: 168
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.3
+  symbol_overrides: {}
+
+ensemble:
+  enabled: true
+  weight_mode: "fixed"
+  fixed_weights:
+    BTCUSDT: 0.25                    # ← W1: 34 → 25
+    ETHUSDT: 0.30                    # ← W1: 33 → 30
+    SOLUSDT: 0.45                    # ← W1: 33 → 45
+  vol_parity:
+    lookback: 720
+    min_weight: 0.20
+    max_weight: 0.50
+
+  strategies:
+    BTCUSDT:
+      name: "breakout_vol_atr"
+      params:
+        channel_period: 336
+        channel_multiplier: 2.5
+        atr_period: 14
+        vol_fast_period: 14
+        vol_slow_period: 72
+        expansion_ratio: 1.1
+        fake_breakout_bars: 6
+        min_hold_bars: 24
+        trail_exit_mid: true
+        stop_loss_atr: 3.5
+        max_holding_bars: 72
+        cooldown_bars: 24
+
+    ETHUSDT:
+      name: "tsmom_multi_ema"
+      params:
+        lookbacks: [72, 168, 336, 720]
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+
+    SOLUSDT:
+      name: "tsmom_ema"
+      params:
+        lookback: 168
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.25
+    ETHUSDT: 0.30
+    SOLUSDT: 0.45
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔬 [L2.5-W1]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

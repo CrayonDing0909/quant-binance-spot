@@ -86,16 +86,38 @@ _DEFAULT_PARAMS = {
         "slope_window": 10, "slope_threshold": 0.001, "atr_period": 14,
         "stop_loss_atr": 2.0, "take_profit_atr": 3.0, "cooldown_bars": 3,
     },
+    "breakout_vol": {
+        "channel_period": 48, "atr_period": 14,
+        "vol_fast_period": 14, "vol_slow_period": 50,
+        "expansion_ratio": 1.0, "fake_breakout_bars": 3,
+        "min_hold_bars": 6, "stop_loss_atr": 2.5,
+        "cooldown_bars": 6,
+    },
+    "breakout_vol_atr": {
+        "channel_period": 48, "channel_multiplier": 2.0,
+        "atr_period": 14, "vol_fast_period": 14, "vol_slow_period": 50,
+        "expansion_ratio": 1.0, "fake_breakout_bars": 3,
+        "min_hold_bars": 6, "stop_loss_atr": 2.5,
+        "cooldown_bars": 6,
+    },
+    "funding_carry": {
+        "data_dir": "/nonexistent",  # 強制用 proxy 模式
+        "use_proxy": True,
+        "rolling_window": 24, "rebalance_interval": 8,
+        "vol_target": 0.10, "vol_lookback": 72,
+        "proxy_ema_fast": 24, "proxy_ema_slow": 72,
+        "proxy_threshold": 0.02,
+    },
 }
 
 # 需要 universe 數據的策略（在假數據測試中跳過，因為無法載入 parquet）
-_NEEDS_UNIVERSE = {"xsmom", "xsmom_tsmom"}
+_NEEDS_UNIVERSE = {"xsmom", "xsmom_tsmom", "funding_carry_xs"}
 
 # 所有需要測試的策略（自動發現，排除需要 universe 的策略）
 _ALL_STRATEGIES = [s for s in list_strategies() if s not in _NEEDS_UNIVERSE]
 
 # 需要跳過框架延遲測試的策略（auto_delay=False，自行管理 delay）
-_MANUAL_DELAY_STRATEGIES = {"rsi_adx_atr", "rsi_adx_atr_trailing", "nwkl", "nw_envelope_regime"}
+_MANUAL_DELAY_STRATEGIES = {"rsi_adx_atr", "rsi_adx_atr_trailing", "nwkl", "nw_envelope_regime", "breakout_vol", "breakout_vol_atr"}
 
 
 def _get_params(name: str) -> dict:

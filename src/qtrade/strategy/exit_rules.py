@@ -94,6 +94,7 @@ def apply_exit_rules(
     atr_period: int = 14,
     cooldown_bars: int = 0,
     min_hold_bars: int = 0,
+    max_holding_bars: int = 0,
     adaptive_sl_er: pd.Series | np.ndarray | None = None,
     er_sl_min: float = 1.5,
     er_sl_max: float = 3.0,
@@ -117,6 +118,8 @@ def apply_exit_rules(
         min_hold_bars:    最小持倉時間（bar 數），進場後至少持倉 N bars
                           期間只有 SL/TP 可以觸發出場，信號出場被抑制。
                           目的：避免 RSI 在閾值附近震盪導致的快速進出。
+        max_holding_bars: 最大持倉時間（bar 數），超過即強制平倉。
+                          0 = 不限制。用於 time-stop 避免長時間橫盤磨損。
         adaptive_sl_er:   Efficiency Ratio 序列 [0,1]（可選）
                           傳入時啟用自適應止損
         er_sl_min:        ER=1（趨勢）時的最窄 SL 乘數，預設 1.5
@@ -203,6 +206,10 @@ def apply_exit_rules(
                 triggered_exit = True
                 exit_by_tp = True
 
+            # Time-stop：持倉超過 max_holding_bars 強制平倉
+            if max_holding_bars > 0 and bars_in_position >= max_holding_bars:
+                triggered_exit = True
+
             # 策略發出平倉或反向信號 — 受 min_hold_bars 限制
             if raw[i] <= 0 and bars_in_position >= min_hold_bars:
                 triggered_exit = True
@@ -216,7 +223,7 @@ def apply_exit_rules(
                     exec_prices[i] = sl_price
                 elif exit_by_tp:
                     exec_prices[i] = tp_price
-                # else: 信號觸發 → exec_prices[i] = NaN → 使用默認 open
+                # else: 信號觸發 / time-stop → exec_prices[i] = NaN → 使用默認 open
 
                 # 平倉後是否反手做空
                 if raw[i] < 0:
@@ -270,6 +277,10 @@ def apply_exit_rules(
             if tp_price > 0 and current_low <= tp_price:
                 triggered_exit = True
                 exit_by_tp = True
+
+            # Time-stop：持倉超過 max_holding_bars 強制平倉
+            if max_holding_bars > 0 and bars_in_position >= max_holding_bars:
+                triggered_exit = True
 
             # 策略發出平倉或反向信號 — 受 min_hold_bars 限制
             if raw[i] >= 0 and bars_in_position >= min_hold_bars:

@@ -1,0 +1,111 @@
+# 合約策略配置：XSMOM（Cross-Sectional Momentum）
+#
+# 策略原理：
+#   1. 多窗口殘差動量分數（去除 BTC 市場因子後排名）
+#   2. 跳過最近 24h（避免短期反轉效應）
+#   3. 多 lookback 集成 → 穩健性
+#   4. 波動率目標縮放
+#
+# 設計思路（與 TSMOM 正交）：
+#   - TSMOM 基於絕對動量（自己跟自己比）
+#   - XSMOM 基於相對動量（幣種間比較 → 殘差排名）
+#   - 相關性 ~0.3 → 組合有效
+#
+# 可選策略名：
+#   - xsmom         — 殘差動量排名
+#   - xsmom_tsmom   — XSMOM + TSMOM 組合
+#
+# 使用方式：
+#   python scripts/run_backtest.py -c config/futures_xsmom.yaml --symbol ETHUSDT
+#   python scripts/run_portfolio_backtest.py -c config/futures_xsmom.yaml
+#   python scripts/run_walk_forward.py -c config/futures_xsmom.yaml --splits 5
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "xsmom"
+  params:
+    # ═══ Universe ═══
+    universe:
+      - BTCUSDT
+      - ETHUSDT
+      - SOLUSDT
+      - BNBUSDT
+      - DOGEUSDT
+      - XRPUSDT
+      - AVAXUSDT
+      - LINKUSDT
+      - ADAUSDT
+    data_dir: "data"
+    market_symbol: "BTCUSDT"       # 市場因子（殘差計算用）
+
+    # ═══ Momentum Signal ═══
+    lookbacks: [336, 720, 1440]    # 14d / 30d / 60d
+    skip_recent: 24                # 跳過最近 24h（反轉效應）
+    use_residual: true             # 去除 BTC 因子
+
+    # ═══ Ranking Thresholds ═══
+    long_threshold: 0.7            # top 30% → 做多
+    short_threshold: 0.3           # bottom 30% → 做空
+    scale_mode: "threshold"        # "threshold" or "linear"
+
+    # ═══ Vol Scaling ═══
+    vol_target: 0.15               # 年化波動率目標
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.34
+    ETHUSDT: 0.33
+    SOLUSDT: 0.33
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔴 [XSMOM]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

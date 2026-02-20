@@ -202,36 +202,38 @@ _VALID_ALIGNMENT_MODES = {"legacy_left_ffill", "right_ffill", "left_shift1_ffill
 
 def _compute_htf_regime(
     df_1h: pd.DataFrame,
+    rule: str = "4h",
     bandwidth: float = 8.0,
     alpha: float = 1.0,
-    lookback: int = 50,         # 4h 上 50 bars ≈ 200 bars on 1h
+    lookback: int = 50,
     adx_period: int = 14,
     adx_threshold: float = 20.0,
-    slope_window: int = 5,      # 4h 上 5 bars ≈ 20 bars on 1h
+    slope_window: int = 5,
     slope_threshold: float = 0.002,
     regime_mode: str = "adx",
     mtf_alignment_mode: str = "left_shift1_ffill",
 ) -> tuple[pd.Series, pd.Series]:
     """
-    在 4h timeframe 上計算 NW regime，再對齊回 1h。
+    在指定 timeframe 上計算 NW regime，再對齊回 1h。
+    支援 4h、12h、1D 等任意高級時間框架。
+
+    Args:
+        rule: 重採樣規則，如 "4h", "12h", "1D"
 
     ═══ 三種 MTF 對齊模式 ═══
 
     1. "legacy_left_ffill"（⚠️ LOOK-AHEAD — 僅供對照測試）
        resample(left/left) + 直接 ffill
-       問題：4h bar 00:00 的 close 用了 03:00 數據，但 00:00 就可見
-       → 最多 3h 未來資訊洩漏
+       → 未來資訊洩漏
 
     2. "right_ffill"（✅ CAUSAL — 最小延遲）
        resample(right/right) + 直接 ffill
-       4h bar 04:00 包含 01:00~04:00，close=04:00
        bar 的 label = 完成時刻 → ffill 無需 shift
-       → 0h 額外延遲（regime 在 bar 完成時立即可見）
+       → 0h 額外延遲
 
     3. "left_shift1_ffill"（✅ CAUSAL — 保守穩定）
        resample(left/left) + shift(1) + ffill
-       4h bar 00:00 的 regime shift 到 04:00 → 1h 額外延遲
-       使用交易所標準 4h bar → 與 Binance K 線一致
+       → 多 1 個 HTF bar 延遲
 
     Returns:
         (htf_trending_1h, htf_direction_1h): 已對齊回 1h index
@@ -244,10 +246,10 @@ def _compute_htf_regime(
 
     # ── Step 1: 依模式選擇 resample 方式 ──
     if mtf_alignment_mode == "right_ffill":
-        df_4h = _resample_ohlcv_right(df_1h, "4h")
+        df_4h = _resample_ohlcv_right(df_1h, rule)
     else:
         # legacy_left_ffill 和 left_shift1_ffill 都用 left/left（交易所標準）
-        df_4h = _resample_ohlcv(df_1h, "4h")
+        df_4h = _resample_ohlcv(df_1h, rule)
 
     if len(df_4h) < lookback + 20:
         return (
@@ -359,6 +361,24 @@ def _compute_momentum_confirm(
     return long_ok, short_ok
 
 
+def _compute_volume_expansion(
+    df: pd.DataFrame,
+    period: int = 20,
+    min_ratio: float = 1.5,
+) -> np.ndarray:
+    """
+    Volume expansion 過濾器：成交量 > 均量 × min_ratio 時才允許入場。
+
+    目的：過濾低流動性時段的假信號，只在市場活躍時交易。
+    用於 E3 實驗（entry trigger quality）。
+
+    Returns:
+        bool array: True = volume expansion ok
+    """
+    vol_ma = df["volume"].rolling(period, min_periods=1).mean()
+    return (df["volume"] >= vol_ma * min_ratio).values.astype(bool)
+
+
 # ══════════════════════════════════════════════════════════════
 #  Stateful Signal Generator V2（雙模組 + MTF + Entry Filters）
 # ══════════════════════════════════════════════════════════════
@@ -382,6 +402,7 @@ def _generate_signals_v2(
     momentum_short_arr: np.ndarray | None = None,   # bool: close < close[-n]
     min_pullback_depth: float = 0.0,                # 回踩深度門檻 (0=不過濾)
     reentry_lockout: bool = False,                  # 出場後需價格回穿 NW 才重入
+    volume_ok_arr: np.ndarray | None = None,        # volume expansion gate
 ) -> np.ndarray:
     """
     帶狀態的信號生成器 V2（雙模組 + MTF gating + Entry Filters）
@@ -519,7 +540,12 @@ def _generate_signals_v2(
                 elif lockout_dir == -1 and t_dir < 0:
                     lockout_ok = False   # 空倉出場後要空，但未回穿
 
-            if not (ltf_ok and mom_ok and lockout_ok):
+            # 4. Volume expansion: 成交量須達標
+            vol_ok = True
+            if volume_ok_arr is not None:
+                vol_ok = bool(volume_ok_arr[i])
+
+            if not (ltf_ok and mom_ok and lockout_ok and vol_ok):
                 signal[i] = 0.0
                 continue
 
@@ -606,6 +632,13 @@ def _generate_signals_v2(
 
         # Module B: Mean Reversion（非趨勢 regime 下）
         if module_b_enabled and not trending:
+            # Volume check for MR entries
+            b_vol_ok = True
+            if volume_ok_arr is not None:
+                b_vol_ok = bool(volume_ok_arr[i])
+            if not b_vol_ok:
+                signal[i] = 0.0
+                continue
             if c < lo:
                 signal[i] = range_scale
                 logical_pos = 1
@@ -733,6 +766,27 @@ def generate_nw_envelope_regime(
     min_pullback_depth = float(params.get("min_pullback_depth", 0.0))
     reentry_lockout = bool(params.get("reentry_lockout", False))
 
+    # ═══ Experiment Matrix: Multi-TF Gating ═══
+    # 1D Risk Gate
+    use_1d_risk_gate = bool(params.get("use_1d_risk_gate", False))
+    risk_gate_lookback = int(params.get("risk_gate_lookback", 20))
+    risk_gate_adx_period = int(params.get("risk_gate_adx_period", 14))
+    risk_gate_adx_threshold = float(params.get("risk_gate_adx_threshold", 25.0))
+
+    # 12H Regime
+    use_12h_regime = bool(params.get("use_12h_regime", False))
+    htf_12h_lookback = int(params.get("htf_12h_lookback", 25))
+    htf_12h_adx_period = int(params.get("htf_12h_adx_period", 14))
+    htf_12h_adx_threshold = float(params.get("htf_12h_adx_threshold", 20.0))
+    htf_12h_slope_window = int(params.get("htf_12h_slope_window", 5))
+    htf_12h_slope_threshold = float(params.get("htf_12h_slope_threshold", 0.002))
+    dual_regime_require_agree = bool(params.get("dual_regime_require_agree", True))
+
+    # Volume Expansion
+    use_entry_volume_expansion = bool(params.get("use_entry_volume_expansion", False))
+    volume_expansion_period = int(params.get("volume_expansion_period", 20))
+    volume_expansion_ratio = float(params.get("volume_expansion_ratio", 1.5))
+
     # Modules
     module_a = bool(params.get("module_a_enabled", True))
     module_b = bool(params.get("module_b_enabled", True))
@@ -770,6 +824,7 @@ def generate_nw_envelope_regime(
         # 4h regime — 更穩定，更少 whipsaw
         regime_trending, regime_dir = _compute_htf_regime(
             df,
+            rule="4h",
             bandwidth=htf_bandwidth,
             alpha=alpha,
             lookback=htf_lookback,
@@ -792,6 +847,50 @@ def generate_nw_envelope_regime(
         )
 
     # ══════════════════════════════════════════════
+    #  3d. 1D Risk Gate（日線層級的風險開關）
+    # ══════════════════════════════════════════════
+    if use_1d_risk_gate:
+        risk_trending, risk_dir = _compute_htf_regime(
+            df, rule="1D",
+            bandwidth=bandwidth,
+            alpha=alpha,
+            lookback=risk_gate_lookback,
+            adx_period=risk_gate_adx_period,
+            adx_threshold=risk_gate_adx_threshold,
+            regime_mode=regime_mode,
+            mtf_alignment_mode=mtf_alignment_mode,
+        )
+        # Gate: 只有日線也顯示趨勢時才允許交易
+        regime_trending = regime_trending * risk_trending
+        # Direction: 日線與低級別方向必須一致
+        dir_disagree = (risk_dir != 0) & (regime_dir != 0) & (risk_dir != regime_dir)
+        regime_dir = regime_dir.copy()
+        regime_dir[dir_disagree] = 0.0
+
+    # ══════════════════════════════════════════════
+    #  3e. 12H Regime（12小時 regime 額外確認）
+    # ══════════════════════════════════════════════
+    if use_12h_regime:
+        r12h_trending, r12h_dir = _compute_htf_regime(
+            df, rule="12h",
+            bandwidth=htf_bandwidth,
+            alpha=alpha,
+            lookback=htf_12h_lookback,
+            adx_period=htf_12h_adx_period,
+            adx_threshold=htf_12h_adx_threshold,
+            slope_window=htf_12h_slope_window,
+            slope_threshold=htf_12h_slope_threshold,
+            regime_mode=regime_mode,
+            mtf_alignment_mode=mtf_alignment_mode,
+        )
+        if dual_regime_require_agree:
+            # 12H 和 4H 必須同向
+            regime_trending = regime_trending * r12h_trending
+            dir_disagree = (r12h_dir != 0) & (regime_dir != 0) & (r12h_dir != regime_dir)
+            regime_dir = regime_dir.copy()
+            regime_dir[dir_disagree] = 0.0
+
+    # ══════════════════════════════════════════════
     #  3b. LTF Proxy（1h EMA cross — 降低 regime 延遲）
     # ══════════════════════════════════════════════
     ltf_proxy = None
@@ -805,6 +904,15 @@ def generate_nw_envelope_regime(
     mom_short = None
     if use_momentum_confirm:
         mom_long, mom_short = _compute_momentum_confirm(close, momentum_lookback)
+
+    # ══════════════════════════════════════════════
+    #  3f. Volume Expansion（成交量擴張過濾）
+    # ══════════════════════════════════════════════
+    vol_expansion = None
+    if use_entry_volume_expansion:
+        vol_expansion = _compute_volume_expansion(
+            df, volume_expansion_period, volume_expansion_ratio,
+        )
 
     # ══════════════════════════════════════════════
     #  4. Stateful Signal Generation V2
@@ -829,6 +937,7 @@ def generate_nw_envelope_regime(
         momentum_short_arr=mom_short,
         min_pullback_depth=min_pullback_depth,
         reentry_lockout=reentry_lockout,
+        volume_ok_arr=vol_expansion,
     )
 
     raw_signal = pd.Series(raw_arr, index=df.index)

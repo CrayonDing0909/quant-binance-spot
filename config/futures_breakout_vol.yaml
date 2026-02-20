@@ -1,0 +1,104 @@
+# 合約策略配置：Breakout + Volatility Expansion
+#
+# 策略原理：
+#   1. Donchian Channel 突破 → 識別 regime 切換起點
+#   2. Volatility Expansion 確認 → ATR 快均線 > 慢均線才入場
+#   3. Fake Breakout Filter → 突破後回落至通道內即平倉
+#   4. 中軌止盈 + ATR 止損 → 趨勢跟隨直到動能衰減
+#
+# 設計思路（與 TSMOM 正交）：
+#   - TSMOM 捕捉「已發生的趨勢」（連續動量）
+#   - Breakout 捕捉「regime 切換起點」（低波轉高波的起爆點）
+#   - 兩者進場時機不同 → 低相關 → 組合有效
+#
+# 使用方式：
+#   python scripts/download_data.py -c config/futures_breakout_vol.yaml
+#   python scripts/run_backtest.py -c config/futures_breakout_vol.yaml
+#   python scripts/run_backtest.py -c config/futures_breakout_vol.yaml --symbol BTCUSDT
+#   python scripts/run_portfolio_backtest.py -c config/futures_breakout_vol.yaml
+#   python scripts/run_walk_forward.py -c config/futures_breakout_vol.yaml --splits 5
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  # 可選：breakout_vol（Donchian）或 breakout_vol_atr（ATR Channel）
+  name: "breakout_vol_atr"
+  params:
+    # ═══ ATR Channel ═══
+    channel_period: 336          # EMA 回看期（小時），336 = 14 天
+    channel_multiplier: 2.5      # ATR 倍數（通道寬度）
+    
+    # ═══ Volatility Expansion ═══
+    atr_period: 14               # ATR 計算週期
+    vol_fast_period: 14          # ATR 快速均值（短期波動）
+    vol_slow_period: 72          # ATR 慢速均值（長期基準）
+    expansion_ratio: 1.1         # 快/慢比例門檻（偏嚴格）
+
+    # ═══ Fake Breakout Filter ═══
+    fake_breakout_bars: 6        # 突破後 N bars 內回落視為假突破
+    min_hold_bars: 24            # 最少持倉 bar 數（1 天）
+    trail_exit_mid: true         # 中軌止盈（close 回穿通道中線平倉）
+
+    # ═══ Risk / Exit ═══
+    stop_loss_atr: 3.5           # ATR 止損倍數（寬止損讓趨勢奔跑）
+    take_profit_atr: null        # 不用固定止盈（靠中軌退出）
+    trailing_stop_atr: null      # 不用移動止損（靠中軌退出）
+    cooldown_bars: 24            # 出場後冷卻 bar 數（1 天）
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.34
+    ETHUSDT: 0.33
+    SOLUSDT: 0.33
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🟠 [BREAKOUT]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

@@ -1,0 +1,105 @@
+# 合約策略配置：Funding Rate Carry
+#
+# 策略原理：
+#   1. 正 funding → 多頭擁擠 → 做空收 funding carry
+#   2. 負 funding → 空頭擁擠 → 做多收 funding carry
+#   3. 波動率縮放 → 保守曝險（年化 10%）
+#   4. 低頻 rebalance（每 8h）→ 低換手率
+#
+# 設計思路（與 TSMOM/Breakout 正交）：
+#   - TSMOM 跟隨價格趨勢（動量因子）
+#   - Breakout 捕捉 regime 轉換（突破因子）
+#   - Carry 捕捉持有成本差異（carry 因子）
+#   - 三者因子來源不同 → 低相關 → 組合有效
+#
+# 可選策略名：
+#   - funding_carry     — 單幣 carry（有 funding 數據用真實，無則 proxy）
+#   - funding_carry_xs  — 截面排序 carry（多幣種相對排名）
+#
+# 使用方式：
+#   python scripts/run_backtest.py -c config/futures_funding_carry.yaml
+#   python scripts/run_backtest.py -c config/futures_funding_carry.yaml --symbol BTCUSDT
+#   python scripts/run_portfolio_backtest.py -c config/futures_funding_carry.yaml
+#   python scripts/run_walk_forward.py -c config/futures_funding_carry.yaml --splits 5
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "funding_carry"
+  params:
+    # ═══ Data ═══
+    data_dir: "data"
+
+    # ═══ Funding Signal ═══
+    rolling_window: 72           # funding 平滑窗口（小時），72 = 3 天
+    entry_threshold: 0.0001      # 入場門檻（0.01%/8h = 年化 ~11%）
+    exit_threshold: 0.00005      # 出場門檻
+    rebalance_interval: 8        # 每 8h 重新評估（與 funding 結算頻率一致）
+
+    # ═══ Vol Scaling ═══
+    vol_target: 0.10             # 保守波動率目標（10%）
+    vol_lookback: 168            # 7 天 rolling vol
+
+    # ═══ Proxy（無 funding 數據時） ═══
+    use_proxy: true
+    proxy_ema_fast: 24           # 1 天 EMA
+    proxy_ema_slow: 168          # 7 天 EMA
+    proxy_threshold: 0.02        # EMA spread 2% 門檻
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.34
+    ETHUSDT: 0.33
+    SOLUSDT: 0.33
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🟤 [CARRY]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

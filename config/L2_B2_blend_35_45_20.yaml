@@ -1,0 +1,162 @@
+# Layer 2 實驗 B2: 三策略 Blend — Breakout 35 / TSMOM 45 / NW 20
+#
+# 策略分配（同 B1，但更重 TSMOM）：
+#   BTC → breakout_vol_atr (35%) — Breakout α sleeve
+#   ETH → tsmom_multi_ema  (45%) — TSMOM α sleeve（加重）
+#   SOL → nw_envelope_regime (20%) — NW 防守 sleeve
+#
+# 與 B1 差異：ETH TSMOM 比重 +5%，BTC Breakout 比重 -5%
+# 目的：測試加重 proven TSMOM alpha（ETH）是否改善 risk-adjusted return
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_ema"
+  params:
+    lookback: 168
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.3
+  symbol_overrides: {}
+
+ensemble:
+  enabled: true
+  weight_mode: "fixed"
+  fixed_weights:
+    BTCUSDT: 0.35
+    ETHUSDT: 0.45
+    SOLUSDT: 0.20
+  vol_parity:
+    lookback: 720
+    min_weight: 0.15
+    max_weight: 0.50
+
+  strategies:
+    BTCUSDT:
+      name: "breakout_vol_atr"
+      params:
+        channel_period: 336
+        channel_multiplier: 2.5
+        atr_period: 14
+        vol_fast_period: 14
+        vol_slow_period: 72
+        expansion_ratio: 1.1
+        fake_breakout_bars: 6
+        min_hold_bars: 24
+        trail_exit_mid: true
+        stop_loss_atr: 3.5
+        cooldown_bars: 24
+
+    ETHUSDT:
+      name: "tsmom_multi_ema"
+      params:
+        lookbacks: [72, 168, 336, 720]
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+
+    SOLUSDT:
+      name: "nw_envelope_regime"
+      params:
+        # ── Ablation / MTF ──
+        use_mtf: true
+        mtf_alignment_mode: "right_ffill"
+        module_a_enabled: true
+        module_b_enabled: false
+        entry_mode: "pullback_nw"
+        # ── Entry Quality Filters ──
+        use_ltf_proxy: true
+        ltf_ema_fast: 20
+        ltf_ema_slow: 50
+        use_momentum_confirm: true
+        momentum_lookback: 3
+        min_pullback_depth: 0.3
+        reentry_lockout: true
+        # ── NW Kernel (1h) ──
+        kernel_bandwidth: 8.0
+        kernel_alpha: 1.0
+        kernel_lookback: 200
+        envelope_multiplier: 2.0
+        envelope_window: 200
+        # ── Regime Filter ──
+        regime_mode: "adx"
+        adx_period: 14
+        adx_threshold: 20.0
+        slope_window: 10
+        slope_threshold: 0.001
+        # ── 4h MTF ──
+        htf_bandwidth: 8.0
+        htf_lookback: 50
+        htf_adx_period: 14
+        htf_adx_threshold: 20.0
+        htf_slope_window: 5
+        htf_slope_threshold: 0.002
+        # ── Position Scaling ──
+        trend_scale: 1.0
+        range_scale: 0.5
+        mr_exit_target: "nw"
+        # ── Risk / Exit ──
+        atr_period: 14
+        stop_loss_atr: 3.0
+        take_profit_atr: 4.0
+        cooldown_bars: 8
+        max_holding_bars: 0
+        min_hold_bars: 4
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.35
+    ETHUSDT: 0.45
+    SOLUSDT: 0.20
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔬 [L2-B2]"
+  enabled: true
+
+output:
+  report_dir: "./reports"
