@@ -1,5 +1,10 @@
 """
-WebSocket Runner — 輕量化事件驅動交易執行器 (v4.2)
+WebSocket Runner — 輕量化事件驅動交易執行器 (v4.3)
+
+v4.3: 修正 Binance 速率限制導致的斷線
+    - 用單一 SUBSCRIBE 訊息批次訂閱全部串流（取代逐一 .kline() 呼叫）
+    - 舊做法：19 個 .kline() = 19 個 SUBSCRIBE 訊息 <100ms → 超過 5 msg/s → 被斷線
+    - 新做法：1 個 SUBSCRIBE 含全部串流 → 不觸發限制
 
 v4.2: 改善連線穩定性
     - 新連線後 2 分鐘內用 30s 快速心跳偵測死連線（取代 300s）
@@ -63,7 +68,7 @@ INTERVAL_MINUTES = {
 
 class WebSocketRunner(BaseRunner):
     """
-    基於 WebSocket 的輕量化執行器 (v4.2)
+    基於 WebSocket 的輕量化執行器 (v4.3)
 
     繼承 BaseRunner 取得所有安全機制，
     本類只負責 WS 連線管理、K 線事件驅動和自動重連。
@@ -259,7 +264,13 @@ class WebSocketRunner(BaseRunner):
     # ══════════════════════════════════════════════════════════
 
     def _create_ws_client(self):
-        """建立 WS client 並訂閱所有 symbol（供初次連線與重連共用）"""
+        """
+        建立 WS client 並訂閱所有 symbol（供初次連線與重連共用）
+
+        ★ 關鍵修正 (v4.3)：用單一 SUBSCRIBE 訊息批次訂閱全部串流。
+        舊做法（逐一 .kline()）會在 <100ms 內送出 N 個 SUBSCRIBE 訊息，
+        超過 Binance WebSocket 5 msg/s 速率限制 → 被服務器強制斷線。
+        """
         from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
 
         logging.getLogger("binance").setLevel(logging.WARNING)
@@ -270,9 +281,16 @@ class WebSocketRunner(BaseRunner):
             on_error=self._on_ws_error,
         )
 
-        for symbol in self.symbols:
-            client.kline(symbol=symbol.lower(), interval=self.interval, id=1)
-            self._log.info(f"📡 訂閱串流: {symbol.lower()}@kline_{self.interval}")
+        # ★ 批次訂閱：一個 SUBSCRIBE 訊息包含全部串流（避免觸發 5 msg/s 限制）
+        streams = [
+            f"{sym.lower()}@kline_{self.interval}" for sym in self.symbols
+        ]
+        client.subscribe(streams, id=1)
+        for s in streams:
+            self._log.info(f"📡 訂閱串流: {s}")
+        self._log.info(
+            f"✅ 已批次訂閱 {len(streams)} 個串流（單一 SUBSCRIBE 訊息）"
+        )
 
         return client
 
@@ -459,7 +477,7 @@ class WebSocketRunner(BaseRunner):
 
         try:
             self.notifier.send_startup(
-                strategy=f"{self.strategy_name} (WebSocket v4.2)",
+                strategy=f"{self.strategy_name} (WebSocket v4.3)",
                 symbols=self.symbols,
                 interval=self.interval,
                 mode=self.mode,
