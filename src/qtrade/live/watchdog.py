@@ -64,6 +64,24 @@ def _max_status(a: str, b: str) -> str:
     return a if _status_rank(a) >= _status_rank(b) else b
 
 
+def _interval_to_seconds(interval: str) -> int:
+    """簡單解析 Binance interval（如 5m/1h/1d）。"""
+    if not interval:
+        return 3600
+    unit = interval[-1].lower()
+    try:
+        value = int(interval[:-1])
+    except Exception:
+        return 3600
+    if unit == "m":
+        return value * 60
+    if unit == "h":
+        return value * 3600
+    if unit == "d":
+        return value * 86400
+    return 3600
+
+
 class LiveWatchdog:
     """WebSocket live watchdog."""
 
@@ -84,6 +102,21 @@ class LiveWatchdog:
         merged.update(live_watchdog_cfg)
         if settings:
             merged.update(settings)
+
+        # 向後相容：若未明確配置 data_intervals，預設追蹤策略實際交易週期
+        if "data_intervals" not in live_watchdog_cfg:
+            market_interval = getattr(getattr(cfg, "market", None), "interval", "1h")
+            merged["data_intervals"] = [market_interval]
+
+            # 同步補齊該 interval 的新鮮度閾值（2x / 4x bar）
+            sec = _interval_to_seconds(market_interval)
+            warn_map = dict(merged.get("data_warn_age_sec", {}))
+            critical_map = dict(merged.get("data_critical_age_sec", {}))
+            warn_map.setdefault(market_interval, max(sec * 2, 300))
+            critical_map.setdefault(market_interval, max(sec * 4, 600))
+            merged["data_warn_age_sec"] = warn_map
+            merged["data_critical_age_sec"] = critical_map
+
         self.settings = merged
 
         self.enabled = bool(self.settings.get("enabled", True))
