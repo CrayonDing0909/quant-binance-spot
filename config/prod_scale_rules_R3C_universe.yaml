@@ -1,0 +1,101 @@
+# ═══════════════════════════════════════════════════════════════
+# PRODUCTION SCALE RULES — R3C Universe
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-21
+# Purpose: Gradual scale-up rules for R3C Universe paper → live
+#
+# These rules define how to ramp up from paper trading to full
+# live deployment. They are NOT enforced by code — the operator
+# must follow them manually.
+# ═══════════════════════════════════════════════════════════════
+
+# ── Phase 1: Paper Trading (Week 1-4) ──
+paper_phase:
+  duration_weeks: 4
+  capital_pct: 0.0       # no real capital
+  monitoring:
+    - Check daily PnL matches backtest expectations
+    - Compare live signals vs backtest signals (execution parity)
+    - Monitor per-symbol Sharpe degradation weekly
+    - Alert if any symbol deviates > 2 sigma from backtest
+  exit_criteria:
+    min_paper_sharpe_ratio: 0.5   # live Sharpe >= 50% of backtest Sharpe
+    max_execution_slippage_bps: 10
+    max_missed_signals_pct: 5
+    min_correlation_to_backtest: 0.7
+
+# ── Phase 2: Pilot (Week 5-8) ──
+pilot_phase:
+  duration_weeks: 4
+  capital_pct: 0.10      # 10% of target capital
+  max_leverage: 2        # conservative leverage (below 3x max)
+  monitoring:
+    - All Phase 1 checks
+    - Monitor actual slippage vs model
+    - Monitor funding rate drag vs model
+    - Track per-symbol turnover and compare to backtest
+  exit_criteria:
+    min_return_positive: true
+    max_drawdown_pct: 15.0   # 15% max during pilot
+    max_live_backtest_sharpe_gap: 0.40
+
+# ── Phase 3: Ramp-Up (Week 9-12) ──
+ramp_phase:
+  duration_weeks: 4
+  capital_pct: 0.30      # 30% of target capital
+  max_leverage: 3
+  monitoring:
+    - All Phase 2 checks
+    - Monitor cross-symbol correlation
+    - Track gross exposure distribution
+  exit_criteria:
+    min_return_positive: true
+    max_drawdown_pct: 25.0
+    sharpe_above: 1.0
+
+# ── Phase 4: Full Deployment (Week 13+) ──
+full_phase:
+  capital_pct: 1.0       # 100% of target capital
+  max_leverage: 3
+  monitoring:
+    - Weekly performance review
+    - Monthly strategy health check
+    - Quarterly rebalance vol-parity weights
+  kill_switch:
+    max_drawdown_pct: 40.0      # hard stop if breached
+    max_daily_loss_pct: 5.0     # pause trading for 24h
+    max_consecutive_losing_days: 10
+    min_weekly_sharpe: -2.0     # pause if weekly Sharpe < -2
+
+# ── Symbol-Level Controls ──
+symbol_controls:
+  # Maximum position per symbol (as fraction of portfolio)
+  max_position_pct: 0.20
+  # Minimum position per symbol
+  min_position_pct: 0.03
+  # If any symbol hits this drawdown, reduce its weight by 50%
+  symbol_drawdown_reduce_threshold: 0.25
+  # If any symbol hits this drawdown, exit entirely
+  symbol_drawdown_exit_threshold: 0.40
+
+# ── Weight Rebalancing ──
+rebalancing:
+  method: "vol_parity"
+  lookback: 720          # hours
+  rebalance_frequency: "weekly"  # recalculate weights weekly
+  min_weight: 0.03
+  max_weight: 0.20
+  # Minimum weight change to trigger rebalance (avoid noise)
+  min_change_threshold: 0.005
+
+# ── Emergency Procedures ──
+emergency:
+  # Conditions that trigger immediate position flatten
+  flatten_conditions:
+    - "Exchange API downtime > 30 minutes"
+    - "Portfolio drawdown > 40%"
+    - "Any symbol delisted or suspended"
+    - "Funding rate spike > 0.1% per 8h for > 3 consecutive periods"
+  # Rollback procedure
+  rollback_to: "prod_candidate_R2_1.yaml"
+  rollback_script: "scripts/cutover_r2_1_to_r3c_universe.sh --rollback"
