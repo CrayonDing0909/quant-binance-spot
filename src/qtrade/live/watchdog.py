@@ -27,14 +27,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "enabled": True,
     "interval_sec": 300,
     "alert_cooldown_sec": 1800,
+    "notify_phase_change": True,
     "history_limit": 200,
     "output_dir": "reports/live_watchdog",
+    "startup_grace_sec": 300,
+    "runner_ready_grace_sec": 180,
     # main loop heartbeat（run loop 是否仍在運作）
     "heartbeat_warn_sec": 90,
     "heartbeat_critical_sec": 180,
     # websocket / kline 活性
     "ws_msg_warn_sec": 180,
-    "ws_msg_critical_sec": 360,
+    "ws_msg_critical_sec": 300,
     "kline_warn_sec": 7200,
     "kline_critical_sec": 14400,
     # data freshness（同時檢查 1h 與 5m parquet）
@@ -94,6 +97,7 @@ class LiveWatchdog:
         self._last_status: dict[str, Any] | None = None
         self._last_check_ts: float | None = None
         self._last_overall_status = "ok"
+        self._last_ws_phase: str | None = None
         self._alert_cooldowns: dict[str, float] = {}
 
         self._output_dir = Path(self.settings.get("output_dir", "reports/live_watchdog"))
@@ -135,6 +139,11 @@ class LiveWatchdog:
                 ),
                 "last_overall_status": last.get("overall_status") if last else None,
                 "last_issue_count": len(last.get("issues", [])) if last else 0,
+                "last_phase": (
+                    (last.get("checks", {}).get("websocket_kline", {}) or {}).get("phase")
+                    if last
+                    else None
+                ),
             }
 
     def get_last_status(self) -> dict[str, Any] | None:
@@ -216,50 +225,145 @@ class LiveWatchdog:
         now_ts = time.time()
         ws_client = getattr(self.runner, "_ws_client", None)
         is_running = bool(getattr(self.runner, "is_running", False))
+        ws_ready = bool(getattr(self.runner, "_ws_ready", False))
+        subscriptions_ready = bool(getattr(self.runner, "_subscriptions_ready", False))
+        started_at = float(getattr(self.runner, "_started_at", 0.0) or 0.0)
         last_ws_ts = float(getattr(self.runner, "_last_ws_message_time", 0.0) or 0.0)
+        last_kline_event_time = float(getattr(self.runner, "_last_kline_event_time", 0.0) or 0.0)
+
+        if started_at <= 0:
+            started_at = float(getattr(self.runner, "start_time", 0.0) or 0.0)
+        uptime_sec = (now_ts - started_at) if started_at > 0 else None
 
         ws_age = None if last_ws_ts <= 0 else now_ts - last_ws_ts
-        ws_status = "ok"
+        kline_age_sec = None if last_kline_event_time <= 0 else now_ts - last_kline_event_time
+        startup_grace_sec = float(self.settings.get("startup_grace_sec", 300))
+        runner_ready_grace_sec = float(self.settings.get("runner_ready_grace_sec", 180))
+
+        runner_ready = bool(is_running and ws_client is not None and ws_ready and subscriptions_ready)
+        startup_grace_remaining_sec = 0
+        runner_ready_grace_remaining_sec = 0
         notes: list[str] = []
 
-        if not is_running or ws_client is None:
-            ws_status = "critical"
-            notes.append("WebSocket client 未就緒或 runner 未運行")
-        elif ws_age is not None:
-            warn_sec = float(self.settings.get("ws_msg_warn_sec", 180))
-            critical_sec = float(self.settings.get("ws_msg_critical_sec", 360))
-            if ws_age >= critical_sec:
-                ws_status = "critical"
-                notes.append(f"WS 訊息延遲 {ws_age:.0f}s")
-            elif ws_age >= warn_sec:
-                ws_status = "warn"
-                notes.append(f"WS 訊息偏舊 {ws_age:.0f}s")
+        # Phase 1: BOOTSTRAP（啟動寬限內只回 ok）
+        if uptime_sec is None or uptime_sec < startup_grace_sec:
+            if uptime_sec is None:
+                startup_grace_remaining_sec = int(startup_grace_sec)
             else:
-                notes.append(f"WS 訊息正常 ({ws_age:.0f}s)")
+                startup_grace_remaining_sec = int(max(0, startup_grace_sec - uptime_sec))
+            notes.append("啟動寬限中，暫不判定 websocket_kline 異常")
+            if not runner_ready:
+                notes.append("runner 尚在初始化（預期行為）")
+            return {
+                "status": "ok",
+                "phase": "bootstrap",
+                "phase_detail": "bootstrap_grace",
+                "runner_ready": runner_ready,
+                "startup_grace_remaining_sec": startup_grace_remaining_sec,
+                "runner_ready_grace_remaining_sec": int(runner_ready_grace_sec),
+                "message": " | ".join(notes),
+                "ws_connected": bool(ws_client is not None and is_running),
+                "last_ws_message_age_sec": round(ws_age, 1) if ws_age is not None else None,
+                "last_kline_age_sec": round(kline_age_sec, 1) if kline_age_sec is not None else None,
+            }
 
-        last_kline_map = getattr(self.runner, "_last_kline_ts", {}) or {}
-        newest_kline_ts = max(last_kline_map.values()) if last_kline_map else 0
-        kline_age_sec = None
-        kline_status = "warn"
-        if newest_kline_ts > 0:
-            kline_age_sec = now_ts - (newest_kline_ts / 1000.0)
-            k_warn = float(self.settings.get("kline_warn_sec", 7200))
-            k_critical = float(self.settings.get("kline_critical_sec", 14400))
-            if kline_age_sec >= k_critical:
-                kline_status = "critical"
-                notes.append(f"K 線事件過期 {kline_age_sec/60:.1f}m")
-            elif kline_age_sec >= k_warn:
-                kline_status = "warn"
-                notes.append(f"K 線事件偏舊 {kline_age_sec/60:.1f}m")
+        # runner ready grace：避免剛過 bootstrap 時因資源初始化慢而誤報 critical
+        if not runner_ready:
+            if uptime_sec is not None:
+                runner_ready_grace_remaining_sec = int(max(0, runner_ready_grace_sec - uptime_sec))
+            if uptime_sec is None or uptime_sec < runner_ready_grace_sec:
+                notes.append("runner 尚未 ready（ready grace 內）")
+                return {
+                    "status": "ok",
+                    "phase": "bootstrap",
+                    "phase_detail": "runner_ready_grace",
+                    "runner_ready": False,
+                    "startup_grace_remaining_sec": 0,
+                    "runner_ready_grace_remaining_sec": runner_ready_grace_remaining_sec,
+                    "message": " | ".join(notes),
+                    "ws_connected": bool(ws_client is not None and is_running),
+                    "last_ws_message_age_sec": round(ws_age, 1) if ws_age is not None else None,
+                    "last_kline_age_sec": round(kline_age_sec, 1) if kline_age_sec is not None else None,
+                }
+            notes.append("runner 長時間未 ready，疑似啟動異常")
+            return {
+                "status": "critical",
+                "phase": "stale",
+                "phase_detail": "runner_not_ready_timeout",
+                "runner_ready": False,
+                "startup_grace_remaining_sec": 0,
+                "runner_ready_grace_remaining_sec": 0,
+                "message": " | ".join(notes),
+                "ws_connected": bool(ws_client is not None and is_running),
+                "last_ws_message_age_sec": round(ws_age, 1) if ws_age is not None else None,
+                "last_kline_age_sec": round(kline_age_sec, 1) if kline_age_sec is not None else None,
+            }
+
+        warn_sec = float(self.settings.get("ws_msg_warn_sec", 180))
+        critical_sec = float(self.settings.get("ws_msg_critical_sec", 300))
+        k_warn = float(self.settings.get("kline_warn_sec", 7200))
+        k_critical = float(self.settings.get("kline_critical_sec", 14400))
+
+        # Phase 3: STREAM_STALE（保留真斷線偵測）
+        if ws_age is None or ws_age >= critical_sec:
+            if ws_age is None:
+                notes.append("未收到任何 WS 訊息（超過啟動寬限）")
             else:
-                kline_status = "ok"
-                notes.append(f"K 線事件正常 ({kline_age_sec/60:.1f}m)")
+                notes.append(f"WS 訊息延遲 {ws_age:.0f}s，疑似斷線")
+            return {
+                "status": "critical",
+                "phase": "stale",
+                "phase_detail": "stream_stale",
+                "runner_ready": True,
+                "startup_grace_remaining_sec": 0,
+                "runner_ready_grace_remaining_sec": 0,
+                "message": " | ".join(notes),
+                "ws_connected": bool(ws_client is not None and is_running),
+                "last_ws_message_age_sec": round(ws_age, 1) if ws_age is not None else None,
+                "last_kline_age_sec": round(kline_age_sec, 1) if kline_age_sec is not None else None,
+            }
+
+        # Phase 2: STREAMING_NO_CLOSE_YET（WS 有消息但尚無收盤 K）
+        if kline_age_sec is None:
+            status = "warn" if ws_age >= warn_sec else "ok"
+            notes.append(f"WS 訊息正常 ({ws_age:.0f}s)")
+            notes.append("尚未收到 K 線收盤事件（1h 週期可能正常）")
+            return {
+                "status": status,
+                "phase": "streaming",
+                "phase_detail": "streaming_no_close_yet",
+                "runner_ready": True,
+                "startup_grace_remaining_sec": 0,
+                "runner_ready_grace_remaining_sec": 0,
+                "message": " | ".join(notes),
+                "ws_connected": bool(ws_client is not None and is_running),
+                "last_ws_message_age_sec": round(ws_age, 1),
+                "last_kline_age_sec": None,
+            }
+
+        # Phase: STREAMING（正常運行；同時看 WS 和 K 線新鮮度）
+        status = "ok"
+        notes.append(f"WS 訊息正常 ({ws_age:.0f}s)")
+        if ws_age >= warn_sec:
+            status = _max_status(status, "warn")
+            notes.append(f"WS 訊息偏舊 {ws_age:.0f}s")
+
+        if kline_age_sec >= k_critical:
+            status = _max_status(status, "critical")
+            notes.append(f"K 線事件過期 {kline_age_sec/60:.1f}m")
+        elif kline_age_sec >= k_warn:
+            status = _max_status(status, "warn")
+            notes.append(f"K 線事件偏舊 {kline_age_sec/60:.1f}m")
         else:
-            notes.append("尚未收到任何 K 線收盤事件")
+            notes.append(f"K 線事件正常 ({kline_age_sec/60:.1f}m)")
 
-        final_status = _max_status(ws_status, kline_status)
         return {
-            "status": final_status,
+            "status": status,
+            "phase": "streaming",
+            "phase_detail": "streaming_active",
+            "runner_ready": True,
+            "startup_grace_remaining_sec": 0,
+            "runner_ready_grace_remaining_sec": 0,
             "message": " | ".join(notes),
             "ws_connected": bool(ws_client is not None and is_running),
             "last_ws_message_age_sec": round(ws_age, 1) if ws_age is not None else None,
@@ -490,4 +594,24 @@ class LiveWatchdog:
                 except Exception:
                     pass
 
+        # 可選 phase change 通知：bootstrap -> streaming
+        ws_check = status.get("checks", {}).get("websocket_kline", {}) or {}
+        phase = ws_check.get("phase")
+        notify_phase_change = bool(self.settings.get("notify_phase_change", True))
+        if (
+            notify_phase_change
+            and phase
+            and self._last_ws_phase == "bootstrap"
+            and phase == "streaming"
+        ):
+            try:
+                self.notifier.send(
+                    "ℹ️ <b>Live Watchdog Phase Update</b>\n\n"
+                    "WebSocket 監控已從 bootstrap 進入 streaming。"
+                )
+            except Exception:
+                pass
+
+        if phase:
+            self._last_ws_phase = phase
         self._last_overall_status = overall

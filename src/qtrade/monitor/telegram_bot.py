@@ -1256,6 +1256,22 @@ class TelegramCommandBot(TelegramBot):
                 f"⏱ 時間: {result.get('timestamp', '')}",
             ]
 
+            ws_ck = (result.get("checks", {}) or {}).get("websocket_kline", {}) or {}
+            if ws_ck:
+                phase = ws_ck.get("phase", "n/a")
+                runner_ready = ws_ck.get("runner_ready")
+                startup_left = ws_ck.get("startup_grace_remaining_sec")
+                ws_age = ws_ck.get("last_ws_message_age_sec")
+                kline_age = ws_ck.get("last_kline_age_sec")
+                lines.extend([
+                    "",
+                    f"🧭 phase: <b>{phase}</b>",
+                    f"🟩 runner_ready: <b>{runner_ready}</b>",
+                    f"⏳ startup_grace_remaining_sec: {startup_left}",
+                    f"📡 last_ws_message_age_sec: {ws_age}",
+                    f"🕯 last_kline_age_sec: {kline_age}",
+                ])
+
             issues = result.get("issues", [])
             if issues:
                 lines.append(f"\n🔎 Issues ({len(issues)}):")

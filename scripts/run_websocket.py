@@ -16,6 +16,8 @@ import sys
 import argparse
 import traceback
 import logging
+import threading
+import time
 from pathlib import Path
 
 # 確保 src 在 sys.path
@@ -103,8 +105,17 @@ def main():
         from qtrade.live.watchdog import LiveWatchdog
         watchdog = LiveWatchdog(runner=runner, cfg=cfg, notifier=getattr(runner, "notifier", None))
         if watchdog.enabled:
-            watchdog.start_background()
-            logger.info("🩺 Live Watchdog 已在背景啟動")
+            # 延後到 runner 進入 run() 後再啟動，避免 startup race 造成誤判
+            def _deferred_start_watchdog():
+                deadline = time.time() + 60
+                while time.time() < deadline:
+                    if getattr(runner, "_started_at", 0.0):
+                        break
+                    time.sleep(1)
+                watchdog.start_background()
+
+            threading.Thread(target=_deferred_start_watchdog, daemon=True).start()
+            logger.info("🩺 Live Watchdog 啟動排程已建立（等待 runner ready）")
         else:
             logger.info("🩺 Live Watchdog 已停用（config: live.watchdog.enabled=false）")
     except Exception as e:

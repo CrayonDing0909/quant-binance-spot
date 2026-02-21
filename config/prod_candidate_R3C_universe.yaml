@@ -244,10 +244,12 @@ live:
     enabled: true
     interval_sec: 300
     alert_cooldown_sec: 1800
+    startup_grace_sec: 300
+    runner_ready_grace_sec: 180
     heartbeat_warn_sec: 90
     heartbeat_critical_sec: 180
     ws_msg_warn_sec: 180
-    ws_msg_critical_sec: 360
+    ws_msg_critical_sec: 300
     data_warn_age_sec:
       "1h": 7200
       "5m": 1800

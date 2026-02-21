@@ -48,12 +48,18 @@ class WebSocketRunner(BaseRunner):
         super().__init__(cfg, broker, mode, notifier)
 
         self._tick_count = 0
+        self._started_at: float = 0.0
         self._last_ws_message_time: float = 0.0
+        self._last_kline_event_time: float = 0.0
         self._last_main_loop_heartbeat: float = 0.0
+        self._ws_ready: bool = False
+        self._subscriptions_ready: bool = False
         self._ws_client = None
         self._last_kline_ts: Dict[str, int] = {}
         self._last_summary_time: float = 0.0
         self._interval_minutes = INTERVAL_MINUTES.get(self.interval, 60)
+        self._ws_disconnect_alert_cooldown_sec: float = 1800.0
+        self._last_ws_disconnect_alert_time: float = 0.0
 
         # K 線快取（BaseRunner 的 _kline_cache 由子類設定）
         cache_dir = cfg.get_report_dir("live") / "kline_cache"
@@ -109,6 +115,7 @@ class WebSocketRunner(BaseRunner):
                 if self._last_kline_ts.get(symbol) == ts:
                     return
                 self._last_kline_ts[symbol] = ts
+                self._last_kline_event_time = time.time()
 
                 self._log.info(f"🕯️  {symbol} K 線收盤: ${close_price:,.2f}")
 
@@ -219,8 +226,12 @@ class WebSocketRunner(BaseRunner):
     def run(self):
         """啟動 WebSocket 連接並保持運行"""
         self.start_time = time.time()
+        self._started_at = self.start_time
         self._last_summary_time = time.time()
         self._last_main_loop_heartbeat = time.time()
+        self._last_kline_event_time = 0.0
+        self._ws_ready = False
+        self._subscriptions_ready = False
 
         alloc_str = ", ".join(f"{s}={w:.0%}" for s, w in self._weights.items())
         self._log.info("=" * 60)
@@ -260,10 +271,12 @@ class WebSocketRunner(BaseRunner):
             self._ws_client = UMFuturesWebsocketClient(
                 on_message=self._on_message_handler,
             )
+            self._ws_ready = True
 
             for symbol in self.symbols:
                 self._ws_client.kline(symbol=symbol.lower(), interval=self.interval, id=1)
                 self._log.info(f"📡 訂閱串流: {symbol.lower()}@kline_{self.interval}")
+            self._subscriptions_ready = True
 
         except Exception as e:
             self._log.error(f"❌ WebSocket 連線失敗: {e}")
@@ -286,14 +299,16 @@ class WebSocketRunner(BaseRunner):
                             self._log.warning(
                                 f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息，可能斷線"
                             )
-                            try:
-                                self.notifier.send_error(
-                                    f"⚠️  WebSocket 可能斷線 ({elapsed:.0f}s 無消息)\n"
-                                    f"等待自動重連..."
-                                )
-                            except Exception:
-                                pass
-                            self._last_ws_message_time = time.time()
+                            now = time.time()
+                            if now - self._last_ws_disconnect_alert_time >= self._ws_disconnect_alert_cooldown_sec:
+                                try:
+                                    self.notifier.send_error(
+                                        f"⚠️  WebSocket 可能斷線 ({elapsed:.0f}s 無消息)\n"
+                                        f"等待自動重連..."
+                                    )
+                                    self._last_ws_disconnect_alert_time = now
+                                except Exception:
+                                    pass
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:
@@ -304,6 +319,8 @@ class WebSocketRunner(BaseRunner):
         except KeyboardInterrupt:
             self._log.info("⛔ 收到 KeyboardInterrupt，停止 WebSocket...")
         finally:
+            self._ws_ready = False
+            self._subscriptions_ready = False
             if self._ws_client:
                 try:
                     self._ws_client.stop()
