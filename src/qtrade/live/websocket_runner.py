@@ -81,6 +81,7 @@ class WebSocketRunner(BaseRunner):
         self._reconnect_delay: float = RECONNECT_BASE_DELAY
         self._ws_needs_reconnect: bool = False
         self._reconnect_lock = threading.Lock()
+        self._reconnect_grace_until: float = 0.0  # 重連成功後的寬限期（忽略舊 callback 殘留）
 
         # K 線快取（BaseRunner 的 _kline_cache 由子類設定）
         cache_dir = cfg.get_report_dir("live") / "kline_cache"
@@ -266,9 +267,9 @@ class WebSocketRunner(BaseRunner):
         """
         安全關閉舊的 WS client。
 
-        使用 daemon thread + timeout 防止 join() 卡住主迴圈：
-        BinanceSocketManager.stop() 內部呼叫 thread.join()，
-        若底層 socket 處於半死狀態，join() 可能永遠不返回。
+        關鍵：先解除舊 client 的 on_close/on_error/on_message callback，
+        防止舊 client 的清理流程觸發新 client 的重連迴圈。
+        再用 daemon thread + timeout 防止 join() 卡住主迴圈。
         """
         self._ws_ready = False
         self._subscriptions_ready = False
@@ -276,6 +277,18 @@ class WebSocketRunner(BaseRunner):
         self._ws_client = None
         if old_client is None:
             return
+
+        # ★ 關鍵：解除舊 client 的所有 callback
+        # BinanceSocketManager.read_data() 在收到 CLOSE frame 時會呼叫 self.on_close，
+        # 若不解除，舊 client 的關閉事件會觸發 _on_ws_close → _ws_needs_reconnect = True
+        # → 造成新 client 被誤判為斷線 → 無限重連迴圈
+        try:
+            sm = old_client.socket_manager
+            sm.on_close = None
+            sm.on_error = None
+            sm.on_message = None
+        except Exception:
+            pass
 
         def _do_stop():
             try:
@@ -325,6 +338,9 @@ class WebSocketRunner(BaseRunner):
                 self._subscriptions_ready = True
                 self._last_ws_message_time = time.time()
                 self._ws_needs_reconnect = False
+
+                # 設定 30s 寬限期：忽略舊 client 殘留的 on_close/on_error callback
+                self._reconnect_grace_until = time.time() + 30
 
                 # 重連成功 → 重置退避和連續失敗計數
                 self._reconnect_delay = RECONNECT_BASE_DELAY
@@ -377,12 +393,22 @@ class WebSocketRunner(BaseRunner):
                 return False
 
     def _on_ws_close(self, _):
-        """WS 連線關閉回調 — 標記需要重連"""
+        """WS 連線關閉回調 — 標記需要重連（尊重 grace period）"""
+        if time.time() < self._reconnect_grace_until:
+            self._log.info(
+                "ℹ️  WebSocket on_close 觸發，但在重連寬限期內，忽略（可能是舊 client 殘留）"
+            )
+            return
         self._log.warning("⚠️  WebSocket on_close 觸發，標記需要重連")
         self._ws_needs_reconnect = True
 
     def _on_ws_error(self, _, error):
-        """WS 錯誤回調 — 標記需要重連"""
+        """WS 錯誤回調 — 標記需要重連（尊重 grace period）"""
+        if time.time() < self._reconnect_grace_until:
+            self._log.info(
+                f"ℹ️  WebSocket on_error ({error})，但在重連寬限期內，忽略"
+            )
+            return
         self._log.error(f"⚠️  WebSocket on_error: {error}")
         self._ws_needs_reconnect = True
 
