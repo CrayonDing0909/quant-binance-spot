@@ -1,5 +1,11 @@
 """
-WebSocket Runner — 輕量化事件驅動交易執行器 (v4.0)
+WebSocket Runner — 輕量化事件驅動交易執行器 (v4.1)
+
+v4.1: 新增自動重連機制
+    - WS 斷線後自動重建 client + 重新訂閱
+    - 指數退避重連（10s → 20s → 40s ... 最大 300s）
+    - on_close / on_error callback 主動偵測斷線
+    - 重連計數暴露給 watchdog / TG
 
 v4.0: 繼承 BaseRunner，消除與 LiveRunner 的重複代碼
     - 所有安全機制（SL/TP 冷卻、補掛、熔斷等）由 BaseRunner 統一管理
@@ -14,6 +20,7 @@ import json
 import time
 import logging
 import traceback
+import threading
 import pandas as pd
 from typing import Dict, Any
 
@@ -25,8 +32,14 @@ from .base_runner import BaseRunner
 
 ws_logger = get_logger("ws_runner")
 
-# 心跳超時（秒）
+# 心跳超時（秒）— 超過此時間無 WS 消息即觸發重連
 HEARTBEAT_TIMEOUT = 300
+
+# 重連參數
+RECONNECT_BASE_DELAY = 10       # 首次重連等待（秒）
+RECONNECT_MAX_DELAY = 300       # 最大重連等待（秒）
+RECONNECT_BACKOFF_FACTOR = 2    # 指數退避乘數
+RECONNECT_CONSECUTIVE_FAIL_ALERT = 5  # 連續失敗 N 次後強制 TG 告警（無視 cooldown）
 
 # interval → 分鐘 對照表
 INTERVAL_MINUTES = {
@@ -38,10 +51,10 @@ INTERVAL_MINUTES = {
 
 class WebSocketRunner(BaseRunner):
     """
-    基於 WebSocket 的輕量化執行器 (v4.0)
+    基於 WebSocket 的輕量化執行器 (v4.1)
 
     繼承 BaseRunner 取得所有安全機制，
-    本類只負責 WS 連線管理和 K 線事件驅動。
+    本類只負責 WS 連線管理、K 線事件驅動和自動重連。
     """
 
     def __init__(self, cfg: AppConfig, broker, mode: str = "paper", notifier=None):
@@ -60,6 +73,14 @@ class WebSocketRunner(BaseRunner):
         self._interval_minutes = INTERVAL_MINUTES.get(self.interval, 60)
         self._ws_disconnect_alert_cooldown_sec: float = 1800.0
         self._last_ws_disconnect_alert_time: float = 0.0
+
+        # 重連狀態
+        self._reconnect_count: int = 0
+        self._consecutive_failures: int = 0
+        self._last_reconnect_time: float = 0.0
+        self._reconnect_delay: float = RECONNECT_BASE_DELAY
+        self._ws_needs_reconnect: bool = False
+        self._reconnect_lock = threading.Lock()
 
         # K 線快取（BaseRunner 的 _kline_cache 由子類設定）
         cache_dir = cfg.get_report_dir("live") / "kline_cache"
@@ -220,8 +241,150 @@ class WebSocketRunner(BaseRunner):
                 pass
 
     # ══════════════════════════════════════════════════════════
-    #  WebSocket 管理 + 心跳監控
+    #  WebSocket 管理 + 心跳監控 + 自動重連
     # ══════════════════════════════════════════════════════════
+
+    def _create_ws_client(self):
+        """建立 WS client 並訂閱所有 symbol（供初次連線與重連共用）"""
+        from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
+
+        logging.getLogger("binance").setLevel(logging.WARNING)
+
+        client = UMFuturesWebsocketClient(
+            on_message=self._on_message_handler,
+            on_close=self._on_ws_close,
+            on_error=self._on_ws_error,
+        )
+
+        for symbol in self.symbols:
+            client.kline(symbol=symbol.lower(), interval=self.interval, id=1)
+            self._log.info(f"📡 訂閱串流: {symbol.lower()}@kline_{self.interval}")
+
+        return client
+
+    def _stop_ws_client(self):
+        """
+        安全關閉舊的 WS client。
+
+        使用 daemon thread + timeout 防止 join() 卡住主迴圈：
+        BinanceSocketManager.stop() 內部呼叫 thread.join()，
+        若底層 socket 處於半死狀態，join() 可能永遠不返回。
+        """
+        self._ws_ready = False
+        self._subscriptions_ready = False
+        old_client = self._ws_client
+        self._ws_client = None
+        if old_client is None:
+            return
+
+        def _do_stop():
+            try:
+                old_client.stop()
+            except Exception:
+                pass
+
+        stopper = threading.Thread(target=_do_stop, daemon=True)
+        stopper.start()
+        stopper.join(timeout=5)
+        if stopper.is_alive():
+            self._log.warning(
+                "⚠️  舊 WS client stop 超時（5s），已放棄等待（daemon thread 會自行回收）"
+            )
+
+    def _reconnect_ws(self) -> bool:
+        """
+        嘗試重建 WS 連線 + 重新訂閱。
+
+        返回 True 表示重連成功，False 表示失敗（將在下次主迴圈迭代重試）。
+        重連使用指數退避：10s → 20s → 40s ... 最大 300s，成功後重置。
+        """
+        with self._reconnect_lock:
+            now = time.time()
+
+            # 退避保護：距離上次重連嘗試不足 delay 秒則跳過
+            if now - self._last_reconnect_time < self._reconnect_delay:
+                return False
+
+            self._last_reconnect_time = now
+            self._reconnect_count += 1
+            attempt = self._reconnect_count
+
+            self._log.warning(
+                f"🔄 WebSocket 重連中... (第 {attempt} 次, "
+                f"連續失敗={self._consecutive_failures}, "
+                f"delay={self._reconnect_delay:.0f}s)"
+            )
+
+            # 1) 停掉舊 client（有 5s timeout 防 hang）
+            self._stop_ws_client()
+
+            # 2) 建新 client
+            try:
+                self._ws_client = self._create_ws_client()
+                self._ws_ready = True
+                self._subscriptions_ready = True
+                self._last_ws_message_time = time.time()
+                self._ws_needs_reconnect = False
+
+                # 重連成功 → 重置退避和連續失敗計數
+                self._reconnect_delay = RECONNECT_BASE_DELAY
+                self._consecutive_failures = 0
+                self._log.info(
+                    f"✅ WebSocket 重連成功 (第 {attempt} 次)"
+                )
+
+                # TG 通知
+                try:
+                    self.notifier.send(
+                        f"🔄 <b>WebSocket 重連成功</b>\n"
+                        f"第 {attempt} 次重連，已恢復正常。"
+                    )
+                except Exception:
+                    pass
+                return True
+
+            except Exception as e:
+                self._consecutive_failures += 1
+                self._log.error(f"❌ WebSocket 重連失敗 (第 {attempt} 次): {e}")
+                self._log.error(traceback.format_exc())
+
+                # 退避加倍
+                self._reconnect_delay = min(
+                    self._reconnect_delay * RECONNECT_BACKOFF_FACTOR,
+                    RECONNECT_MAX_DELAY,
+                )
+
+                # 連續失敗達門檻 → 強制 TG 告警（無視 cooldown）
+                force_alert = (
+                    self._consecutive_failures >= RECONNECT_CONSECUTIVE_FAIL_ALERT
+                    and self._consecutive_failures % RECONNECT_CONSECUTIVE_FAIL_ALERT == 0
+                )
+                should_alert = force_alert or (
+                    now - self._last_ws_disconnect_alert_time >= self._ws_disconnect_alert_cooldown_sec
+                )
+
+                if should_alert:
+                    try:
+                        self.notifier.send_error(
+                            f"❌ WebSocket 重連失敗 (第 {attempt} 次, "
+                            f"連續失敗 {self._consecutive_failures})\n"
+                            f"錯誤: {e}\n"
+                            f"下次重試: {self._reconnect_delay:.0f}s 後"
+                        )
+                        self._last_ws_disconnect_alert_time = now
+                    except Exception:
+                        pass
+                return False
+
+    def _on_ws_close(self, _):
+        """WS 連線關閉回調 — 標記需要重連"""
+        self._log.warning("⚠️  WebSocket on_close 觸發，標記需要重連")
+        self._ws_needs_reconnect = True
+
+    def _on_ws_error(self, _, error):
+        """WS 錯誤回調 — 標記需要重連"""
+        self._log.error(f"⚠️  WebSocket on_error: {error}")
+        self._ws_needs_reconnect = True
 
     def run(self):
         """啟動 WebSocket 連接並保持運行"""
@@ -249,11 +412,12 @@ class WebSocketRunner(BaseRunner):
             cache_info.append(f"{sym}={n}")
         self._log.info(f"   K 線快取: {', '.join(cache_info)} (IncrementalKlineCache ✅)")
         self._log.info(f"   心跳超時: {HEARTBEAT_TIMEOUT}s")
+        self._log.info(f"   重連退避: {RECONNECT_BASE_DELAY}s ~ {RECONNECT_MAX_DELAY}s")
         self._log.info("=" * 60)
 
         try:
             self.notifier.send_startup(
-                strategy=f"{self.strategy_name} (WebSocket v4.0)",
+                strategy=f"{self.strategy_name} (WebSocket v4.1)",
                 symbols=self.symbols,
                 interval=self.interval,
                 mode=self.mode,
@@ -263,23 +427,13 @@ class WebSocketRunner(BaseRunner):
         except Exception as e:
             self._log.warning(f"啟動通知發送失敗: {e}")
 
+        # 首次連線
         try:
-            from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
-
-            logging.getLogger("binance").setLevel(logging.WARNING)
-
-            self._ws_client = UMFuturesWebsocketClient(
-                on_message=self._on_message_handler,
-            )
+            self._ws_client = self._create_ws_client()
             self._ws_ready = True
-
-            for symbol in self.symbols:
-                self._ws_client.kline(symbol=symbol.lower(), interval=self.interval, id=1)
-                self._log.info(f"📡 訂閱串流: {symbol.lower()}@kline_{self.interval}")
             self._subscriptions_ready = True
-
         except Exception as e:
-            self._log.error(f"❌ WebSocket 連線失敗: {e}")
+            self._log.error(f"❌ WebSocket 初始連線失敗: {e}")
             self._log.error(traceback.format_exc())
             raise
 
@@ -293,22 +447,19 @@ class WebSocketRunner(BaseRunner):
                     time.sleep(1)
                     self._last_main_loop_heartbeat = time.time()
 
-                    if self._last_ws_message_time > 0:
+                    # 檢查是否需要重連（on_close/on_error 觸發 或 心跳超時）
+                    needs_reconnect = self._ws_needs_reconnect
+                    if not needs_reconnect and self._last_ws_message_time > 0:
                         elapsed = time.time() - self._last_ws_message_time
                         if elapsed > HEARTBEAT_TIMEOUT:
+                            needs_reconnect = True
                             self._log.warning(
-                                f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息，可能斷線"
+                                f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息，觸發重連"
                             )
-                            now = time.time()
-                            if now - self._last_ws_disconnect_alert_time >= self._ws_disconnect_alert_cooldown_sec:
-                                try:
-                                    self.notifier.send_error(
-                                        f"⚠️  WebSocket 可能斷線 ({elapsed:.0f}s 無消息)\n"
-                                        f"等待自動重連..."
-                                    )
-                                    self._last_ws_disconnect_alert_time = now
-                                except Exception:
-                                    pass
+
+                    if needs_reconnect:
+                        self._reconnect_ws()
+
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:
@@ -319,20 +470,16 @@ class WebSocketRunner(BaseRunner):
         except KeyboardInterrupt:
             self._log.info("⛔ 收到 KeyboardInterrupt，停止 WebSocket...")
         finally:
-            self._ws_ready = False
-            self._subscriptions_ready = False
-            if self._ws_client:
-                try:
-                    self._ws_client.stop()
-                except Exception:
-                    pass
+            self._stop_ws_client()
             hours = (time.time() - self.start_time) / 3600 if self.start_time else 0
             try:
                 self.notifier.send_shutdown(0, self.trade_count, hours)
             except Exception:
                 pass
             self._log.info(
-                f"👋 WebSocket Runner 已停止 (運行 {hours:.1f}h, 交易 {self.trade_count} 筆)"
+                f"👋 WebSocket Runner 已停止 "
+                f"(運行 {hours:.1f}h, 交易 {self.trade_count} 筆, "
+                f"重連 {self._reconnect_count} 次)"
             )
 
     def _on_message_handler(self, _, msg):
