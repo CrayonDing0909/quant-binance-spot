@@ -197,6 +197,17 @@ def generate_funding_carry(
         use_proxy:            若無 funding 數據，是否用 proxy（預設 True）
         proxy_ema_fast:       proxy 用快速 EMA（預設 24）
         proxy_ema_slow:       proxy 用慢速 EMA（預設 168）
+
+        # F2: Basis/Premium Confirmation（預設 disabled）
+        basis_confirm_enabled:    是否啟用 basis 確認（預設 False）
+        basis_ema_fast:           basis proxy 快速 EMA（預設 24）
+        basis_ema_slow:           basis proxy 慢速 EMA（預設 168）
+        basis_confirm_threshold:  basis spread 門檻（預設 0.01 = 1%）
+
+        # F3: Regime Filter（預設 disabled）
+        regime_filter_enabled:    是否啟用 regime 過濾（預設 False）
+        regime_adx_max:           ADX 上限（預設 25 — 只在低 ADX 非趨勢環境交易）
+        regime_adx_period:        ADX 計算週期（預設 14）
     """
     data_dir = params.get("data_dir", "data")
     rolling_window = int(params.get("rolling_window", 72))
@@ -206,6 +217,17 @@ def generate_funding_carry(
     vol_target = float(params.get("vol_target", 0.10))
     vol_lookback = int(params.get("vol_lookback", 168))
     use_proxy = bool(params.get("use_proxy", True))
+
+    # F2: Basis confirmation
+    basis_confirm_enabled = bool(params.get("basis_confirm_enabled", False))
+    basis_ema_fast = int(params.get("basis_ema_fast", 24))
+    basis_ema_slow = int(params.get("basis_ema_slow", 168))
+    basis_confirm_threshold = float(params.get("basis_confirm_threshold", 0.01))
+
+    # F3: Regime filter
+    regime_filter_enabled = bool(params.get("regime_filter_enabled", False))
+    regime_adx_max = float(params.get("regime_adx_max", 25.0))
+    regime_adx_period = int(params.get("regime_adx_period", 14))
 
     # 嘗試載入真實 funding rate
     funding = _load_funding_rate(ctx.symbol, data_dir, ctx.market_type)
@@ -224,6 +246,24 @@ def generate_funding_carry(
             close=df["close"],
             vol_lookback=vol_lookback,
         )
+
+        # ── F2: Basis/Premium Confirmation ──
+        if basis_confirm_enabled:
+            pos = _apply_basis_confirmation(
+                df, pos,
+                ema_fast=basis_ema_fast,
+                ema_slow=basis_ema_slow,
+                threshold=basis_confirm_threshold,
+            )
+
+        # ── F3: Regime Filter (low ADX only) ──
+        if regime_filter_enabled:
+            pos = _apply_regime_filter(
+                df, pos,
+                adx_max=regime_adx_max,
+                adx_period=regime_adx_period,
+            )
+
         return pos
 
     # ── Proxy 模式（若無 funding 數據） ──
@@ -234,6 +274,98 @@ def generate_funding_carry(
     # 完全無法生成信號
     logger.warning(f"⚠️  Funding Carry: {ctx.symbol} 無 funding 且 proxy 關閉")
     return pd.Series(0.0, index=df.index)
+
+
+def _apply_basis_confirmation(
+    df: pd.DataFrame,
+    pos: pd.Series,
+    ema_fast: int = 24,
+    ema_slow: int = 168,
+    threshold: float = 0.01,
+) -> pd.Series:
+    """
+    F2: Basis/Premium Confirmation Filter
+
+    用 EMA spread 作為 basis/premium 的 proxy：
+      - 做空信號 (pos < 0) 需要 basis > +threshold（市場溢價，確認多頭擁擠）
+      - 做多信號 (pos > 0) 需要 basis < -threshold（市場折價，確認空頭擁擠）
+      - 不確認 → 置零（不開倉）
+      - 已有倉位但 basis 條件消失 → 保持（不強制平倉，等 carry 信號平倉）
+
+    Anti-lookahead: EMA 是 causal，只用歷史數據。
+    """
+    close = df["close"]
+    ema_f = close.ewm(span=ema_fast, adjust=False).mean()
+    ema_s = close.ewm(span=ema_slow, adjust=False).mean()
+    basis_spread = (ema_f - ema_s) / ema_s  # > 0 = premium, < 0 = discount
+
+    result = pos.copy()
+    pos_vals = pos.values
+    basis_vals = basis_spread.values
+
+    for i in range(len(pos_vals)):
+        if np.isnan(basis_vals[i]):
+            continue
+        p = pos_vals[i]
+        b = basis_vals[i]
+        if p < 0 and b < threshold:
+            # Short carry signal but no premium confirmation → block
+            result.iloc[i] = 0.0
+        elif p > 0 and b > -threshold:
+            # Long carry signal but no discount confirmation → block
+            result.iloc[i] = 0.0
+
+    return result
+
+
+def _apply_regime_filter(
+    df: pd.DataFrame,
+    pos: pd.Series,
+    adx_max: float = 25.0,
+    adx_period: int = 14,
+) -> pd.Series:
+    """
+    F3: Regime Filter — Only trade carry in non-trending environments
+
+    邏輯：
+      - ADX > adx_max → 強趨勢環境 → carry 易被趨勢反噬 → 禁止新開倉
+      - ADX <= adx_max → 震盪/低波動環境 → carry 策略適用
+      - 已有倉位且 ADX 升高 → 保持（不強制平倉）
+
+    Anti-lookahead: ADX 是 causal（只用當下及歷史數據）。
+    """
+    from ..indicators.adx import calculate_adx
+
+    adx_df = calculate_adx(df, period=adx_period)
+    adx = adx_df["ADX"] if isinstance(adx_df, pd.DataFrame) else adx_df
+    adx_vals = adx.values
+    pos_vals = pos.values
+    result = pos.values.copy()
+
+    prev_pos = 0.0
+    for i in range(len(pos_vals)):
+        if np.isnan(adx_vals[i]):
+            result[i] = pos_vals[i]
+            prev_pos = pos_vals[i]
+            continue
+
+        current_signal = pos_vals[i]
+
+        if adx_vals[i] > adx_max:
+            # High ADX: block new entries, keep existing positions
+            if prev_pos == 0.0 and current_signal != 0.0:
+                result[i] = 0.0  # Block new entry
+            elif prev_pos != 0.0 and current_signal != 0.0:
+                # Had position, keep it (allow regime filter to not force-close)
+                result[i] = current_signal
+            else:
+                result[i] = current_signal
+        else:
+            result[i] = current_signal
+
+        prev_pos = result[i]
+
+    return pd.Series(result, index=pos.index)
 
 
 def _funding_proxy_signal(

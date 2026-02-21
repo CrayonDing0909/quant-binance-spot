@@ -104,3 +104,5 @@ from . import nwkl_strategy  # noqa: E402
 from . import nw_envelope_regime_strategy  # noqa: E402
 from . import breakout_vol_strategy  # noqa: E402
 from . import funding_carry_strategy  # noqa: E402
+from . import mr_microstructure_strategy  # noqa: E402
+from . import oi_bb_rv_strategy  # noqa: E402

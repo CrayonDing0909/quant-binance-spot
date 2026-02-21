@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — MR-C RSI(短週期) + HTF Trend Blocker (15m)
+# ═══════════════════════════════════════════════════════════════
+# Phase: MR-1 research
+# Purpose: 15m RSI mean reversion with higher TF trend blocker
+# NOT for production — research only
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "15m"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "mr_rsi_htf"
+  params:
+    rsi_period: 7
+    rsi_overbought: 75
+    rsi_oversold: 25
+    rsi_exit_high: 55
+    rsi_exit_low: 45
+    htf_interval: "4h"
+    htf_ema_fast: 20
+    htf_ema_slow: 50
+    htf_counter_weight: 0.3
+    htf_align_weight: 1.0
+    htf_neutral_weight: 0.7
+    stop_loss_atr: 2.5
+    take_profit_atr: 2.5
+    max_holding_bars: 16    # 16 × 15m = 4h max hold
+    cooldown_bars: 4
+    atr_period: 14
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.50
+    ETHUSDT: 0.50
+
+output:
+  report_dir: "./reports"

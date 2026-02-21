@@ -356,6 +356,9 @@ class AppConfig:
             "adv_lookback": sm.adv_lookback,
             "participation_rate": sm.participation_rate,
         }
+        # overlay（可選 — 從原始 YAML 讀取）
+        if hasattr(self, '_overlay_cfg') and self._overlay_cfg:
+            d["overlay"] = self._overlay_cfg
         return d
 
 
@@ -498,5 +501,8 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         live=live_cfg,
     )
     # 附加原始配置路徑（供 ensemble 路由等需要重讀 YAML 的功能使用）
-    object.__setattr__(app_cfg, "_config_path", str(path))
+    object.__setattr__(app_cfg, '_config_path', str(path))
+    # 附加 overlay 配置（供 run_symbol_backtest 使用，不改 frozen dataclass 結構）
+    overlay_raw = raw.get("strategy", {}).get("overlay")
+    object.__setattr__(app_cfg, '_overlay_cfg', overlay_raw)
     return app_cfg

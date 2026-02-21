@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════
+# Phase 1 Research — F3: Funding + Regime Filter
+# ═══════════════════════════════════════════════════════════════
+# Factor: Funding carry with ADX regime filter (low-trend only)
+# Hypothesis: Carry is most effective in non-trending (choppy)
+#   environments; ADX filter avoids trend-reversal losses.
+# Change vs F1: regime_filter_enabled: true
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "funding_carry"
+  params:
+    data_dir: "data"
+    rolling_window: 72
+    entry_threshold: 0.0001
+    exit_threshold: 0.00005
+    rebalance_interval: 8
+    vol_target: 0.10
+    vol_lookback: 168
+    use_proxy: false
+    # F2 disabled
+    basis_confirm_enabled: false
+    # F3: Regime filter enabled
+    regime_filter_enabled: true
+    regime_adx_max: 25.0
+    regime_adx_period: 14
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

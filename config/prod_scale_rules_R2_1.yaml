@@ -1,0 +1,313 @@
+# ════════════════════════════════════════════════════════════════
+# Production Scale Rules — R2.1 (Vol-only Overlay)
+# ════════════════════════════════════════════════════════════════
+# Frozen Strategy: config/prod_candidate_R2_1.yaml
+# SHA256: 435d9f92f5f1d98003f7deff12d53bc4f4c21fd593be2d1ecf82974d729fb5dc
+#
+# Upgrade from R2: added vol-only overlay (vol_spike_z=2.0, cooldown=12)
+# All entry logic, weights, cost model UNCHANGED from R2.
+#
+# 本檔定義加碼/降碼/停機的純配置規則。
+# scripts/prod_launch_guard.py 和 scripts/prod_report.py 讀取此檔。
+# ════════════════════════════════════════════════════════════════
+
+# 凍結策略引用
+strategy_config: "config/prod_candidate_R2_1.yaml"
+config_hash: "435d9f92f5f1d98003f7deff12d53bc4f4c21fd593be2d1ecf82974d729fb5dc"
+
+# 組合定義
+portfolio:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  weights:
+    BTCUSDT: 0.34
+    ETHUSDT: 0.33
+    SOLUSDT: 0.33
+  strategies:
+    BTCUSDT: "breakout_vol_atr"
+    ETHUSDT: "tsmom_multi_ema"
+    SOLUSDT: "tsmom_ema"
+  overlay:
+    mode: "oi_vol"
+    vol_spike_z: 2.0
+    cooldown_bars: 12
+    oi_disabled: true
+
+# 回測假設（用於偏差比較）
+backtest_assumptions:
+  fee_bps: 5
+  slippage_bps: 3
+  funding_rate_8h: 0.0001
+
+# ════════════════════════════════════════════════════════════════
+# Stage Gate（分階段上線）
+# ════════════════════════════════════════════════════════════════
+stages:
+  - name: "Stage 0: Paper"
+    capital: 0
+    duration_days: 30
+    entry_conditions:
+      - "R2.1 Validation Verdict = GO_REAL_R2_1"
+      - "config hash 驗證通過"
+    exit_conditions:
+      - "30D paper Sharpe > -0.3"
+      - "30D paper MDD < 12%"
+      - "signal consistency > 98%"
+
+  - name: "Stage 1: $5k (25%)"
+    capital: 5000
+    duration_days: 14
+    entry_conditions:
+      - "Stage 0 通過"
+      - "prod_launch_guard.py → ALLOW_LAUNCH"
+    exit_conditions:
+      - "14D rolling Sharpe > 0"
+      - "running MDD < 10%"
+      - "slippage <= 假設 × 1.3"
+
+  - name: "Stage 2: $10k (50%)"
+    capital: 10000
+    duration_days: 14
+    entry_conditions:
+      - "Stage 1 14D Sharpe > 0"
+      - "Stage 1 MDD < 10%"
+      - "Stage 1 slippage <= 1.3x"
+    exit_conditions:
+      - "14D rolling Sharpe > 0.3"
+      - "running MDD < 10%"
+      - "3/3 sleeves positive"
+
+  - name: "Stage 3: $15k+ (100%)"
+    capital: 15000
+    duration_days: null   # 持續運行
+    entry_conditions:
+      - "Stage 2 14D Sharpe > 0.3"
+      - "Stage 2 所有 soft gate 通過"
+
+# ════════════════════════════════════════════════════════════════
+# Scale-Up 條件（必須連續滿足 N 個交易日）
+# ════════════════════════════════════════════════════════════════
+scale_up:
+  consecutive_days: 10
+  conditions:
+    - name: "rolling_sharpe_healthy"
+      metric: "rolling_sharpe_20d"
+      condition: "gt"
+      threshold: 0.8
+      description: "20D rolling Sharpe > 0.8"
+
+    - name: "mdd_low"
+      metric: "running_mdd_pct"
+      condition: "lt"
+      threshold: 8.0
+      description: "Running MDD < 8%"
+
+    - name: "slippage_low"
+      metric: "slippage_ratio"
+      condition: "lte"
+      threshold: 1.2
+      description: "Slippage ≤ 假設 × 1.2"
+
+    - name: "funding_low"
+      metric: "funding_ratio"
+      condition: "lte"
+      threshold: 1.5
+      description: "Funding drift ≤ 1.5x"
+
+    - name: "no_flatten_events"
+      metric: "flatten_event_count_30d"
+      condition: "lte"
+      threshold: 0
+      description: "近 30D 無 FLATTEN 事件"
+
+  action: "可加碼 50%（需人工確認）"
+
+# ════════════════════════════════════════════════════════════════
+# Scale-Down 條件（任一觸發）
+# ════════════════════════════════════════════════════════════════
+scale_down:
+  trigger_mode: "any"   # 任一觸發即降碼
+  conditions:
+    - name: "rolling_sharpe_negative"
+      metric: "rolling_sharpe_20d"
+      condition: "lt"
+      threshold: 0.0
+      description: "20D rolling Sharpe < 0"
+
+    - name: "mdd_elevated"
+      metric: "running_mdd_pct"
+      condition: "gt"
+      threshold: 10.0
+      description: "Running MDD > 10%"
+
+    - name: "slippage_sustained"
+      metric: "slippage_ratio"
+      condition: "gt"
+      threshold: 1.5
+      lookback_days: 3
+      description: "Slippage > 1.5x 持續 3 天"
+
+    - name: "sleeve_bleeding"
+      metric: "worst_sleeve_14d_return_pct"
+      condition: "lt"
+      threshold: -3.0
+      description: "任一 sleeve 14D contribution < -3%"
+
+  action: "降碼 50%（自動執行）"
+
+# ════════════════════════════════════════════════════════════════
+# Hard Stop 條件（任一觸發 → 立即全平 + 人工介入）
+# ════════════════════════════════════════════════════════════════
+hard_stop:
+  trigger_mode: "any"
+  conditions:
+    - name: "mdd_critical"
+      metric: "running_mdd_pct"
+      condition: "gt"
+      threshold: 12.0
+      description: "Running MDD > 12%"
+
+    - name: "30d_catastrophic"
+      metric: "return_30d_pct"
+      condition: "lt"
+      threshold: -10.0
+      description: "30D return < -10%"
+
+    - name: "risk_guard_flatten"
+      metric: "risk_guard_action"
+      condition: "eq"
+      threshold: "FLATTEN_ALL"
+      description: "risk_guard 發出 FLATTEN_ALL"
+
+  action: "立即全平 + 停止策略 + 發 Telegram 告警 + 觸發 post-mortem"
+
+# ════════════════════════════════════════════════════════════════
+# Kill Switch Rules（與 risk_guard.py 兼容格式）
+# ════════════════════════════════════════════════════════════════
+rules:
+  # FLATTEN_ALL
+  - name: "rolling_sharpe_critical"
+    description: "20D rolling Sharpe < -0.5 → 立即全平"
+    metric: "rolling_sharpe_20d"
+    condition: "lt"
+    threshold: -0.5
+    lookback_days: 1
+    action: "FLATTEN_ALL"
+    severity: "CRITICAL"
+
+  - name: "portfolio_mdd_breach"
+    description: "組合 running MDD > 12% → 全平"
+    metric: "running_mdd_pct"
+    condition: "gt"
+    threshold: 12.0
+    lookback_days: 1
+    action: "FLATTEN_ALL"
+    severity: "CRITICAL"
+
+  - name: "30d_return_catastrophic"
+    description: "30D 滾動報酬 < -10% → 停止策略"
+    metric: "return_30d_pct"
+    condition: "lt"
+    threshold: -10.0
+    lookback_days: 1
+    action: "FLATTEN_ALL"
+    severity: "CRITICAL"
+
+  # REDUCE_RISK_50
+  - name: "slippage_drift"
+    description: "實際滑點 > 回測假設 × 1.5 連續 3 天 → 降倉 50%"
+    metric: "realized_slippage_bps"
+    condition: "gt"
+    threshold: 4.5
+    lookback_days: 3
+    action: "REDUCE_RISK_50"
+    severity: "HIGH"
+
+  - name: "rolling_sharpe_weak"
+    description: "20D rolling Sharpe < 0 連續 5 天 → 降倉 50%"
+    metric: "rolling_sharpe_20d"
+    condition: "lt"
+    threshold: 0.0
+    lookback_days: 5
+    action: "REDUCE_RISK_50"
+    severity: "HIGH"
+
+  # DISABLE_SLEEVE
+  - name: "sleeve_mdd_btcusdt"
+    description: "BTC sleeve MDD > 20% → 關閉"
+    metric: "sleeve_mdd_pct"
+    symbol: "BTCUSDT"
+    condition: "gt"
+    threshold: 20.0
+    lookback_days: 1
+    action: "DISABLE_SLEEVE:BTCUSDT"
+    severity: "HIGH"
+
+  - name: "sleeve_mdd_ethusdt"
+    description: "ETH sleeve MDD > 15% → 關閉"
+    metric: "sleeve_mdd_pct"
+    symbol: "ETHUSDT"
+    condition: "gt"
+    threshold: 15.0
+    lookback_days: 1
+    action: "DISABLE_SLEEVE:ETHUSDT"
+    severity: "HIGH"
+
+  - name: "sleeve_mdd_solusdt"
+    description: "SOL sleeve MDD > 15% → 關閉"
+    metric: "sleeve_mdd_pct"
+    symbol: "SOLUSDT"
+    condition: "gt"
+    threshold: 15.0
+    lookback_days: 1
+    action: "DISABLE_SLEEVE:SOLUSDT"
+    severity: "HIGH"
+
+  # WARNING
+  - name: "rolling_sharpe_warning"
+    description: "20D rolling Sharpe < 0 連續 3 天 → 人工審核"
+    metric: "rolling_sharpe_20d"
+    condition: "lt"
+    threshold: 0.0
+    lookback_days: 3
+    action: "WARNING"
+    severity: "MEDIUM"
+
+  - name: "funding_drag_warning"
+    description: "年化 funding 成本 > 2% → 評估 sleeve"
+    metric: "funding_drag_annualized_pct"
+    condition: "gt"
+    threshold: 2.0
+    lookback_days: 1
+    action: "WARNING"
+    severity: "MEDIUM"
+
+# ════════════════════════════════════════════════════════════════
+# Replay 壓力測試
+# ════════════════════════════════════════════════════════════════
+replay:
+  stress_period_start: "2022-07-01"
+  stress_period_end: "2023-01-01"
+  strategy_config: "config/prod_candidate_R2_1.yaml"
+  bar_interval: "1h"
+
+# ════════════════════════════════════════════════════════════════
+# Rollback Protocol (R2.1 → R2)
+# ════════════════════════════════════════════════════════════════
+rollback:
+  trigger: "any hard_stop condition OR 14D rolling Sharpe < -0.3"
+  target_config: "config/prod_candidate_R2.yaml"
+  target_rules: "config/prod_scale_rules_R1.yaml"
+  procedure:
+    - "tmux send-keys -t r2_1_prod C-c"
+    - "tmux kill-session -t r2_1_prod"
+    - "tmux new -d -s r2_prod"
+    - "Start R2 with prod_candidate_R2.yaml"
+
+# ════════════════════════════════════════════════════════════════
+# 報告輸出
+# ════════════════════════════════════════════════════════════════
+output:
+  report_dir: "reports/risk_guard"
+  json_decision: true
+  human_readable: true
+  telegram_alert: true

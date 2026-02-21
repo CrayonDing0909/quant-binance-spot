@@ -1,0 +1,139 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — R2 + OI+Vol Overlay (Ablation: Combined)
+# ═══════════════════════════════════════════════════════════════
+# Phase C ablation: OI + Vol 合併
+# OI extreme z-score reversal → 減倉
+# Vol spike + counter-trend → 平倉
+#
+# ⚠️ 需要 OI coverage >= 70% 才能產出有效結論
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_ema"
+  params:
+    lookback: 168
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.3
+  symbol_overrides: {}
+
+  # ── OI+Vol Combined Overlay ──
+  overlay:
+    enabled: true
+    mode: "oi_vol"
+    params:
+      # OI params → active
+      oi_extreme_z: 2.0
+      oi_reversal_window: 6
+      reduce_pct: 0.5
+      oi_lookback: 24
+      oi_z_window: 168
+      # Vol params → active
+      vol_spike_z: 2.0
+      overlay_cooldown_bars: 12
+      trend_lookback: 20
+      atr_period: 14
+      vol_z_window: 168
+
+ensemble:
+  enabled: true
+  weight_mode: "fixed"
+  fixed_weights:
+    BTCUSDT: 0.34
+    ETHUSDT: 0.33
+    SOLUSDT: 0.33
+  vol_parity:
+    lookback: 720
+    min_weight: 0.20
+    max_weight: 0.50
+
+  strategies:
+    BTCUSDT:
+      name: "breakout_vol_atr"
+      params:
+        channel_period: 336
+        channel_multiplier: 2.5
+        atr_period: 14
+        vol_fast_period: 14
+        vol_slow_period: 72
+        expansion_ratio: 1.1
+        fake_breakout_bars: 6
+        min_hold_bars: 24
+        trail_exit_mid: true
+        stop_loss_atr: 3.5
+        max_holding_bars: 72
+        cooldown_bars: 24
+        vol_scale_enabled: true
+        vol_scale_target: 99.0
+        vol_scale_lookback: 168
+        vol_scale_floor: 0.7
+        vol_scale_cap: 0.7
+        volume_confirm_enabled: true
+        volume_confirm_period: 20
+        volume_confirm_ratio: 1.5
+
+    ETHUSDT:
+      name: "tsmom_multi_ema"
+      params:
+        lookbacks: [72, 168, 336, 720]
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+
+    SOLUSDT:
+      name: "tsmom_ema"
+      params:
+        lookback: 168
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.34
+    ETHUSDT: 0.33
+    SOLUSDT: 0.33
+
+output:
+  report_dir: "./reports"

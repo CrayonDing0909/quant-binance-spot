@@ -1,0 +1,66 @@
+# ═══════════════════════════════════════════════════════════════
+# Phase 1 Research — F1: Raw Funding Carry
+# ═══════════════════════════════════════════════════════════════
+# Factor: Pure funding rate carry (real data, no proxy)
+# Hypothesis: Collecting funding in crowded-side trades generates
+#   low-correlation alpha vs trend/breakout sleeves.
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "funding_carry"
+  params:
+    data_dir: "data"
+    rolling_window: 72
+    entry_threshold: 0.0001
+    exit_threshold: 0.00005
+    rebalance_interval: 8
+    vol_target: 0.10
+    vol_lookback: 168
+    use_proxy: false
+    # F2/F3 disabled
+    basis_confirm_enabled: false
+    regime_filter_enabled: false
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — OI-BB-RV V1 (嚴格重現)
+# ═══════════════════════════════════════════════════════════════
+# 市場：BTCUSDT 永續合約, 15m
+# 進場：BB breakout + OIMA filter + RV pctrank filter
+# 出場：OIMA fast < slow
+# 成本：fee 5 bps, slippage 3 bps, funding enabled
+#
+# V1: 不加任何 cooldown / max_holding / confirm 等穩健化
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["BTCUSDT"]
+  interval: "15m"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "oi_bb_rv"
+  params:
+    # Bollinger Bands
+    bb_period: 20
+    bb_std: 2.0
+    # OIMA (OI Moving Average)
+    oima_fast: 12
+    oima_slow: 26
+    # RV Filter (Realized Volatility percentile rank)
+    rv_period: 20
+    rv_rank_window: 252
+    rv_lower: 10
+    rv_upper: 90
+    # V1: no risk management extensions
+    cooldown_bars: 0
+    max_holding_bars: 0
+    min_hold_bars: 0
+    confirm_bars: 1
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.0
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

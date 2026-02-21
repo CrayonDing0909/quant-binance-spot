@@ -423,7 +423,36 @@ def run_symbol_backtest(
 
     # positions: [-1, 1] (Futures) 或 [0, 1] (Spot)
     pos = strategy_func(df, ctx, cfg["strategy_params"])
-    
+
+    # ── Overlay 後處理（可選）──────────────────────────
+    # 如果 cfg 中有 overlay 配置，在 direction clip 前套用
+    # 這確保 overlay 也自動整合到 walk-forward pipeline
+    overlay_cfg = cfg.get("overlay")
+    if overlay_cfg and overlay_cfg.get("enabled", False):
+        from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
+        overlay_mode = overlay_cfg.get("mode", "vol_pause")
+        overlay_params = overlay_cfg.get("params", {})
+
+        # OI 資料：優先使用呼叫者注入的 _oi_series，否則自動從 data_dir 載入
+        oi_series = cfg.get("_oi_series")
+        if oi_series is None and overlay_mode in ("oi_only", "oi_vol") and data_dir:
+            from ..data.open_interest import get_oi_path, load_open_interest, align_oi_to_klines
+            for _prov in ["merged", "coinglass", "binance"]:
+                _oi_path = get_oi_path(data_dir, symbol, _prov)
+                _oi_df = load_open_interest(_oi_path)
+                if _oi_df is not None and not _oi_df.empty:
+                    oi_series = align_oi_to_klines(_oi_df, df.index, max_ffill_bars=2)
+                    break
+
+        pos = apply_overlay_by_mode(
+            position=pos,
+            price_df=df,
+            oi_series=oi_series,
+            params=overlay_params,
+            mode=overlay_mode,
+        )
+        logger.info(f"📊 Overlay applied: mode={overlay_mode}")
+
     # 根據 direction 過濾信號（使用共用函數）
     pos = clip_positions_by_direction(pos, mt, dr)
 

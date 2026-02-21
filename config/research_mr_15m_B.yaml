@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — MR-B Bollinger Reversion + Vol Filter (15m)
+# ═══════════════════════════════════════════════════════════════
+# Phase: MR-1 research
+# Purpose: 15m Bollinger mean reversion with ADX/vol filter
+# NOT for production — research only
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT"]
+  interval: "15m"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "mr_bollinger"
+  params:
+    bb_period: 20
+    bb_std: 2.0
+    adx_period: 14
+    adx_block_threshold: 30
+    vol_block_enabled: true
+    vol_block_lookback: 48
+    vol_block_pct: 80
+    stop_loss_atr: 2.5
+    take_profit_atr: 3.0
+    max_holding_bars: 24    # 6h max hold
+    cooldown_bars: 4
+    atr_period: 14
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.50
+    ETHUSDT: 0.50
+
+output:
+  report_dir: "./reports"
