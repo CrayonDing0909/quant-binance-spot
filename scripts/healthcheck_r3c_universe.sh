@@ -13,8 +13,8 @@ set -euo pipefail
 
 PROJ_DIR="/home/ubuntu/quant-binance-spot"
 CONFIG="config/prod_candidate_R3C_universe.yaml"
-SESSION="r3c_univ_prod"
-TG_SESSION="r3c_univ_tg"
+SESSION="r3c_prod"
+TG_SESSION="r3c_tg"
 
 # Colors for terminal output
 RED='\033[0;31m'
@@ -100,7 +100,7 @@ MISSING_COUNT=0
 NOW=$(date +%s)
 
 for SYM in "${SYMBOLS[@]}"; do
-    H1_FILE="data/binance/futures/klines/${SYM}_1h.parquet"
+    H1_FILE="data/binance/futures/1h/${SYM}.parquet"
     if [ -f "$H1_FILE" ]; then
         FILE_AGE=$(( NOW - $(stat -c %Y "$H1_FILE" 2>/dev/null || stat -f %m "$H1_FILE" 2>/dev/null || echo 0) ))
         # Warn if older than 2 hours

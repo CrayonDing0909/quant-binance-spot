@@ -23,9 +23,9 @@ NEW_CONFIG="config/prod_candidate_R3C_universe.yaml"
 OLD_CONFIG="config/prod_candidate_R2_1.yaml"
 SCALE_RULES="config/prod_scale_rules_R3C_universe.yaml"
 OLD_SESSION="r2_1_prod"
-NEW_SESSION="r3c_univ_prod"
-TG_SESSION="r3c_univ_tg"
-LOG_FILE="logs/cutover_r3c_univ_$(date +%Y%m%d_%H%M%S).log"
+NEW_SESSION="r3c_prod"
+TG_SESSION="r3c_tg"
+LOG_FILE="logs/cutover_r3c_$(date +%Y%m%d_%H%M%S).log"
 
 cd "$PROJ_DIR"
 source .venv/bin/activate
@@ -111,13 +111,13 @@ DATA_OK=true
 
 for SYM in "${SYMBOLS[@]}"; do
     # Check 1h data
-    H1_FILE="data/binance/futures/klines/${SYM}_1h.parquet"
+    H1_FILE="data/binance/futures/1h/${SYM}.parquet"
     if [ ! -f "$H1_FILE" ]; then
         echo "  ❌ Missing 1h: $SYM" | tee -a "$LOG_FILE"
         DATA_OK=false
     fi
     # Check 5m data
-    M5_FILE="data/binance/futures/klines/${SYM}_5m.parquet"
+    M5_FILE="data/binance/futures/5m/${SYM}.parquet"
     if [ ! -f "$M5_FILE" ]; then
         echo "  ⚠️  Missing 5m: $SYM (overlay will use 1h fallback)" | tee -a "$LOG_FILE"
     fi
@@ -141,7 +141,7 @@ PYTHONPATH=src python scripts/download_data.py -c "$NEW_CONFIG" --funding-rate 2
 
 # Also download 5m data for micro accel overlay
 for SYM in "${SYMBOLS[@]}"; do
-    PYTHONPATH=src python scripts/download_data.py -c "$NEW_CONFIG" --symbols "$SYM" --intervals 5m 2>&1 | tee -a "$LOG_FILE" || true
+    PYTHONPATH=src python scripts/download_data.py -c "$NEW_CONFIG" --symbol "$SYM" --interval 5m 2>&1 | tee -a "$LOG_FILE" || true
 done
 
 echo "✅ Data refreshed" | tee -a "$LOG_FILE"
