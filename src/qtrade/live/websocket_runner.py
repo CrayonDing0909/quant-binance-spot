@@ -1,5 +1,10 @@
 """
-WebSocket Runner — 輕量化事件驅動交易執行器 (v4.1)
+WebSocket Runner — 輕量化事件驅動交易執行器 (v4.2)
+
+v4.2: 改善連線穩定性
+    - 新連線後 2 分鐘內用 30s 快速心跳偵測死連線（取代 300s）
+    - 初始連線也設定 grace period，避免首次不必要的重連
+    - _stop_ws_client 同時清除 on_open callback
 
 v4.1: 新增自動重連機制
     - WS 斷線後自動重建 client + 重新訂閱
@@ -35,6 +40,13 @@ ws_logger = get_logger("ws_runner")
 # 心跳超時（秒）— 超過此時間無 WS 消息即觸發重連
 HEARTBEAT_TIMEOUT = 300
 
+# 快速心跳偵測 — 新連線後短暫使用更嚴格的超時
+# 原因：binance-connector 的 create_connection() 是同步的，連線成功後
+#        Binance 每 250ms 就會推送 kline 更新，若 30s 內沒收到任何消息
+#        幾乎可以確定連線已死（伺服器主動斷開或訂閱失敗）
+FAST_HEARTBEAT_TIMEOUT = 30     # 新連線後的快速偵測超時（秒）
+FAST_HEARTBEAT_WINDOW = 120     # 快速偵測窗口長度（秒）
+
 # 重連參數
 RECONNECT_BASE_DELAY = 10       # 首次重連等待（秒）
 RECONNECT_MAX_DELAY = 300       # 最大重連等待（秒）
@@ -51,7 +63,7 @@ INTERVAL_MINUTES = {
 
 class WebSocketRunner(BaseRunner):
     """
-    基於 WebSocket 的輕量化執行器 (v4.1)
+    基於 WebSocket 的輕量化執行器 (v4.2)
 
     繼承 BaseRunner 取得所有安全機制，
     本類只負責 WS 連線管理、K 線事件驅動和自動重連。
@@ -82,6 +94,7 @@ class WebSocketRunner(BaseRunner):
         self._ws_needs_reconnect: bool = False
         self._reconnect_lock = threading.Lock()
         self._reconnect_grace_until: float = 0.0  # 重連成功後的寬限期（忽略舊 callback 殘留）
+        self._fast_heartbeat_until: float = 0.0   # 快速心跳偵測窗口結束時間
 
         # K 線快取（BaseRunner 的 _kline_cache 由子類設定）
         cache_dir = cfg.get_report_dir("live") / "kline_cache"
@@ -287,6 +300,7 @@ class WebSocketRunner(BaseRunner):
             sm.on_close = None
             sm.on_error = None
             sm.on_message = None
+            sm.on_open = None
         except Exception:
             pass
 
@@ -341,6 +355,8 @@ class WebSocketRunner(BaseRunner):
 
                 # 設定 30s 寬限期：忽略舊 client 殘留的 on_close/on_error callback
                 self._reconnect_grace_until = time.time() + 30
+                # 啟用快速心跳偵測：新連線後若 30s 無消息則立即重連
+                self._fast_heartbeat_until = time.time() + FAST_HEARTBEAT_WINDOW
 
                 # 重連成功 → 重置退避和連續失敗計數
                 self._reconnect_delay = RECONNECT_BASE_DELAY
@@ -437,13 +453,13 @@ class WebSocketRunner(BaseRunner):
             n = self._kline_cache.get_bar_count(sym)
             cache_info.append(f"{sym}={n}")
         self._log.info(f"   K 線快取: {', '.join(cache_info)} (IncrementalKlineCache ✅)")
-        self._log.info(f"   心跳超時: {HEARTBEAT_TIMEOUT}s")
+        self._log.info(f"   心跳超時: {HEARTBEAT_TIMEOUT}s (新連線快速偵測: {FAST_HEARTBEAT_TIMEOUT}s × {FAST_HEARTBEAT_WINDOW}s 窗口)")
         self._log.info(f"   重連退避: {RECONNECT_BASE_DELAY}s ~ {RECONNECT_MAX_DELAY}s")
         self._log.info("=" * 60)
 
         try:
             self.notifier.send_startup(
-                strategy=f"{self.strategy_name} (WebSocket v4.1)",
+                strategy=f"{self.strategy_name} (WebSocket v4.2)",
                 symbols=self.symbols,
                 interval=self.interval,
                 mode=self.mode,
@@ -458,6 +474,10 @@ class WebSocketRunner(BaseRunner):
             self._ws_client = self._create_ws_client()
             self._ws_ready = True
             self._subscriptions_ready = True
+            # ★ 首次連線也設 grace period（Binance 有時會立即發 CLOSE frame）
+            self._reconnect_grace_until = time.time() + 30
+            # ★ 啟用快速心跳偵測：若 30s 內無消息，立即重連（不等 300s）
+            self._fast_heartbeat_until = time.time() + FAST_HEARTBEAT_WINDOW
         except Exception as e:
             self._log.error(f"❌ WebSocket 初始連線失敗: {e}")
             self._log.error(traceback.format_exc())
@@ -476,11 +496,19 @@ class WebSocketRunner(BaseRunner):
                     # 檢查是否需要重連（on_close/on_error 觸發 或 心跳超時）
                     needs_reconnect = self._ws_needs_reconnect
                     if not needs_reconnect and self._last_ws_message_time > 0:
-                        elapsed = time.time() - self._last_ws_message_time
-                        if elapsed > HEARTBEAT_TIMEOUT:
+                        now = time.time()
+                        elapsed = now - self._last_ws_message_time
+
+                        # 新連線後 2 分鐘內用 30s 快速偵測，之後用 300s 常規偵測
+                        in_fast_window = now < self._fast_heartbeat_until
+                        timeout = FAST_HEARTBEAT_TIMEOUT if in_fast_window else HEARTBEAT_TIMEOUT
+
+                        if elapsed > timeout:
                             needs_reconnect = True
+                            mode_label = "快速偵測" if in_fast_window else "心跳超時"
                             self._log.warning(
-                                f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息，觸發重連"
+                                f"⚠️  WebSocket 已 {elapsed:.0f}s 未收到消息"
+                                f"（{mode_label}, 閾值={timeout}s），觸發重連"
                             )
 
                     if needs_reconnect:
