@@ -49,6 +49,7 @@ class WebSocketRunner(BaseRunner):
 
         self._tick_count = 0
         self._last_ws_message_time: float = 0.0
+        self._last_main_loop_heartbeat: float = 0.0
         self._ws_client = None
         self._last_kline_ts: Dict[str, int] = {}
         self._last_summary_time: float = 0.0
@@ -219,6 +220,7 @@ class WebSocketRunner(BaseRunner):
         """啟動 WebSocket 連接並保持運行"""
         self.start_time = time.time()
         self._last_summary_time = time.time()
+        self._last_main_loop_heartbeat = time.time()
 
         alloc_str = ", ".join(f"{s}={w:.0%}" for s, w in self._weights.items())
         self._log.info("=" * 60)
@@ -276,6 +278,7 @@ class WebSocketRunner(BaseRunner):
             while self.is_running:
                 try:
                     time.sleep(1)
+                    self._last_main_loop_heartbeat = time.time()
 
                     if self._last_ws_message_time > 0:
                         elapsed = time.time() - self._last_ws_message_time
@@ -318,6 +321,7 @@ class WebSocketRunner(BaseRunner):
     def _on_message_handler(self, _, msg):
         """轉發消息到處理函數"""
         self._last_ws_message_time = time.time()
+        self._last_main_loop_heartbeat = time.time()
         try:
             if isinstance(msg, str):
                 msg = json.loads(msg)

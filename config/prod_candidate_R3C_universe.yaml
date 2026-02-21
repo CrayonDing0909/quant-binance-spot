@@ -240,6 +240,23 @@ live:
   flip_confirmation: false
   prefer_limit_order: true
   limit_order_timeout_s: 10
+  watchdog:
+    enabled: true
+    interval_sec: 300
+    alert_cooldown_sec: 1800
+    heartbeat_warn_sec: 90
+    heartbeat_critical_sec: 180
+    ws_msg_warn_sec: 180
+    ws_msg_critical_sec: 360
+    data_warn_age_sec:
+      "1h": 7200
+      "5m": 1800
+    data_critical_age_sec:
+      "1h": 14400
+      "5m": 3600
+    error_window_minutes: 15
+    error_warn_count: 5
+    error_critical_count: 12
 
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}

@@ -96,6 +96,19 @@ def main():
     logger.info("🔧 初始化 WebSocket Runner...")
     from qtrade.live.websocket_runner import WebSocketRunner
     runner = WebSocketRunner(cfg, broker, mode=mode)
+    watchdog = None
+
+    # 啟動 Live Watchdog（背景執行，不影響主交易流程）
+    try:
+        from qtrade.live.watchdog import LiveWatchdog
+        watchdog = LiveWatchdog(runner=runner, cfg=cfg, notifier=getattr(runner, "notifier", None))
+        if watchdog.enabled:
+            watchdog.start_background()
+            logger.info("🩺 Live Watchdog 已在背景啟動")
+        else:
+            logger.info("🩺 Live Watchdog 已停用（config: live.watchdog.enabled=false）")
+    except Exception as e:
+        logger.warning(f"⚠️  Live Watchdog 啟動失敗（不影響交易）: {e}")
 
     # 啟動 Telegram 命令 Bot（背景執行，接收 /help /risk /health 等指令）
     try:
@@ -104,6 +117,7 @@ def main():
             live_runner=runner,
             broker=broker,
             state_manager=getattr(runner, "state_manager", None),
+            watchdog=watchdog,
         )
         telegram_bot.start_background()
         logger.info("🤖 Telegram 命令 Bot 已在背景啟動")
@@ -111,7 +125,14 @@ def main():
         logger.warning(f"⚠️  Telegram 命令 Bot 啟動失敗（不影響交易）: {e}")
 
     logger.info("🚀 啟動中...")
-    runner.run()
+    try:
+        runner.run()
+    finally:
+        if watchdog:
+            try:
+                watchdog.stop()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

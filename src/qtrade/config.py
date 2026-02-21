@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import os
@@ -225,6 +225,7 @@ class LiveConfig:
     flip_confirmation: bool = False
     prefer_limit_order: bool = False   # 優先使用限價單（Maker fee 更低）
     limit_order_timeout_s: int = 10    # 限價單等待成交秒數（超時改市價單）
+    watchdog: dict = field(default_factory=dict)  # Live Watchdog 可選配置
 
 
 @dataclass(frozen=True)
@@ -449,6 +450,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
         flip_confirmation=live_raw.get("flip_confirmation", False),
         prefer_limit_order=live_raw.get("prefer_limit_order", False),
         limit_order_timeout_s=live_raw.get("limit_order_timeout_s", 10),
+        watchdog=live_raw.get("watchdog", {}),
     )
 
     # output 可選（預設 ./reports）

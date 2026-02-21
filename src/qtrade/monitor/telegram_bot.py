@@ -303,7 +303,19 @@ class TelegramBot:
     
     def _cmd_help(self, args: list[str], chat_id: str) -> str:
         lines = ["📖 <b>命令列表</b>\n"]
+
+        live_ops = ["check_live", "watchdog_status"]
+        if any(cmd in self._commands for cmd in live_ops):
+            lines.append("📖 <b>Live Ops</b>")
+            for name in live_ops:
+                if name in self._commands:
+                    desc = self._commands[name].get("description", "")
+                    lines.append(f"/{name} - {desc}")
+            lines.append("")
+
         for name, info in self._commands.items():
+            if name in live_ops:
+                continue
             desc = info.get("description", "")
             lines.append(f"/{name} - {desc}")
         return "\n".join(lines)
@@ -814,6 +826,7 @@ class TelegramCommandBot(TelegramBot):
         live_runner: Any = None,
         broker: Any = None,
         state_manager: Any = None,
+        watchdog: Any = None,
         notifier: "TelegramNotifier | None" = None,
         **kwargs,
     ):
@@ -829,12 +842,15 @@ class TelegramCommandBot(TelegramBot):
 
         self.live_runner = live_runner
         self.state_manager = state_manager
+        self.watchdog = watchdog
 
         # 註冊額外命令
         self.register_command("signals", self._cmd_signals, "即時信號")
         self.register_command("stats", self._cmd_stats, "交易統計")
         self.register_command("risk", self._cmd_risk, "風險總覽")
         self.register_command("health", self._cmd_health, "系統狀態")
+        self.register_command("check_live", self._cmd_check_live, "執行一次 Live Watchdog")
+        self.register_command("watchdog_status", self._cmd_watchdog_status, "Watchdog 狀態與設定")
 
     # ── 別名方法，與 run_live.py 期望的介面一致 ──
 
@@ -1220,6 +1236,79 @@ class TelegramCommandBot(TelegramBot):
             lines.append("⚠️ Runner 未連接")
 
         return "\n".join(lines)
+
+    # ── /check_live ──
+
+    def _cmd_check_live(self, args: list[str], chat_id: str) -> str:
+        """
+        立即執行一次 Live Watchdog 檢查並回傳摘要。
+        """
+        if not self.watchdog:
+            return "⚠️ Watchdog 未掛載"
+
+        try:
+            result = self.watchdog.run_checks_once(notify=False)
+            status = result.get("overall_status", "warn")
+            emoji = "✅" if status == "ok" else ("⚠️" if status == "warn" else "🚨")
+
+            lines = [
+                f"{emoji} <b>Live Check: {status.upper()}</b>",
+                f"⏱ 時間: {result.get('timestamp', '')}",
+            ]
+
+            issues = result.get("issues", [])
+            if issues:
+                lines.append(f"\n🔎 Issues ({len(issues)}):")
+                for msg in issues[:8]:
+                    lines.append(f"- {msg}")
+                if len(issues) > 8:
+                    lines.append(f"... 另有 {len(issues) - 8} 筆")
+            else:
+                lines.append("\n🎉 無異常，所有檢查通過")
+
+            checks = result.get("checks", {})
+            if checks:
+                lines.append("\n📋 Key Checks:")
+                for key in ("heartbeat", "websocket_kline", "data_freshness", "error_density", "session_uniqueness"):
+                    if key in checks:
+                        ck = checks[key]
+                        lines.append(f"• {key}: {ck.get('status')} | {ck.get('message', '')}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ /check_live 執行失敗: {e}"
+
+    # ── /watchdog_status ──
+
+    def _cmd_watchdog_status(self, args: list[str], chat_id: str) -> str:
+        """
+        回傳 watchdog 目前啟用狀態、間隔與最近結果。
+        """
+        if not self.watchdog:
+            return "⚠️ Watchdog 未掛載"
+
+        try:
+            rt = self.watchdog.get_runtime_status()
+            enabled = rt.get("enabled", False)
+            running = rt.get("is_running", False)
+            last_status = rt.get("last_overall_status")
+            last_ts = rt.get("last_check_timestamp")
+            issue_count = rt.get("last_issue_count", 0)
+            interval_sec = rt.get("interval_sec")
+
+            status_emoji = "✅" if last_status == "ok" else ("⚠️" if last_status == "warn" else "🚨")
+            lines = [
+                "🩺 <b>Watchdog Status</b>",
+                f"Enabled: {'YES' if enabled else 'NO'}",
+                f"Running: {'YES' if running else 'NO'}",
+                f"Interval: {interval_sec}s",
+                f"Last Check: {last_ts or 'N/A'}",
+                f"Last Result: {status_emoji} {str(last_status).upper() if last_status else 'N/A'}",
+                f"Issues: {issue_count}",
+            ]
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ /watchdog_status 查詢失敗: {e}"
 
     # ── /stats ──
 
