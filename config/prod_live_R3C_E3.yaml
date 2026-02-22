@@ -240,6 +240,14 @@ live:
   prefer_limit_order: true
   limit_order_timeout_s: 10
 
+  # ── Rebalance Band: 3% 微調抑制 ──
+  # 當 |target_pct - current_pct| < 3% 且同方向時，跳過下單
+  # 方向翻轉不受限（apply_on_same_direction_only=true）
+  rebalance_band:
+    enabled: true
+    threshold_pct: 0.03
+    apply_on_same_direction_only: true
+
   # ── Symbol Governance: disabled for now ──
   symbol_governance:
     enabled: false

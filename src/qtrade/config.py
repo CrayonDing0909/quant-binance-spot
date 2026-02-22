@@ -206,6 +206,83 @@ class FuturesConfig:
 
 
 @dataclass(frozen=True)
+class SymbolGovernanceThresholds:
+    """Symbol Governance 狀態轉移閾值"""
+    edge_sharpe_deweight: float = 0.3
+    edge_sharpe_quarantine: float = 0.0
+    edge_sharpe_recover_active: float = 0.8
+    edge_sharpe_recover_from_quarantine: float = 0.5
+    edge_per_turnover_min: float = 0.0
+    slippage_ratio_deweight: float = 1.5
+    slippage_ratio_quarantine: float = 1.8
+    slippage_ratio_recover_active: float = 1.2
+    slippage_ratio_recover_from_quarantine: float = 1.3
+    consistency_min: float = 99.0
+    consistency_recover: float = 99.5
+    missed_signals_quarantine: float = 5.0
+    dd_quarantine_pct: float = 25.0
+
+
+@dataclass(frozen=True)
+class SymbolGovernanceWeights:
+    """Symbol Governance 權重乘數與約束"""
+    active_multiplier: float = 1.0
+    deweight_multiplier: float = 0.5
+    quarantine_multiplier: float = 0.0
+    min_weight: float = 0.03
+    max_weight: float = 0.20
+
+
+@dataclass(frozen=True)
+class SymbolGovernanceConfig:
+    """
+    Symbol Governance 配置
+
+    Negative Edge Filter with Kill-List/Quarantine
+    
+    enabled: 是否啟用治理機制（False = 行為與無治理完全一致）
+    review_frequency: 審查頻率 ("weekly")
+    warmup_days: 首次動作前需要的最少天數
+    quarantine_min_days: 隔離最短天數
+    consecutive_reviews_for_quarantine: 連續幾次 review 才觸發 quarantine
+    consecutive_reviews_for_recovery: 連續幾次 review 才觸發 recovery
+    thresholds: 狀態轉移閾值
+    weights: 權重乘數與約束
+    artifacts_dir: Artifact 輸出目錄
+    """
+    enabled: bool = False
+    review_frequency: str = "weekly"
+    warmup_days: int = 14
+    quarantine_min_days: int = 14
+    consecutive_reviews_for_quarantine: int = 2
+    consecutive_reviews_for_recovery: int = 2
+    thresholds: SymbolGovernanceThresholds = SymbolGovernanceThresholds()
+    weights: SymbolGovernanceWeights = SymbolGovernanceWeights()
+    artifacts_dir: str = "reports/symbol_governance"
+
+
+@dataclass(frozen=True)
+class RebalanceBandConfig:
+    """
+    Rebalance Band — 抑制微幅調倉（減少實盤摩擦）
+
+    enabled: 是否啟用 rebalance band gate
+        - False（預設）：行為與無 band 完全一致（backward compatible）
+    
+    threshold_pct: band 閾值 [0, 1]
+        - 0.03 = 3%（推薦值）
+        - 語義：若 |target_pct - current_pct| < threshold_pct，跳過本次下單
+    
+    apply_on_same_direction_only: 僅同方向時才套用 band
+        - True（推薦）：方向翻轉（多空切換）不受 band 限制，避免卡住該翻的倉
+        - False：所有情境都套用 band（含翻倉）
+    """
+    enabled: bool = False
+    threshold_pct: float = 0.03
+    apply_on_same_direction_only: bool = True
+
+
+@dataclass(frozen=True)
 class LiveConfig:
     """
     實盤專屬配置
@@ -226,6 +303,8 @@ class LiveConfig:
     prefer_limit_order: bool = False   # 優先使用限價單（Maker fee 更低）
     limit_order_timeout_s: int = 10    # 限價單等待成交秒數（超時改市價單）
     watchdog: dict = field(default_factory=dict)  # Live Watchdog 可選配置
+    symbol_governance: SymbolGovernanceConfig = SymbolGovernanceConfig()
+    rebalance_band: RebalanceBandConfig = RebalanceBandConfig()
 
 
 @dataclass(frozen=True)
@@ -445,12 +524,61 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
 
     # live 可選
     live_raw = raw.get("live", {})
+
+    # symbol_governance 子配置
+    sg_raw = live_raw.get("symbol_governance", {})
+    sg_thresh_raw = sg_raw.get("thresholds", {})
+    sg_weights_raw = sg_raw.get("weights", {})
+    sg_thresholds = SymbolGovernanceThresholds(
+        edge_sharpe_deweight=sg_thresh_raw.get("edge_sharpe_deweight", 0.3),
+        edge_sharpe_quarantine=sg_thresh_raw.get("edge_sharpe_quarantine", 0.0),
+        edge_sharpe_recover_active=sg_thresh_raw.get("edge_sharpe_recover_active", 0.8),
+        edge_sharpe_recover_from_quarantine=sg_thresh_raw.get("edge_sharpe_recover_from_quarantine", 0.5),
+        edge_per_turnover_min=sg_thresh_raw.get("edge_per_turnover_min", 0.0),
+        slippage_ratio_deweight=sg_thresh_raw.get("slippage_ratio_deweight", 1.5),
+        slippage_ratio_quarantine=sg_thresh_raw.get("slippage_ratio_quarantine", 1.8),
+        slippage_ratio_recover_active=sg_thresh_raw.get("slippage_ratio_recover_active", 1.2),
+        slippage_ratio_recover_from_quarantine=sg_thresh_raw.get("slippage_ratio_recover_from_quarantine", 1.3),
+        consistency_min=sg_thresh_raw.get("consistency_min", 99.0),
+        consistency_recover=sg_thresh_raw.get("consistency_recover", 99.5),
+        missed_signals_quarantine=sg_thresh_raw.get("missed_signals_quarantine", 5.0),
+        dd_quarantine_pct=sg_thresh_raw.get("dd_quarantine_pct", 25.0),
+    )
+    sg_weights = SymbolGovernanceWeights(
+        active_multiplier=sg_weights_raw.get("active_multiplier", 1.0),
+        deweight_multiplier=sg_weights_raw.get("deweight_multiplier", 0.5),
+        quarantine_multiplier=sg_weights_raw.get("quarantine_multiplier", 0.0),
+        min_weight=sg_weights_raw.get("min_weight", 0.03),
+        max_weight=sg_weights_raw.get("max_weight", 0.20),
+    )
+    sg_cfg = SymbolGovernanceConfig(
+        enabled=sg_raw.get("enabled", False),
+        review_frequency=sg_raw.get("review_frequency", "weekly"),
+        warmup_days=sg_raw.get("warmup_days", 14),
+        quarantine_min_days=sg_raw.get("quarantine_min_days", 14),
+        consecutive_reviews_for_quarantine=sg_raw.get("consecutive_reviews_for_quarantine", 2),
+        consecutive_reviews_for_recovery=sg_raw.get("consecutive_reviews_for_recovery", 2),
+        thresholds=sg_thresholds,
+        weights=sg_weights,
+        artifacts_dir=sg_raw.get("artifacts_dir", "reports/symbol_governance"),
+    )
+
+    # rebalance_band 子配置
+    rb_raw = live_raw.get("rebalance_band", {})
+    rb_cfg = RebalanceBandConfig(
+        enabled=rb_raw.get("enabled", False),
+        threshold_pct=rb_raw.get("threshold_pct", 0.03),
+        apply_on_same_direction_only=rb_raw.get("apply_on_same_direction_only", True),
+    )
+
     live_cfg = LiveConfig(
         kline_cache=live_raw.get("kline_cache", True),
         flip_confirmation=live_raw.get("flip_confirmation", False),
         prefer_limit_order=live_raw.get("prefer_limit_order", False),
         limit_order_timeout_s=live_raw.get("limit_order_timeout_s", 10),
         watchdog=live_raw.get("watchdog", {}),
+        symbol_governance=sg_cfg,
+        rebalance_band=rb_cfg,
     )
 
     # output 可選（預設 ./reports）

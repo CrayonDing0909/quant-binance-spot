@@ -79,6 +79,9 @@ class BaseRunner(ABC):
         for sym in self.symbols:
             self._weights[sym] = cfg.portfolio.get_weight(sym, n)
 
+        # Symbol Governance — 套用治理權重（僅在 enabled 時生效）
+        self._apply_governance_to_weights()
+
         # Drawdown 熔斷
         self.max_drawdown_pct = cfg.risk.max_drawdown_pct if cfg.risk else None
         self._circuit_breaker_triggered = False
@@ -106,10 +109,65 @@ class BaseRunner(ABC):
         # K 線快取（子類在自己的 __init__ 中設定）
         self._kline_cache: IncrementalKlineCache | None = None
 
+        # Rebalance Band 計數器（監控用）
+        self._band_skip_count: int = 0
+        self._band_skip_notional_est: float = 0.0
+
     @property
     def _log(self):
         """子類可覆寫以使用專用 logger"""
         return logger
+
+    # ══════════════════════════════════════════════════════════
+    #  Symbol Governance — 權重覆寫
+    # ══════════════════════════════════════════════════════════
+
+    def _apply_governance_to_weights(self) -> None:
+        """
+        套用治理層的 effective weights（若啟用且有 artifact）。
+
+        - disabled → 不做任何事（backward compatible）
+        - enabled + 有 artifact → 覆寫 self._weights
+        - enabled + 無 artifact / 讀取失敗 → 保留 base weights + warning
+        """
+        gov_cfg = self.cfg.live.symbol_governance
+
+        if not gov_cfg.enabled:
+            self._log.info("📋 Symbol governance: disabled — 使用原始 base weights")
+            return
+
+        self._log.info("📋 Symbol governance: enabled — 嘗試讀取 artifact")
+
+        try:
+            from .symbol_governance import apply_governance_weights
+
+            effective = apply_governance_weights(
+                self._weights, gov_cfg, gov_cfg.artifacts_dir,
+            )
+
+            # apply_governance_weights returns base_weights copy when no artifact
+            # Detect that case by reference equality with the dict content
+            if effective == self._weights:
+                self._log.warning(
+                    "⚠️  Symbol governance: 未找到 artifact 或內容無變化 — 使用 base weights"
+                )
+                return
+
+            self._weights = effective
+
+            # Log summary
+            summary_parts = []
+            for sym in sorted(effective):
+                summary_parts.append(f"{sym}={effective[sym]:.4f}")
+            self._log.info(
+                f"✅ Symbol governance: effective weights 已套用 — "
+                f"{', '.join(summary_parts)}"
+            )
+
+        except Exception as e:
+            self._log.warning(
+                f"⚠️  Symbol governance: 讀取 artifact 失敗 ({e}) — 回退 base weights"
+            )
 
     # ══════════════════════════════════════════════════════════
     #  Ensemble 路由
@@ -751,6 +809,38 @@ class BaseRunner(ABC):
                         f"({current_pct:+.1%} / {target_pct:+.1%} = {fill_ratio:.0%})，需加倉"
                     )
 
+        # 5b. Rebalance Band gate — 抑制微幅調倉
+        rb_cfg = self.cfg.live.rebalance_band
+        if rb_cfg.enabled and diff > 0:
+            is_direction_flip_for_band = (
+                (target_pct > 0 and current_pct < 0) or
+                (target_pct < 0 and current_pct > 0)
+            )
+            # 方向翻轉 + apply_on_same_direction_only → 不受 band 限制
+            apply_band = True
+            if is_direction_flip_for_band and rb_cfg.apply_on_same_direction_only:
+                apply_band = False
+
+            if apply_band and diff < rb_cfg.threshold_pct:
+                self._band_skip_count += 1
+                equity = self._get_equity() or 10000.0
+                self._band_skip_notional_est += diff * equity
+                self._log.info(
+                    f"  🔇 {symbol}: rebalance band SKIP — "
+                    f"diff={diff:.4f} < band={rb_cfg.threshold_pct:.2%} "
+                    f"(current={current_pct:+.4f}, target={target_pct:+.4f}) "
+                    f"[total skips: {self._band_skip_count}]"
+                )
+                # 跳到 SL/TP 補掛（不執行交易）
+                actual_pct = current_pct
+                if not isinstance(self.broker, PaperBroker) and hasattr(self.broker, "get_position_pct"):
+                    try:
+                        actual_pct = self.broker.get_position_pct(symbol, price)
+                    except Exception:
+                        pass
+                self._ensure_sl_tp(symbol, sig, params, actual_pct)
+                return None
+
         # 6. 方向切換確認
         prev_signal = self._signal_state.get(symbol)
 
@@ -877,6 +967,15 @@ class BaseRunner(ABC):
 
     def _send_periodic_summary(self):
         """定期推送帳戶摘要"""
+        # Log rebalance band stats if enabled
+        rb_cfg = self.cfg.live.rebalance_band
+        if rb_cfg.enabled and self._band_skip_count > 0:
+            self._log.info(
+                f"📊 Rebalance Band 統計: "
+                f"skipped={self._band_skip_count}, "
+                f"est_notional_saved=${self._band_skip_notional_est:,.2f}"
+            )
+
         try:
             if isinstance(self.broker, PaperBroker):
                 prices = {}

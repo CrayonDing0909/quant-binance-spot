@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 from qtrade.live.signal_generator import SignalResult, PositionInfo
+from qtrade.config import RebalanceBandConfig
 
 
 # ══════════════════════════════════════════════════════════
@@ -124,6 +125,7 @@ def _make_mock_config(tmp_path: Path):
     cfg.get_report_dir.return_value = tmp_path / "reports"
     (tmp_path / "reports").mkdir(parents=True, exist_ok=True)
     cfg.strategy.get_params.return_value = {"stop_loss_atr": 2.0, "take_profit_atr": 3.0}
+    cfg.live.rebalance_band = RebalanceBandConfig()  # 預設 disabled
     return cfg
 
 

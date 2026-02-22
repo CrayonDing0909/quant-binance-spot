@@ -1,0 +1,25 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E3: Gross 1.75x
+# ═══════════════════════════════════════════════════════════════
+# 目的：將名義曝險提升至 ≈ 1.75x
+# 做法：所有幣種權重等比例放大 1.75 倍
+# 改動：
+#   - gross_multiplier: 1.0 → 1.75
+#   - 策略信號邏輯不變、風控參數不變
+#   - 注意：此時保證金使用率需密切監控
+#   - 啟用 3% rebalance band 抑制微調換倉
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E3"
+  name: "Weight Multiplier 1.75x"
+  description: "權重等比例放大到總曝險 ≈ 1.75x"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 1.75
+
+  overrides:
+    live:
+      rebalance_band:
+        enabled: true
+        threshold_pct: 0.03          # 3% band — 抑制微幅調倉
+        apply_on_same_direction_only: true  # 方向翻轉不受限

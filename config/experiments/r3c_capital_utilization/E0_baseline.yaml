@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E0: Baseline
+# ═══════════════════════════════════════════════════════════════
+# 目的：原況 config 原樣，gross ≈ 1.0x，作為對照基準
+# 改動：無（完全沿用 prod_candidate_R3C_universe.yaml）
+# rebalance_band: 明確 disabled（回退基準）
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E0"
+  name: "Baseline"
+  description: "現況 config 原樣，gross ≈ 1.0x，作為對照基準"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 1.0
+
+  overrides:
+    live:
+      rebalance_band:
+        enabled: false               # 回退時關閉 band
