@@ -406,11 +406,17 @@ class LiveWatchdog:
     def _check_data_freshness(self) -> dict[str, Any]:
         symbols = list(getattr(self.cfg.market, "symbols", []))
         intervals = list(self.settings.get("data_intervals", ["1h", "5m"]))
-        base_dir = Path(self.cfg.data_dir) / "binance" / self.cfg.market_type_str
         now_ts = time.time()
+        now_utc = datetime.fromtimestamp(now_ts, tz=timezone.utc)
 
         warn_age_cfg = self.settings.get("data_warn_age_sec", {})
         critical_age_cfg = self.settings.get("data_critical_age_sec", {})
+
+        # ── 判斷是否使用 kline_cache（WS 模式） ──
+        kline_cache = getattr(self.runner, "_kline_cache", None)
+        use_cache = kline_cache is not None
+        source = "kline_cache" if use_cache else "parquet_mtime"
+        logger.debug(f"data_freshness: source={source}, intervals={intervals}, symbols={len(symbols)}")
 
         detail: dict[str, Any] = {}
         overall = "ok"
@@ -423,22 +429,34 @@ class LiveWatchdog:
 
             warn_age = float(warn_age_cfg.get(interval, 7200))
             critical_age = float(critical_age_cfg.get(interval, 14400))
+
             for sym in symbols:
-                # 支援兩種歷史格式：
-                # 1) data/binance/futures/5m/BTCUSDT.parquet
-                # 2) data/binance/futures/klines/BTCUSDT_5m.parquet
-                candidates = [
-                    base_dir / interval / f"{sym}.parquet",
-                    base_dir / "klines" / f"{sym}_{interval}.parquet",
-                ]
-                fp = next((p for p in candidates if p.exists()), None)
-                if fp is None:
+                age_sec = self._get_symbol_data_age(
+                    sym, interval, kline_cache, now_ts, now_utc,
+                )
+                if age_sec is None:
                     missing_symbols.append(sym)
                     continue
-                age_sec = now_ts - fp.stat().st_mtime
                 ages[sym] = age_sec
                 if age_sec >= warn_age:
                     stale_symbols.append(sym)
+
+            # ── debug：每個 interval 顯示最新/最舊的 age ──
+            if ages:
+                freshest_sym = min(ages, key=ages.get)  # type: ignore[arg-type]
+                stalest_sym = max(ages, key=ages.get)  # type: ignore[arg-type]
+                logger.debug(
+                    f"data_freshness [{interval}]: "
+                    f"freshest={freshest_sym} {ages[freshest_sym]:.0f}s, "
+                    f"stalest={stalest_sym} {ages[stalest_sym]:.0f}s, "
+                    f"warn={warn_age:.0f}s, critical={critical_age:.0f}s, "
+                    f"stale={len(stale_symbols)}, missing={len(missing_symbols)}"
+                )
+            else:
+                logger.debug(
+                    f"data_freshness [{interval}]: no age data, "
+                    f"missing={len(missing_symbols)}/{len(symbols)}"
+                )
 
             warn_stale_n = int(self.settings.get("data_warn_stale_symbols", 2))
             crit_stale_n = int(self.settings.get("data_critical_stale_symbols", 5))
@@ -467,6 +485,7 @@ class LiveWatchdog:
             )
             detail[interval] = {
                 "status": interval_status,
+                "source": source,
                 "stale_count": len(stale_symbols),
                 "missing_count": len(missing_symbols),
                 "stale_symbols": stale_symbols[:20],
@@ -476,9 +495,58 @@ class LiveWatchdog:
         return {
             "status": overall,
             "message": " ; ".join(messages),
+            "source": source,
             "symbols_total": len(symbols),
             "details": detail,
         }
+
+    def _get_symbol_data_age(
+        self,
+        symbol: str,
+        interval: str,
+        kline_cache,
+        now_ts: float,
+        now_utc: datetime,
+    ) -> float | None:
+        """
+        取得某 symbol 資料的 age（秒）。
+
+        優先順序：
+          1) kline_cache（WS 模式）— 取最後一根 bar 的 open_time
+          2) parquet 檔案 mtime（Polling / 離線模式）
+
+        Returns:
+            age in seconds, or None if data not found
+        """
+        # ── 1) 嘗試 kline_cache ──
+        if kline_cache is not None:
+            try:
+                cached = kline_cache.get_cached(symbol)
+                if cached is not None and len(cached) > 0:
+                    last_bar_time = cached.index[-1]
+                    # last_bar_time 是 tz-aware (UTC) DatetimeIndex
+                    if last_bar_time.tzinfo is None:
+                        last_bar_time = last_bar_time.tz_localize("UTC")
+                    age_sec = (now_utc - last_bar_time).total_seconds()
+                    return max(age_sec, 0.0)
+                else:
+                    logger.debug(f"data_freshness: {symbol} kline_cache empty/None")
+                    return None
+            except Exception as e:
+                logger.debug(f"data_freshness: {symbol} kline_cache error: {e}")
+                # 降級到 parquet mtime
+                pass
+
+        # ── 2) 降級：parquet 檔案 mtime ──
+        base_dir = Path(self.cfg.data_dir) / "binance" / self.cfg.market_type_str
+        candidates = [
+            base_dir / interval / f"{symbol}.parquet",
+            base_dir / "klines" / f"{symbol}_{interval}.parquet",
+        ]
+        fp = next((p for p in candidates if p.exists()), None)
+        if fp is None:
+            return None
+        return now_ts - fp.stat().st_mtime
 
     def _check_error_density(self) -> dict[str, Any]:
         if not self._log_path.exists():
