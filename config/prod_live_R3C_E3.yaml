@@ -1,0 +1,302 @@
+# ═══════════════════════════════════════════════════════════════
+# PRODUCTION LIVE — R3C Universe E3 (Weight Multiplier 1.75x)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-22
+# Origin: prod_candidate_R3C_universe.yaml × 1.75 weight multiplier
+# Lineage: R3C Capital Utilization Experiment → E3 selected as first-step upgrade
+#
+# CHANGE vs prod_candidate_R3C_universe.yaml (E0 baseline):
+#   - portfolio.allocation: all weights × 1.75 (sum ≈ 1.75)
+#   - ensemble.fixed_weights: all weights × 1.75 (consistency)
+#   - notification.prefix: changed to [PROD-R3C-E3-1.75x]
+#   - ALL strategy signal logic UNCHANGED
+#   - ALL cost/risk/position params UNCHANGED
+#
+# E3 Experiment Evidence (from fixed rerun 20260222_224122):
+#   CAGR=179.3% | Sharpe=6.09 | MDD=4.59% | Calmar=39.1
+#   Avg absolute gross=31.5% | Peak gross=87.1%
+#   Normal margin=10.5% | Peak margin=29.0% (at 3x leverage)
+#   Jitter P5 Sharpe=4.99 (100 sims) — all gates PASS
+#
+# ROLLBACK:
+#   Stop this config → restart with prod_candidate_R3C_universe.yaml (E0)
+#   See rollback commands in deployment notes
+#
+# RISK STATEMENT:
+#   - Weight sum 1.75 means 75% more capital allocated vs E0
+#   - Peak margin 29% at 3x leverage — monitor margin utilisation
+#   - If live MDD exceeds 8%, consider rollback to E0
+#   - Upgrade path: E0 → E3 (4 weeks) → E4 (4 weeks)
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+    - DOTUSDT
+    - LTCUSDT
+    - NEARUSDT
+    - APTUSDT
+    - ARBUSDT
+    - OPUSDT
+    - FILUSDT
+    - ATOMUSDT
+    - UNIUSDT
+    - AAVEUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_ema"
+  params:
+    lookback: 168
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.3
+  symbol_overrides: {}
+
+  # ── Vol-only Overlay (inherited from R2.1) ──
+  overlay:
+    enabled: true
+    mode: "oi_vol"
+    params:
+      oi_extreme_z: 999.0
+      oi_reversal_window: 6
+      reduce_pct: 0.5
+      oi_lookback: 24
+      oi_z_window: 168
+      vol_spike_z: 2.0
+      overlay_cooldown_bars: 12
+      trend_lookback: 20
+      atr_period: 14
+      vol_z_window: 168
+
+  # ── Microstructure Accel Overlay (R3 Track A — AGGRESSIVE) ──
+  micro_accel_overlay:
+    enabled: true
+    params:
+      # Feature computation
+      taker_window: 12
+      vol_short_window: 12
+      vol_long_window: 168
+      ema_slope_period: 12
+      ema_slope_norm_window: 48
+      return_burst_window: 6
+      oi_lookback: 24
+      oi_z_window: 168
+      # Scoring weights
+      w_taker: 0.30
+      w_vol: 0.10
+      w_slope: 0.25
+      w_burst: 0.25
+      w_oi: 0.10
+      # Overlay action thresholds (AGGRESSIVE / C)
+      accel_threshold: 0.15
+      decel_threshold: 0.15
+      adverse_threshold: 0.45
+      boost_pct: 0.45
+      reduce_pct: 0.40
+      size_floor: 0.10
+      size_cap: 1.0
+      cooldown_bars: 2
+      adverse_exit_enabled: true
+      adverse_exit_to: 0.0
+
+ensemble:
+  enabled: true
+  weight_mode: "fixed"
+  # Vol-parity weights × 1.75 (E3 weight multiplier)
+  # Original weights computed from trailing 720h realized vol, then scaled
+  fixed_weights:
+    BTCUSDT: 0.1264    # base 0.0722 × 1.75
+    ETHUSDT: 0.0942    # base 0.0538 × 1.75
+    SOLUSDT: 0.0891    # base 0.0509 × 1.75
+    BNBUSDT: 0.1237    # base 0.0707 × 1.75
+    XRPUSDT: 0.0859    # base 0.0491 × 1.75
+    DOGEUSDT: 0.0896   # base 0.0512 × 1.75
+    ADAUSDT: 0.0894    # base 0.0511 × 1.75
+    AVAXUSDT: 0.0954   # base 0.0545 × 1.75
+    LINKUSDT: 0.0942   # base 0.0538 × 1.75
+    DOTUSDT: 0.0945    # base 0.0540 × 1.75
+    LTCUSDT: 0.1059    # base 0.0605 × 1.75
+    NEARUSDT: 0.0866   # base 0.0495 × 1.75
+    APTUSDT: 0.0845    # base 0.0483 × 1.75
+    ARBUSDT: 0.0866    # base 0.0495 × 1.75
+    OPUSDT: 0.0746     # base 0.0426 × 1.75
+    FILUSDT: 0.0856    # base 0.0489 × 1.75
+    ATOMUSDT: 0.0915   # base 0.0523 × 1.75
+    UNIUSDT: 0.0690    # base 0.0394 × 1.75
+    AAVEUSDT: 0.0835   # base 0.0477 × 1.75
+  vol_parity:
+    lookback: 720
+    min_weight: 0.03
+    max_weight: 0.20
+
+  strategies:
+    BTCUSDT:
+      name: "breakout_vol_atr"
+      params:
+        channel_period: 336
+        channel_multiplier: 2.5
+        atr_period: 14
+        vol_fast_period: 14
+        vol_slow_period: 72
+        expansion_ratio: 1.1
+        fake_breakout_bars: 6
+        min_hold_bars: 24
+        trail_exit_mid: true
+        stop_loss_atr: 3.5
+        max_holding_bars: 72
+        cooldown_bars: 24
+        vol_scale_enabled: true
+        vol_scale_target: 99.0
+        vol_scale_lookback: 168
+        vol_scale_floor: 0.7
+        vol_scale_cap: 0.7
+        volume_confirm_enabled: true
+        volume_confirm_period: 20
+        volume_confirm_ratio: 1.5
+
+    ETHUSDT:
+      name: "tsmom_multi_ema"
+      params:
+        lookbacks: [72, 168, 336, 720]
+        vol_target: 0.15
+        ema_fast: 20
+        ema_slow: 50
+        agree_weight: 1.0
+        disagree_weight: 0.3
+
+    # All other symbols use the default tsmom_ema strategy
+    # (defined in top-level strategy.name + strategy.params)
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+# ── Portfolio allocation × 1.75 (E3 weight multiplier) ──
+# Sum of weights ≈ 1.75 (vs E0 sum ≈ 1.0)
+# This is the primary mechanism for increasing capital utilisation
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.1264    # base 0.0722 × 1.75
+    ETHUSDT: 0.0942    # base 0.0538 × 1.75
+    SOLUSDT: 0.0891    # base 0.0509 × 1.75
+    BNBUSDT: 0.1237    # base 0.0707 × 1.75
+    XRPUSDT: 0.0859    # base 0.0491 × 1.75
+    DOGEUSDT: 0.0896   # base 0.0512 × 1.75
+    ADAUSDT: 0.0894    # base 0.0511 × 1.75
+    AVAXUSDT: 0.0954   # base 0.0545 × 1.75
+    LINKUSDT: 0.0942   # base 0.0538 × 1.75
+    DOTUSDT: 0.0945    # base 0.0540 × 1.75
+    LTCUSDT: 0.1059    # base 0.0605 × 1.75
+    NEARUSDT: 0.0866   # base 0.0495 × 1.75
+    APTUSDT: 0.0845    # base 0.0483 × 1.75
+    ARBUSDT: 0.0866    # base 0.0495 × 1.75
+    OPUSDT: 0.0746     # base 0.0426 × 1.75
+    FILUSDT: 0.0856    # base 0.0489 × 1.75
+    ATOMUSDT: 0.0915   # base 0.0523 × 1.75
+    UNIUSDT: 0.0690    # base 0.0394 × 1.75
+    AAVEUSDT: 0.0835   # base 0.0477 × 1.75
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+
+  # ── Symbol Governance: disabled for now ──
+  symbol_governance:
+    enabled: false
+    review_frequency: "weekly"
+    warmup_days: 14
+    quarantine_min_days: 14
+    consecutive_reviews_for_quarantine: 2
+    consecutive_reviews_for_recovery: 2
+    artifacts_dir: "reports/symbol_governance"
+
+    thresholds:
+      edge_sharpe_deweight: 0.3
+      edge_sharpe_quarantine: 0.0
+      edge_sharpe_recover_active: 0.8
+      edge_sharpe_recover_from_quarantine: 0.5
+      edge_per_turnover_min: 0.0
+      slippage_ratio_deweight: 1.5
+      slippage_ratio_quarantine: 1.8
+      slippage_ratio_recover_active: 1.2
+      slippage_ratio_recover_from_quarantine: 1.3
+      consistency_min: 99.0
+      consistency_recover: 99.5
+      missed_signals_quarantine: 5.0
+      dd_quarantine_pct: 25.0
+
+    weights:
+      active_multiplier: 1.0
+      deweight_multiplier: 0.5
+      quarantine_multiplier: 0.0
+      min_weight: 0.03
+      max_weight: 0.20
+
+  watchdog:
+    enabled: true
+    interval_sec: 300
+    alert_cooldown_sec: 1800
+    startup_grace_sec: 300
+    runner_ready_grace_sec: 180
+    heartbeat_warn_sec: 90
+    heartbeat_critical_sec: 180
+    ws_msg_warn_sec: 180
+    ws_msg_critical_sec: 300
+    data_warn_age_sec:
+      "1h": 7200
+      "5m": 1800
+    data_critical_age_sec:
+      "1h": 14400
+      "5m": 3600
+    error_window_minutes: 15
+    error_warn_count: 5
+    error_critical_count: 12
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🚀 [PROD-R3C-E3-1.75x]"
+  enabled: true
+
+output:
+  report_dir: "./reports"
