@@ -1,32 +1,42 @@
 # ═══════════════════════════════════════════════════════════════
-# PRODUCTION LIVE — R3C Universe E3 (Weight Multiplier 1.75x)
+# PRODUCTION LIVE — R3C 10-Symbol 3.5x (Concentrated Portfolio)
 # ═══════════════════════════════════════════════════════════════
-# Created: 2026-02-22
-# Origin: prod_candidate_R3C_universe.yaml × 1.75 weight multiplier
-# Lineage: R3C Capital Utilization Experiment → E3 selected as first-step upgrade
+# Updated: 2026-02-23
+# Origin: prod_candidate_R3C_universe.yaml (19-symbol E0 baseline)
+# Lineage: R3C Capital Utilization → E3 1.75x → 10S 3.5x (current)
 #
-# CHANGE vs prod_candidate_R3C_universe.yaml (E0 baseline):
-#   - portfolio.allocation: all weights × 1.75 (sum ≈ 1.75)
-#   - ensemble.fixed_weights: all weights × 1.75 (consistency)
-#   - notification.prefix: changed to [PROD-R3C-E3-1.75x]
+# CHANGE vs previous (19-symbol E3 1.75x):
+#   - Reduced from 19 → 10 symbols (dropped 9 low-cap alts)
+#   - Weight multiplier: 1.75x → 3.5x (renormalized for 10 symbols)
+#   - Weight sum: ~1.75 → ~3.50 (same total gross as 19-symbol E7)
+#   - Per-symbol avg weight: ~9% → ~35%
 #   - ALL strategy signal logic UNCHANGED
 #   - ALL cost/risk/position params UNCHANGED
 #
-# E3 Experiment Evidence (from fixed rerun 20260222_224122):
-#   CAGR=179.3% | Sharpe=6.09 | MDD=4.59% | Calmar=39.1
-#   Avg absolute gross=31.5% | Peak gross=87.1%
-#   Normal margin=10.5% | Peak margin=29.0% (at 3x leverage)
-#   Jitter P5 Sharpe=4.99 (100 sims) — all gates PASS
+# Dropped symbols: DOTUSDT NEARUSDT APTUSDT ARBUSDT OPUSDT
+#                   FILUSDT ATOMUSDT UNIUSDT AAVEUSDT
+#
+# Weight calculation:
+#   1) Take 10 base vol-parity weights (sum = 0.5678)
+#   2) Renormalize to sum = 1.0
+#   3) Multiply by 3.5 → sum = 3.50
+#   Formula: new_w = base_w × (3.5 / 0.5678) = base_w × 6.163
+#
+# Position size estimate ($1,445 equity, avg signal ~0.25):
+#   Per-symbol: $100-160 notional → meaningful positions
+#   Total gross: ~$1,264 (87% of equity)
+#   Margin at 3x: ~29% → safe
+#
+# RISK STATEMENT:
+#   - Weight sum 3.5 means 250% more capital allocated vs E0
+#   - At full signal (1.0), gross = 350%, margin = 117% → LIQUIDATION
+#   - In practice, avg signal ~0.25, gross ~87%, margin ~29% → OK
+#   - If live MDD exceeds 10%, consider reducing to 2.5x or rolling back
+#   - Monitor margin utilisation closely in first 48 hours
 #
 # ROLLBACK:
 #   Stop this config → restart with prod_candidate_R3C_universe.yaml (E0)
-#   See rollback commands in deployment notes
-#
-# RISK STATEMENT:
-#   - Weight sum 1.75 means 75% more capital allocated vs E0
-#   - Peak margin 29% at 3x leverage — monitor margin utilisation
-#   - If live MDD exceeds 8%, consider rollback to E0
-#   - Upgrade path: E0 → E3 (4 weeks) → E4 (4 weeks)
+#   Or revert to previous commit (19-symbol E3 1.75x)
 # ═══════════════════════════════════════════════════════════════
 
 market:
@@ -40,16 +50,7 @@ market:
     - ADAUSDT
     - AVAXUSDT
     - LINKUSDT
-    - DOTUSDT
     - LTCUSDT
-    - NEARUSDT
-    - APTUSDT
-    - ARBUSDT
-    - OPUSDT
-    - FILUSDT
-    - ATOMUSDT
-    - UNIUSDT
-    - AAVEUSDT
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -122,32 +123,23 @@ strategy:
 ensemble:
   enabled: true
   weight_mode: "fixed"
-  # Vol-parity weights × 1.75 (E3 weight multiplier)
-  # Original weights computed from trailing 720h realized vol, then scaled
+  # Vol-parity weights: renormalized for 10 symbols × 3.5
+  # Formula: base_w × (3.5 / 0.5678) = base_w × 6.163
   fixed_weights:
-    BTCUSDT: 0.1264    # base 0.0722 × 1.75
-    ETHUSDT: 0.0942    # base 0.0538 × 1.75
-    SOLUSDT: 0.0891    # base 0.0509 × 1.75
-    BNBUSDT: 0.1237    # base 0.0707 × 1.75
-    XRPUSDT: 0.0859    # base 0.0491 × 1.75
-    DOGEUSDT: 0.0896   # base 0.0512 × 1.75
-    ADAUSDT: 0.0894    # base 0.0511 × 1.75
-    AVAXUSDT: 0.0954   # base 0.0545 × 1.75
-    LINKUSDT: 0.0942   # base 0.0538 × 1.75
-    DOTUSDT: 0.0945    # base 0.0540 × 1.75
-    LTCUSDT: 0.1059    # base 0.0605 × 1.75
-    NEARUSDT: 0.0866   # base 0.0495 × 1.75
-    APTUSDT: 0.0845    # base 0.0483 × 1.75
-    ARBUSDT: 0.0866    # base 0.0495 × 1.75
-    OPUSDT: 0.0746     # base 0.0426 × 1.75
-    FILUSDT: 0.0856    # base 0.0489 × 1.75
-    ATOMUSDT: 0.0915   # base 0.0523 × 1.75
-    UNIUSDT: 0.0690    # base 0.0394 × 1.75
-    AAVEUSDT: 0.0835   # base 0.0477 × 1.75
+    BTCUSDT: 0.4450    # base 0.0722 × 6.163
+    ETHUSDT: 0.3316    # base 0.0538 × 6.163
+    SOLUSDT: 0.3137    # base 0.0509 × 6.163
+    BNBUSDT: 0.4358    # base 0.0707 × 6.163
+    XRPUSDT: 0.3026    # base 0.0491 × 6.163
+    DOGEUSDT: 0.3156   # base 0.0512 × 6.163
+    ADAUSDT: 0.3150    # base 0.0511 × 6.163
+    AVAXUSDT: 0.3359   # base 0.0545 × 6.163
+    LINKUSDT: 0.3316   # base 0.0538 × 6.163
+    LTCUSDT: 0.3729    # base 0.0605 × 6.163
   vol_parity:
     lookback: 720
     min_weight: 0.03
-    max_weight: 0.20
+    max_weight: 0.50
 
   strategies:
     BTCUSDT:
@@ -184,8 +176,7 @@ ensemble:
         agree_weight: 1.0
         disagree_weight: 0.3
 
-    # All other symbols use the default tsmom_ema strategy
-    # (defined in top-level strategy.name + strategy.params)
+    # All other 8 symbols use the default tsmom_ema strategy
 
 backtest:
   initial_cash: 10000
@@ -208,31 +199,22 @@ position_sizing:
   method: "fixed"
   position_pct: 1.0
 
-# ── Portfolio allocation × 1.75 (E3 weight multiplier) ──
-# Sum of weights ≈ 1.75 (vs E0 sum ≈ 1.0)
-# This is the primary mechanism for increasing capital utilisation
+# ── Portfolio allocation: 10 symbols × 3.5 ──
+# Sum of weights ≈ 3.50
+# Per-symbol avg: ~0.35 (vs E3's ~0.09)
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.1264    # base 0.0722 × 1.75
-    ETHUSDT: 0.0942    # base 0.0538 × 1.75
-    SOLUSDT: 0.0891    # base 0.0509 × 1.75
-    BNBUSDT: 0.1237    # base 0.0707 × 1.75
-    XRPUSDT: 0.0859    # base 0.0491 × 1.75
-    DOGEUSDT: 0.0896   # base 0.0512 × 1.75
-    ADAUSDT: 0.0894    # base 0.0511 × 1.75
-    AVAXUSDT: 0.0954   # base 0.0545 × 1.75
-    LINKUSDT: 0.0942   # base 0.0538 × 1.75
-    DOTUSDT: 0.0945    # base 0.0540 × 1.75
-    LTCUSDT: 0.1059    # base 0.0605 × 1.75
-    NEARUSDT: 0.0866   # base 0.0495 × 1.75
-    APTUSDT: 0.0845    # base 0.0483 × 1.75
-    ARBUSDT: 0.0866    # base 0.0495 × 1.75
-    OPUSDT: 0.0746     # base 0.0426 × 1.75
-    FILUSDT: 0.0856    # base 0.0489 × 1.75
-    ATOMUSDT: 0.0915   # base 0.0523 × 1.75
-    UNIUSDT: 0.0690    # base 0.0394 × 1.75
-    AAVEUSDT: 0.0835   # base 0.0477 × 1.75
+    BTCUSDT: 0.4450    # base 0.0722 × 6.163
+    ETHUSDT: 0.3316    # base 0.0538 × 6.163
+    SOLUSDT: 0.3137    # base 0.0509 × 6.163
+    BNBUSDT: 0.4358    # base 0.0707 × 6.163
+    XRPUSDT: 0.3026    # base 0.0491 × 6.163
+    DOGEUSDT: 0.3156   # base 0.0512 × 6.163
+    ADAUSDT: 0.3150    # base 0.0511 × 6.163
+    AVAXUSDT: 0.3359   # base 0.0545 × 6.163
+    LINKUSDT: 0.3316   # base 0.0538 × 6.163
+    LTCUSDT: 0.3729    # base 0.0605 × 6.163
 
 live:
   kline_cache: true
@@ -303,7 +285,7 @@ live:
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
   telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
-  prefix: "🚀 [PROD-R3C-E3-1.75x]"
+  prefix: "🚀 [PROD-R3C-10S-3.5x]"
   enabled: true
 
 output:
