@@ -851,6 +851,8 @@ class TelegramCommandBot(TelegramBot):
         self.register_command("health", self._cmd_health, "系統狀態")
         self.register_command("check_live", self._cmd_check_live, "執行一次 Live Watchdog")
         self.register_command("watchdog_status", self._cmd_watchdog_status, "Watchdog 狀態與設定")
+        self.register_command("universe_status", self._cmd_universe_status, "Universe 治理狀態")
+        self.register_command("symbol_health", self._cmd_symbol_health, "幣種健康詳情")
 
     # ── 別名方法，與 run_live.py 期望的介面一致 ──
 
@@ -930,7 +932,7 @@ class TelegramCommandBot(TelegramBot):
             lines = ["📡 <b>最新信號</b>  ⚡ 即時\n"]
             for symbol in cfg.market.symbols:
                 try:
-                    symbol_params = cfg.strategy.get_params(symbol)
+                    sym_strategy, symbol_params = self.live_runner._get_strategy_for_symbol(symbol)
                     cached_df = None
                     if kline_cache is not None:
                         cached_df = kline_cache.get_klines(symbol)
@@ -938,7 +940,7 @@ class TelegramCommandBot(TelegramBot):
                             cached_df = None
                     sig = generate_signal(
                         symbol=symbol,
-                        strategy_name=cfg.strategy.name,
+                        strategy_name=sym_strategy,
                         params=symbol_params,
                         interval=cfg.market.interval,
                         market_type=cfg.market_type_str,
@@ -1325,6 +1327,148 @@ class TelegramCommandBot(TelegramBot):
             return "\n".join(lines)
         except Exception as e:
             return f"❌ /watchdog_status 查詢失敗: {e}"
+
+    # ── /universe_status ──
+
+    def _cmd_universe_status(self, args: list[str], chat_id: str) -> str:
+        """
+        顯示 Symbol Governance 治理總覽。
+
+        讀取最新 governance artifact（不即時重算）。
+        """
+        try:
+            cfg = getattr(self.live_runner, "cfg", None) if self.live_runner else None
+            if not cfg:
+                return "⚠️ LiveRunner 未連接，無法讀取 governance"
+
+            gov_cfg = cfg.live.symbol_governance
+            if not gov_cfg.enabled:
+                return "ℹ️ Symbol Governance 未啟用"
+
+            from ..live.symbol_governance import load_latest_decisions
+
+            latest = load_latest_decisions(gov_cfg.artifacts_dir)
+            if not latest:
+                return "📭 尚無 Governance 審查記錄"
+
+            ts = latest.get("timestamp", "?")
+            summary = latest.get("summary", {})
+            symbols_data = latest.get("symbols", {})
+
+            lines = [
+                f"🏛️ <b>Universe Governance</b>",
+                f"📅 最近審查: {ts[:19]}",
+                f"",
+                f"✅ Active: <b>{summary.get('active', 0)}</b>",
+                f"⚠️ Deweighted: <b>{summary.get('deweighted', 0)}</b>",
+                f"🚫 Quarantined: <b>{summary.get('quarantined', 0)}</b>",
+                f"",
+            ]
+
+            # Per-symbol brief
+            for sym in sorted(symbols_data.keys()):
+                info = symbols_data[sym]
+                state = info.get("new_state", "?")
+                ew = info.get("effective_weight", 0)
+                if state == "active":
+                    emoji = "✅"
+                elif state == "deweighted":
+                    emoji = "⚠️"
+                else:
+                    emoji = "🚫"
+                lines.append(f"{emoji} {sym}: {state} (w={ew:.3f})")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ /universe_status 查詢失敗: {e}"
+
+    # ── /symbol_health ──
+
+    def _cmd_symbol_health(self, args: list[str], chat_id: str) -> str:
+        """
+        顯示特定幣種的 4 週指標與治理狀態。
+
+        用法: /symbol_health BTCUSDT
+        """
+        if not args:
+            return "ℹ️ 用法: /symbol_health <SYMBOL>\n例如: /symbol_health BTCUSDT"
+
+        target_symbol = args[0].upper()
+
+        try:
+            cfg = getattr(self.live_runner, "cfg", None) if self.live_runner else None
+            if not cfg:
+                return "⚠️ LiveRunner 未連接"
+
+            gov_cfg = cfg.live.symbol_governance
+            if not gov_cfg.enabled:
+                return "ℹ️ Symbol Governance 未啟用"
+
+            from ..live.symbol_governance import load_latest_decisions
+
+            latest = load_latest_decisions(gov_cfg.artifacts_dir)
+            if not latest:
+                return "📭 尚無 Governance 審查記錄"
+
+            symbols_data = latest.get("symbols", {})
+            info = symbols_data.get(target_symbol)
+            if not info:
+                return f"❓ {target_symbol} 不在 universe 中"
+
+            state = info.get("new_state", "?")
+            prev_state = info.get("previous_state", "?")
+            ew = info.get("effective_weight", 0)
+            bw = info.get("base_weight", 0)
+            reasons = info.get("reason_codes", [])
+            metrics = info.get("metrics", {})
+
+            if state == "active":
+                emoji = "✅"
+            elif state == "deweighted":
+                emoji = "⚠️"
+            else:
+                emoji = "🚫"
+
+            lines = [
+                f"{emoji} <b>{target_symbol} Health</b>",
+                f"",
+                f"📊 狀態: <b>{state}</b>",
+                f"↩️ 前次: {prev_state}",
+                f"⚖️ 權重: base={bw:.4f} → eff={ew:.4f}",
+                f"",
+                f"📈 <b>4 週指標</b>",
+                f"  Sharpe: {metrics.get('edge_sharpe_4w', '?')}",
+                f"  Edge/TO: {metrics.get('edge_per_turnover_4w', '?')}",
+                f"  Slip Ratio: {metrics.get('slippage_ratio_4w', '?')}",
+                f"  Consistency: {metrics.get('consistency_4w', '?')}%",
+                f"  Missed: {metrics.get('missed_4w', '?')}%",
+                f"  MaxDD: {metrics.get('dd_4w', '?')}%",
+                f"  Trades: {metrics.get('trade_count', '?')}",
+            ]
+
+            if reasons:
+                lines.append(f"\n🔎 原因: {', '.join(reasons)}")
+
+            # Recovery / next action hint
+            t = gov_cfg.thresholds
+            if state == "deweighted":
+                lines.append(
+                    f"\n💡 回復條件 (連續 {gov_cfg.consecutive_reviews_for_recovery} 次):"
+                    f"\n  Sharpe ≥ {t.edge_sharpe_recover_active}"
+                    f"\n  Slip ≤ {t.slippage_ratio_recover_active}"
+                    f"\n  Edge/TO > {t.edge_per_turnover_min}"
+                )
+            elif state == "quarantined":
+                lines.append(
+                    f"\n💡 解除條件 (最少 {gov_cfg.quarantine_min_days} 天後):"
+                    f"\n  Sharpe ≥ {t.edge_sharpe_recover_from_quarantine}"
+                    f"\n  Slip ≤ {t.slippage_ratio_recover_from_quarantine}"
+                    f"\n  Consistency ≥ {t.consistency_recover}%"
+                )
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ /symbol_health 查詢失敗: {e}"
 
     # ── /stats ──
 

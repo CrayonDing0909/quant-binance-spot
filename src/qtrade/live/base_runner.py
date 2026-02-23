@@ -757,7 +757,7 @@ class BaseRunner(ABC):
         raw_signal = sig.signal
         price = sig.price
         indicators = sig.indicators
-        params = self.cfg.strategy.get_params(symbol)
+        _, params = self._get_strategy_for_symbol(symbol)
 
         # 1. 記錄信號到 DB
         self._log_signal_to_db(symbol, sig)
