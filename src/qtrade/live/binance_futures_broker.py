@@ -1261,12 +1261,15 @@ class BinanceFuturesBroker:
             "quantity": f"{qty}",
             "type": order_kind,          # STOP or TAKE_PROFIT
             "triggerPrice": f"{stop_price}",
+            "algoType": "CONDITIONAL",   # 必要參數，缺少會 -1102
         }
 
         # 可能的 Algo Order 端點（按優先級）
+        # /fapi/v1/algoOrder 已確認存在（需 algoType），
+        # /fapi/v1/algo/futures/newOrderCondition 目前返回 404
         algo_endpoints = [
-            "/fapi/v1/algo/futures/newOrderCondition",
             "/fapi/v1/algoOrder",
+            "/fapi/v1/algo/futures/newOrderCondition",
         ]
 
         last_exc: Exception | None = None
