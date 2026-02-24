@@ -13,6 +13,11 @@
 #   - ALL strategy signal logic UNCHANGED
 #   - ALL cost/risk/position params UNCHANGED
 #
+# 2026-02-24 UPDATE: BTC weight doubled (0.4450 → 0.8900)
+#   Rationale: BTC breakout_vol_atr has SL, Sharpe 1.71, WR 41%,
+#              Long PF 1.99, MDD 19.6%. Justified for higher allocation.
+#   New weight sum: ~3.95 (was ~3.50)
+#
 # Dropped symbols: DOTUSDT NEARUSDT APTUSDT ARBUSDT OPUSDT
 #                   FILUSDT ATOMUSDT UNIUSDT AAVEUSDT
 #
@@ -126,7 +131,7 @@ ensemble:
   # Vol-parity weights: renormalized for 10 symbols × 3.5
   # Formula: base_w × (3.5 / 0.5678) = base_w × 6.163
   fixed_weights:
-    BTCUSDT: 0.4450    # base 0.0722 × 6.163
+    BTCUSDT: 0.8900    # base 0.0722 × 6.163 × 2 (doubled)
     ETHUSDT: 0.3316    # base 0.0538 × 6.163
     SOLUSDT: 0.3137    # base 0.0509 × 6.163
     BNBUSDT: 0.4358    # base 0.0707 × 6.163
@@ -199,13 +204,13 @@ position_sizing:
   method: "fixed"
   position_pct: 1.0
 
-# ── Portfolio allocation: 10 symbols × 3.5 ──
-# Sum of weights ≈ 3.50
-# Per-symbol avg: ~0.35 (vs E3's ~0.09)
+# ── Portfolio allocation: 10 symbols (BTC 2x) ──
+# Sum of weights ≈ 3.95 (was 3.50, BTC doubled)
+# BTC: ~0.89, others unchanged
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.4450    # base 0.0722 × 6.163
+    BTCUSDT: 0.8900    # base 0.0722 × 6.163 × 2 (doubled)
     ETHUSDT: 0.3316    # base 0.0538 × 6.163
     SOLUSDT: 0.3137    # base 0.0509 × 6.163
     BNBUSDT: 0.4358    # base 0.0707 × 6.163
@@ -285,7 +290,7 @@ live:
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
   telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
-  prefix: "🚀 [PROD-R3C-10S-3.5x]"
+  prefix: "🚀 [PROD-R3C-10S-BTC2x]"
   enabled: true
 
 output:

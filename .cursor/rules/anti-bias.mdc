@@ -1,0 +1,57 @@
+---
+alwaysApply: true
+---
+# Anti-Bias Rules — CRITICAL
+
+These rules exist because we lost months to look-ahead bias in the RSI strategy.
+Every agent MUST internalize these before writing or reviewing any strategy/backtest code.
+
+## 1. Look-Ahead Bias Prevention
+
+- **Signal-Execution Timing**: Signal generated at `close[i]` MUST be executed at `open[i+1]`, NEVER at `open[i]`.
+- **signal_delay mechanism**: `StrategyContext.signal_delay = 1` when `trade_on = "next_open"`. This shifts the position series by 1 bar via `.shift(signal_delay)`.
+- **Backtest price**: Always use `price=df['open']` in `vbt.Portfolio.from_orders()`. Using `close` introduces look-ahead.
+- **Validation**: Every new strategy MUST pass the 5-item look-ahead audit before promotion.
+
+## 2. vectorbt direction Trap
+
+When using `vbt.Portfolio.from_orders(direction="shortonly")`:
+- `size > 0` means "open short", `size < 0` means "close short" (INVERTED from intuition)
+- Our strategies use `pos=-1` for short, `pos=1` for long
+
+**Required conversion for short_only mode**:
+```python
+elif direction == "short_only":
+    pos = (-pos).clip(lower=0.0)  # -1 → 1 (open short), 1 → clip → 0
+```
+
+Always use the shared `to_vbt_direction()` and `clip_positions_by_direction()` functions — never inline this logic.
+
+## 3. Anti-Cherry-Picking (from Playbook Stage D/E)
+
+- No cherry-picking winning windows for reporting
+- No post-hoc strategy deletion without pre-defined selection rule
+- No mixed timestamps in comparison tables (single run timestamp only)
+- No hidden defaults: all active knobs must be explicit in config
+- When multiple components exist, run ablation: A only, B only, A+B
+
+## 4. Backtest Integrity Checklist
+
+- `price=df['open']` (not close)
+- Cost model enabled: `funding_rate.enabled: true` + `slippage_model.enabled: true`
+- Exit rules (ATR SL/TP) direction-aware:
+  - Long: SL = price - ATR * multiplier, TP = price + ATR * multiplier
+  - Short: SL = price + ATR * multiplier, TP = price - ATR * multiplier
+- `_apply_position_sizing` clip range is `[-1, 1]` (not `[0, 1]`)
+- Spot negative signal clip happens in `runner.run_once()`, NOT in position_sizing
+
+## 5. Data Quality Gate
+
+Before any signal uses a dataset:
+- Coverage threshold >= 70% (target >= 90%)
+- Time alignment documented (timezone, bar alignment)
+- Missing value policy documented (max forward-fill gap)
+
+If coverage gate fails, result MUST be marked `INVALID`.
+
+See [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) for full validation stack.

@@ -1,0 +1,59 @@
+---
+globs: src/qtrade/backtest/*.py,scripts/run_backtest.py,scripts/run_portfolio_backtest.py,scripts/run_walk_forward.py,scripts/run_cpcv.py,scripts/validate.py
+---
+# Backtest Rules
+
+Triggered when editing backtest engine or backtest-related scripts.
+
+## Core Invariants
+
+1. **Execution price**: Always `price=df['open']` in `vbt.Portfolio.from_orders()` — never `close`
+2. **Config access**: Use `cfg.to_backtest_dict()` to pass config to `run_symbol_backtest()` — never manually assemble dicts
+3. **Direction**: Use `to_vbt_direction()` shared function — never hardcode direction mapping
+4. **Cost model**: Production backtests MUST enable both:
+   - `funding_rate.enabled: true` (Funding Rate deduction)
+   - `slippage_model.enabled: true` (Volume-based slippage)
+
+## BacktestResult Dataclass
+
+All backtest functions return `BacktestResult` ([run_backtest.py](mdc:src/qtrade/backtest/run_backtest.py)):
+- `pf` — vbt.Portfolio (strategy)
+- `pf_bh` — vbt.Portfolio (Buy & Hold benchmark)
+- `stats` — pf.stats() raw statistics
+- `df` — filtered OHLCV DataFrame
+- `pos` — position series
+- `funding_cost` / `slippage_result` — cost model outputs
+- `adjusted_stats` / `adjusted_equity` — post-cost performance
+
+Use `pf.positions` (not `pf.trades`) for trade analysis.
+
+## vectorbt direction Conversion
+
+```python
+# CORRECT — use shared utility
+from qtrade.backtest.run_backtest import to_vbt_direction
+direction = to_vbt_direction(cfg_direction)  # "both" → "both", "long_only" → "longonly"
+
+# For short_only, signal inversion is required:
+# pos = (-pos).clip(lower=0.0)
+```
+
+## Required Backtest Report Fields
+
+Every backtest report MUST include:
+- Total Return, CAGR, Sharpe, Max Drawdown, Calmar
+- Trade count and win rate
+- Long/Short breakdown (for futures)
+- Cost impact: before vs after funding + slippage
+- Yearly decomposition
+
+## Validation Stack (must pass in order)
+
+1. Causality checks (truncation invariance, online/offline consistency)
+2. Full-period backtest with strict costs
+3. Cost stress (1.5x, 2.0x multiplier)
+4. Walk-forward (>= 5 splits)
+5. CPCV cross-validation
+6. +1 bar delay stress test
+
+See [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) for details.

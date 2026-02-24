@@ -1,368 +1,187 @@
-# 📍 專案地圖 & 指令速查
+# Project Map & CLI Reference
 
-> **最後更新**: 2026-02-18 | **主力配置**: `config/futures_tsmom.yaml`
+> **Auto-generated**: 2026-02-24 by `scripts/gen_cli_reference.py`
+> **Production config**: `config/prod_live_R3C_E3.yaml`
+> **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
-> 這份文件是整個專案的「儀表板」。其他文件太長不想看？只看這份。
+> Re-generate: `PYTHONPATH=src python scripts/gen_cli_reference.py`
 
 ---
 
-## 🎯 我想做什麼？
+## Scripts
 
-| 我想... | 指令 |
-|---------|------|
-| **回測策略** | `python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml` |
-| **看回測加上成本後的真實績效** | 同上（config 已設 `funding_rate.enabled: true`，自動顯示前/後對比）|
-| **用 DSR 校正 Sharpe** | `python scripts/run_backtest.py -c config/futures_rsi_adx_atr.yaml --n-trials 31` |
-| **Walk-Forward 驗證** | `python scripts/run_walk_forward.py -c config/futures_rsi_adx_atr.yaml --splits 6` |
-| **CPCV 交叉驗證** | `python scripts/run_cpcv.py -c config/futures_rsi_adx_atr.yaml --splits 6 --test-splits 2` |
-| **成本敏感性分析** | `python scripts/run_cost_sensitivity.py -c config/futures_rsi_adx_atr.yaml` |
-| **一站式驗證** | `python scripts/validate.py -c config/futures_rsi_adx_atr.yaml --quick` |
-| **Pre-Deploy 檢查** | `python scripts/validate_live_consistency.py -c config/futures_rsi_adx_atr.yaml` |
-| **下載數據** | `python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml` |
-| **下載 Funding Rate** | `python scripts/download_data.py -c config/futures_rsi_adx_atr.yaml --funding-rate` |
-| **參數掃描（SL × Cooldown）** | `python scripts/scan_risk_params.py -c config/futures_rsi_adx_atr.yaml` |
-| **參數掃描（overbought）** | `python scripts/scan_overbought.py -c config/futures_rsi_adx_atr.yaml` |
-| **Hyperopt 優化** | `python scripts/run_hyperopt.py -c config/futures_rsi_adx_atr.yaml` |
-| **組合回測** | `python scripts/run_portfolio_backtest.py -c config/futures_rsi_adx_atr.yaml` |
-| **實盤（cron 模式）** | `python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --once` |
-| **實盤（WebSocket 模式）** | `python scripts/run_websocket.py -c config/futures_rsi_adx_atr.yaml --real` ⭐ |
-| **Dry-run 測試** | `python scripts/run_live.py -c config/futures_rsi_adx_atr.yaml --real --dry-run --once` |
-| **查詢交易資料庫** | `python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml summary` |
-| **Telegram Bot** | `python scripts/run_telegram_bot.py -c config/futures_rsi_adx_atr.yaml --real` |
-| **健康檢查** | `python scripts/health_check.py -c config/futures_rsi_adx_atr.yaml --real --notify` |
-| **每日報表** | `python scripts/daily_report.py -c config/futures_rsi_adx_atr.yaml` |
-| **建立新策略** | `python scripts/create_strategy.py --name my_strategy --type custom` |
-| **Oracle 更新部署** | `git pull && ./scripts/setup_cron.sh --update` |
-| **Oracle 配置 Swap** | `bash scripts/setup_swap.sh` |
-| **Alpha Decay 監控** | `python scripts/monitor_alpha_decay.py -c config/futures_rsi_adx_atr.yaml` |
-| **策略相關性分析** | `python scripts/research_strategy_correlation.py -c config/futures_rsi_adx_atr.yaml` |
+### Core Workflow (by typical execution order)
 
----
+| Script | Description |
+|--------|-------------|
+| `download_data.py` | 多數據源 K 線數據下載工具 |
+| `download_oi_data.py` | Download OI historical data |
+| `run_backtest.py` | 運行策略回測 |
+| `run_portfolio_backtest.py` | 組合回測（v3.0 — 統一成本模型 + Ensemble 支援） |
+| `run_walk_forward.py` | Run Walk-Forward Analysis |
+| `run_cpcv.py` | CPCV 驗證 (López de Prado) |
+| `validate.py` | 統一策略驗證工具 |
+| `validate_live_consistency.py` | 回測↔實盤一致性驗證（Pre-Deploy Checklist） |
+| `prod_launch_guard.py` | Production Launch Guard |
+| `run_live.py` | 即時交易 |
+| `run_websocket.py` | WebSocket Live Trading Bot |
 
-## 📂 所有腳本一覽
+### Optimization & Research
 
-### 核心流程（按順序）
+| Script | Description |
+|--------|-------------|
+| `optimize_params.py` | 🧬 Hyperopt Parameter Optimizer v2 |
+| `run_hyperopt.py` | Hyperopt Parameter Optimization |
+| `run_experiment_matrix.py` | NW Strategy Experiment Matrix |
+| `run_funding_basis_research.py` | Funding / Basis Alpha Research — Phase 1 |
+| `run_mr_research.py` | MR Research Matrix — Phase MR-1 |
+| `run_oi_bb_rv_research.py` | OI-BB-RV Research Pipeline |
+| `validate_overlay_falsification.py` | R2.1 Vol-Only Overlay Falsification Validator |
+| `build_universe.py` | Build Universe for R3 Track A |
+| `run_symbol_governance_review.py` | Run Symbol Governance Weekly Review |
 
-| # | 腳本 | 用途 | 關鍵參數 |
-|---|------|------|----------|
-| 1 | `download_data.py` | 下載 K 線 / Funding Rate | `-c`, `--funding-rate`, `--full` |
-| 2 | `run_backtest.py` | 回測（含成本模型） | `-c`, `--symbol`, `-d both/long_only/short_only`, `--n-trials` |
-| 3 | `run_walk_forward.py` | Walk-Forward 驗證 | `-c`, `--splits`, `--n-trials` |
-| 4 | `run_cpcv.py` | CPCV 交叉驗證 | `-c`, `--splits`, `--test-splits` |
-| 5 | `run_cost_sensitivity.py` | 成本敏感性分析 | `-c`, `--symbol` |
-| 6 | `validate.py` | 一站式驗證（WFA/MC/DSR/PBO/Kelly） | `-c`, `--quick`, `--full`, `--only` |
-| 7 | `validate_live_consistency.py` | Pre-Deploy 13 項檢查 | `-c`, `-v`, `--only` |
-| 8 | `run_live.py` | 實盤 / Paper（Polling 模式） | `-c`, `--real/--paper`, `--once`, `--dry-run` |
-| 9 | `run_websocket.py` ⭐ | 實盤（WebSocket 事件驅動） | `-c`, `--real/--paper` |
+### Operations & Monitoring
 
-### 優化 & 分析
+| Script | Description |
+|--------|-------------|
+| `run_telegram_bot.py` | Telegram Bot 常駐服務 |
+| `query_db.py` | 交易資料庫查詢工具 |
+| `health_check.py` | 系統健康檢查 |
+| `daily_report.py` | Paper Trading 每日績效報表 |
+| `prod_report.py` | Production Report Generator |
+| `monitor_alpha_decay.py` | Alpha Decay 監控 |
+| `risk_guard.py` | Risk Guard — automated risk monitoring & kill switch |
 
-| 腳本 | 用途 |
-|------|------|
-| `optimize_params.py` | 網格搜尋參數優化 |
-| `run_hyperopt.py` | Bayesian 超參數優化 |
-| `scan_overbought.py` | 掃描 overbought 最佳值 |
-| `scan_risk_params.py` ⭐ | SL × Cooldown 網格掃描（熱力圖） |
-| `comprehensive_backtest.py` | 多維度綜合回測（regime / exit / sizing） |
-| `run_portfolio_backtest.py` | 多幣種組合回測 |
+### Infrastructure
 
-### 運維 & 監控
+| Script | Description |
+|--------|-------------|
+| `deploy_oracle.sh` | Oracle Cloud 一鍵部署腳本 |
+| `setup_cron.sh` | Quant Trading Bot - Cron Jobs 自動設定腳本 |
+| `setup_swap.sh` | 自動建立 Swap (虛擬記憶體) 腳本 |
 
-| 腳本 | 用途 |
-|------|------|
-| `run_telegram_bot.py` | Telegram 互動 Bot（常駐服務） |
-| `query_db.py` ⭐ | SQLite 交易資料庫查詢（summary / trades / signals / equity / export） |
-| `health_check.py` | 系統健康檢查（cron 每 30 分鐘） |
-| `daily_report.py` | 每日績效報表 |
-| `monitor_alpha_decay.py` ⭐ | Alpha Decay 監控（IC 分析 + Telegram 通知） |
-| `cron_alpha_monitor.sh` ⭐ | Alpha Decay 監控排程腳本 |
-| `setup_cron.sh` | 自動設定 cron + 清 `.pyc`（`--update`） |
-| `setup_swap.sh` | Oracle Cloud Swap 配置（1GB RAM 機器必備） |
-| `setup_secrets.py` | 設定 API Key / Telegram Token |
-
-### 研究 & 分析
-
-| 腳本 | 用途 |
-|------|------|
-| `research_dynamic_rsi.py` ⭐ | Static vs Dynamic RSI 對比研究 |
-| `research_funding_filter.py` ⭐ | Funding Rate 過濾效果分析 |
-| `research_strategy_correlation.py` ⭐ | 策略相關性矩陣 + Ensemble 推薦 |
-
-### 測試 & 開發
-
-| 腳本 | 用途 |
-|------|------|
-| `create_strategy.py` | 策略範本產生器 |
-| `test_futures_connection.py` | 合約 API 連線測試（不需 Key） |
-| `test_futures_broker.py` | Broker 功能測試（需 Key） |
-| `test_futures_manual.py` | 手動合約功能測試 |
-| `test_futures_risk.py` | 風控功能測試 |
+> **Archive**: 26 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
 
 ---
 
-## ⚙️ 配置檔清單
+## Configs
 
-### 🔴 生產主力
+### Production (active on Oracle Cloud)
 
-| 配置檔 | 用途 | Oracle 部署 |
-|--------|------|:-----------:|
-| `futures_tsmom.yaml` | **⭐ 合約 TSMOM（Time-Series Momentum + EMA 對齊，ETH+SOL 雙幣）** | ✅ |
-| `futures_rsi_adx_atr.yaml` | 合約 RSI+ADX+ATR v3.1（⚠️ 發現 look-ahead bias，已停用） | ❌ |
-
-### 📊 回測 / 研究用
-
-| 配置檔 | 用途 |
+| Config | File |
 |--------|------|
-| `rsi_adx_atr.yaml` | 現貨版本 |
-| `rsi_adx_atr_rsi_exit.yaml` | RSI Exit 變體（TP=null） |
-| `futures_rsi_adx_atr_15m.yaml` | 15m 時間框架（HTF=1h） |
-| `futures_rsi_adx_atr_4h.yaml` | 4h 時間框架（HTF=1d） |
-| `futures_ensemble.yaml` | RSI+MACD 組合策略 |
-| `futures_full_history.yaml` | 長期歷史回測 |
-| `rsi_adx_atr_full_history.yaml` | 現貨長期歷史 |
+| `prod_candidate_R3C_universe.yaml` | `config/prod_candidate_R3C_universe.yaml` |
+| `prod_live_R3C_E3.yaml` | `config/prod_live_R3C_E3.yaml` |
+| `prod_scale_rules_R3C_universe.yaml` | `config/prod_scale_rules_R3C_universe.yaml` |
+| `risk_guard_alt_ensemble.yaml` | `config/risk_guard_alt_ensemble.yaml` |
 
-### 📁 範例 / 實驗（可忽略）
+### Strategy Definitions
 
-| 配置檔 | 說明 |
+| Config | File |
 |--------|------|
-| `base.yaml` | 基礎範本 |
-| `dev.yaml` | 開發用 |
-| `futures_multi_factor.yaml` | 多因子實驗（已廢棄方向） |
-| `futures_bb_mean_reversion.yaml` | BB 策略實驗 |
-| `futures_macd_momentum.yaml` | MACD 策略實驗 |
-| `futures_rsi_adx_atr_enhanced.yaml` | Enhanced 變體 |
-| `rsi_adx_atr_enhanced.yaml` | Enhanced 現貨版 |
-| `rsi_adx_atr_1d.yaml` | 日線回測 |
-| `my_strategy_example.yaml` | 教學範例 |
-| `rsi_example.yaml` | RSI 教學範例 |
-| `smc_example.yaml` | SMC 教學範例 |
-| `stock_rsi_adx_atr.yaml` | 股票回測 |
-| `validation.yaml` | 驗證專用配置 |
+| `futures_alt_ensemble.yaml` | `config/futures_alt_ensemble.yaml` |
+| `futures_breakout_vol.yaml` | `config/futures_breakout_vol.yaml` |
+| `futures_ensemble_nw_tsmom.yaml` | `config/futures_ensemble_nw_tsmom.yaml` |
+| `futures_funding_carry.yaml` | `config/futures_funding_carry.yaml` |
+| `futures_multi_strat_ensemble.yaml` | `config/futures_multi_strat_ensemble.yaml` |
+| `futures_nwkl.yaml` | `config/futures_nwkl.yaml` |
+| `futures_tsmom.yaml` | `config/futures_tsmom.yaml` |
+| `futures_xsmom.yaml` | `config/futures_xsmom.yaml` |
+
+### Utility
+
+| Config | File |
+|--------|------|
+| `validation.yaml` | `config/validation.yaml` |
+
+### Other
+
+| Config | File |
+|--------|------|
+| `dual_momentum.yaml` | `config/dual_momentum.yaml` |
+
+> **Archive**: 50 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
 
 ---
 
-## 🧩 原始碼模組地圖
+## Source Module Map
 
 ```
 src/qtrade/
-├── config.py              ← 統一配置管理（AppConfig, load_config）
-├── strategy/              ← 策略庫
-│   ├── tsmom_strategy.py        ← ⭐ 主力策略（TSMOM 動量 + EMA 對齊 + 波動率目標）
-│   ├── rsi_adx_atr_strategy.py  ← RSI 均值回歸（已停用，look-ahead bias）
-│   ├── base.py                  ← StrategyContext（含 signal_delay）
-│   ├── exit_rules.py            ← SL/TP/RSI Exit + Adaptive SL 邏輯
-│   └── filters.py               ← 過濾器（Funding Rate / 波動率 / HTF 軟趨勢 / ER）
-├── indicators/            ← 技術指標（RSI, ADX, ATR, EMA, Efficiency Ratio...）
+├── config.py              ← AppConfig dataclass, load_config()
+├── strategy/              ← Strategy implementations
+│   ├── base.py            ← StrategyContext (market_type, direction, signal_delay)
+│   ├── tsmom_strategy.py  ← Active production strategy (TSMOM EMA)
+│   └── exit_rules.py      ← SL/TP/Adaptive SL
 ├── backtest/
-│   ├── run_backtest.py    ← 回測引擎 (run_symbol_backtest → ⭐ BacktestResult dataclass)
-│   ├── costs.py           ← 成本模型（Funding Rate + Volume Slippage）
-│   ├── metrics.py         ← 績效指標 + Long/Short 分析
-│   ├── plotting.py        ← 繪圖
-│   └── hyperopt_engine.py ← Bayesian 優化
-├── validation/
-│   ├── walk_forward.py    ← Walk-Forward Analysis + Summary
-│   ├── prado_methods.py   ← DSR, PBO, CPCV
-│   ├── ic_monitor.py      ← ⭐ Alpha Decay 監控（Rolling IC + 年度 IC + 警報）
-│   ├── consistency.py     ← Live/Backtest 一致性
-│   └── cross_asset.py     ← 跨資產驗證
+│   ├── run_backtest.py    ← BacktestResult dataclass, run_symbol_backtest()
+│   ├── costs.py           ← Funding Rate + Volume Slippage cost model
+│   └── metrics.py         ← Performance metrics + Long/Short analysis
 ├── live/
-│   ├── base_runner.py     ← ⭐ 抽象基類（14 個共享安全機制：熔斷/SL/TP/倉位/日誌...）
-│   ├── runner.py          ← LiveRunner（Polling 模式，繼承 BaseRunner）
-│   ├── websocket_runner.py ← ⭐ WebSocketRunner（事件驅動，繼承 BaseRunner）
-│   ├── signal_generator.py ← 信號生成 → ⭐ SignalResult dataclass（型別安全）
-│   ├── binance_futures_broker.py ← Binance 合約 Broker（含 Maker 優先下單）
-│   ├── trading_db.py      ← ⭐ SQLite 交易資料庫
-│   ├── kline_cache.py     ← ⭐ 增量 K 線快取
-│   └── trading_state.py   ← 交易狀態持久化
-├── data/
-│   ├── binance_client.py  ← ⭐ BinanceHTTP 基類（retry / HMAC / fallback）
-│   ├── binance_futures_client.py ← BinanceFuturesHTTP（繼承 BinanceHTTP）
-│   ├── funding_rate.py    ← Funding Rate 下載/對齊
-│   ├── storage.py         ← Parquet 存取
-│   └── ...多數據源客戶端（yfinance, ccxt, binance_vision）
-├── risk/                  ← 風險管理 (position sizing, Kelly, Monte Carlo)
-├── monitor/               ← 健康檢查、通知、Telegram Bot
-└── utils/                 ← 日誌、安全、時間工具
+│   ├── base_runner.py     ← BaseRunner ABC (14 shared safety mechanisms)
+│   ├── runner.py          ← LiveRunner (Polling mode)
+│   ├── websocket_runner.py← WebSocketRunner (Event-driven, recommended)
+│   └── signal_generator.py← SignalResult dataclass
+├── validation/            ← WFA, DSR, PBO, CPCV, IC monitor
+├── data/                  ← Multi-source: Binance/yfinance/ccxt
+├── risk/                  ← Position sizing, Kelly, Monte Carlo
+├── monitor/               ← Health check, Telegram, notifier
+└── utils/                 ← Logging, security, time tools
 ```
 
 ---
 
-## 📚 文件索引
+## Current Production
 
-| 文件 | 行數 | 該看嗎？ | 內容 |
-|------|:----:|:--------:|------|
-| **CLI_REFERENCE.md** | ~350 | ⭐ **必看** | 你現在在看的這份（專案地圖） |
-| **QUICK_START_GUIDE.md** | ~3000 | 📖 查閱 | 完整教學（新手 → 部署 → FAQ），當百科全書查 |
-
----
-
-## 📊 reports/ 輸出結構
-
-```
-reports/{market_type}/{strategy}/{run_type}/{timestamp}/
-```
-
-| run_type | 內容 |
-|----------|------|
-| `backtest/` | 回測報告 (stats, equity curve, trades CSV) |
-| `portfolio/` | 組合回測 |
-| `validation/` | 驗證報告 (walk_forward, cost_sensitivity) |
-| `live/` | 交易狀態 + kline_cache + algo_orders_cache |
-
----
-
-## 🚧 當前專案狀態 (2026-02-18)
-
-### ✅ 已完成
-
-| 項目 | 內容 | 狀態 |
-|------|------|------|
-| **Prompt 2** | Walk-Forward + DSR + CPCV 驗證框架 | ✅ 完成 |
-| **Prompt 3** | 完整成本模型（Funding Rate + Volume Slippage + Sensitivity） | ✅ 完成 |
-| **P1 方案 A** | 風控參數優化：SL 2.5→2.0, CD 5→3（熱力圖掃描） | ✅ 完成 |
-| **P1 方案 B** | Funding Rate 過濾器（獨立因子，過濾擁擠交易） | ✅ 完成 |
-| **P4** | Dynamic RSI（Rolling Percentile 自適應閾值，對抗 Alpha Decay） | ✅ 完成 |
-| **執行優化** | Maker 優先下單（Taker 0.04% → Maker 0.02%，省一半手續費） | ✅ 完成 |
-| **WebSocket** | 事件驅動 Runner（延遲 5min → <1s，Oracle Cloud 1GB RAM 可跑） | ✅ 完成 |
-| **SQLite DB** | 結構化交易資料庫（trades / signals / daily_equity）+ CLI 查詢 | ✅ 完成 |
-| **波動率過濾器** | ATR/Price < 0.005 時不開倉，過濾低波動磨耗 | ✅ 完成 |
-| **HTF 軟趨勢過濾** | 4h EMA 連續權重（順趨勢 100% / 逆趨勢 50% / 無趨勢 75%） | ✅ 完成 |
-| **波動率目標倉位** | `target_volatility: 1.00`（100% 年化波動率目標） | ✅ 完成 |
-| **狀態機修復** | 平倉後不直接反手，強制回 Flat + cooldown 再入場 | ✅ 完成 |
-| **Alpha Decay 監控** | Rolling IC + 年度 IC + Telegram 警報（`monitor_alpha_decay.py`） | ✅ 完成 |
-| **P5 Ensemble** | RSI+MACD 組合策略（低相關 corr=0.15，Sharpe 提升） | ✅ 完成 |
-| **P6 時間框架** | 15m / 4h 配置檔已建立，供研究用 | ✅ 完成 |
-| **三幣→雙幣** | 嚴格回測（含 FR + 滑點）篩選，僅 ETH+SOL 存活 | ✅ 完成 |
-| **驗證工具審計** | 10 個驗證工具全面審計 + Bug 修復（Bootstrap Sharpe、成本模型） | ✅ 完成 |
-| **回測系統重構** | `BacktestResult` dataclass + `validate_backtest_config` 防快樂表 | ✅ 完成 |
-| **BaseRunner 基類** | 14 個共享安全機制；WS 1216→328 行（-73%），消除重複 | ✅ 完成 |
-| **SignalResult** | dataclass 取代 raw dict，型別安全 + IDE 自動補全 | ✅ 完成 |
-| **HTTP Client 繼承** | `BinanceFuturesHTTP` 繼承 `BinanceHTTP`（226→92 行，-59%） | ✅ 完成 |
-| **死代碼清理** | 刪除 `broker_interface.py`、`portfolio.py`，清理 exports | ✅ 完成 |
-| **BaseRunner 測試** | 14 個單元測試覆蓋熔斷、倉位計算、信號處理 | ✅ 完成 |
-
-### 🔲 待做
-
-| 項目 | 內容 | 優先級 | 說明 |
-|------|------|:------:|------|
-| **Ensemble 實盤** | 組合策略實盤驗證 | 🟡 中 | 需累積 Paper Trading 數據 |
-| **15m/4h 回測** | 不同時間框架績效比較 | 🔵 低 | 配置已備，需下載對應數據 |
-
-### 🆕 重大變更 (2026-02-18)
-
-| 項目 | 內容 | 狀態 |
-|------|------|------|
-| **Look-Ahead Bias 修復** | RSI 策略發現系統性 look-ahead（close[i] 信號在 open[i] 執行），修正後 RSI 均值回歸虧損 -85%~-93% | ✅ 已修復 |
-| **TSMOM 策略** | 新開發 Time-Series Momentum 策略（4 個變體），通過 5 項 look-ahead 審計 | ✅ 已完成 |
-| **signal_delay 機制** | StrategyContext 新增 signal_delay，trade_on=next_open 時自動延遲 1 bar | ✅ 已完成 |
-| **策略切換** | 主力從 `rsi_adx_atr` → `tsmom_ema`（動量策略取代均值回歸） | ✅ 已完成 |
-
-### ⚠️ 已知風險
-
-- **RSI 均值回歸已死**: 修正 look-ahead 後返回 -85%~-93%，Alpha 100% 來自看到未來（均值回歸是 bar 內效應）
-- **TSMOM 預期績效**: Sharpe 0.3~1.0，年化 5%~30%，MDD 8%~25%（某些年份可能微負）
-- **動量因子風險**: 動量策略在趨勢反轉時會虧損（如 V 型反轉），需靠多 lookback 集成分散
-
----
-
-## 🏗️ 當前 Oracle 部署配置
-
-```
-交易對:    ETHUSDT, SOLUSDT（雙幣）
-策略:      tsmom_ema（Time-Series Momentum + EMA 趨勢對齊）
-           lookback=168(7d), vol_target=15%, ema=20/50
-           agree=1.0, disagree=0.3, vol_regime=off
-倉位分配:  各 100%（總曝險 200%）
-槓桿:      5x ISOLATED（保證金佔用 40%）
-倉位計算:  fixed（× allocation 權重）
-執行模式:  WebSocket 事件驅動（tmux session: trading）
-執行架構:  BaseRunner → WebSocketRunner（繼承，共享 14 個安全機制）
-熔斷線:    65%
+```yaml
+config: prod_live_R3C_E3.yaml
+strategy: tsmom_ema
+symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, LTCUSDT] (10 coins)
+interval: 1h
+leverage: 3x ISOLATED
+direction: both
 ```
 
 ---
 
-## 🚀 Oracle Cloud 部署方式
-
-### 方式 A：WebSocket 事件驅動（推薦，延遲 <1 秒）
+## Quick Commands
 
 ```bash
-# 1. 配置 Swap（1GB RAM 機器必備，只需跑一次）
-bash scripts/setup_swap.sh
+# Backtest (production config)
+PYTHONPATH=src python scripts/run_backtest.py -c config/prod_live_R3C_E3.yaml
 
-# 2. 用 tmux 啟動 WebSocket Runner（含自動重啟）
-tmux kill-session -t trading 2>/dev/null
-tmux new -d -s trading 'while true; do
-  cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
-  PYTHONPATH=src python scripts/run_websocket.py -c config/futures_tsmom.yaml --real;
-  echo "⚠️ Runner 退出，10秒後自動重啟..."; sleep 10;
-done'
+# Walk-Forward validation
+PYTHONPATH=src python scripts/run_walk_forward.py -c config/prod_live_R3C_E3.yaml --splits 6
 
-# 3. 等待啟動後查看日誌
-sleep 10 && tmux capture-pane -t trading -p | tail -20
+# Full validation pipeline
+PYTHONPATH=src python scripts/validate.py -c config/prod_live_R3C_E3.yaml --quick
 
-# 4. 查看 log
-tmux attach -t trading       # 進入 tmux（Ctrl+B D 離開）
+# Download data
+PYTHONPATH=src python scripts/download_data.py -c config/prod_live_R3C_E3.yaml
 
-# 5. 重啟
-tmux kill-session -t trading
-# 然後重新執行步驟 2
-```
+# Live trading (WebSocket, recommended)
+PYTHONPATH=src python scripts/run_websocket.py -c config/prod_live_R3C_E3.yaml --real
 
-### 方式 B：Cron 定時（傳統，延遲 ~5 分鐘）
+# Dry-run test
+PYTHONPATH=src python scripts/run_live.py -c config/prod_live_R3C_E3.yaml --real --dry-run --once
 
-```bash
-# crontab -e
-5 * * * * cd ~/quant-binance-spot && source .venv/bin/activate && python scripts/run_live.py -c config/futures_tsmom.yaml --real --once >> logs/futures_live.log 2>&1
-```
+# Query trading DB
+PYTHONPATH=src python scripts/query_db.py -c config/prod_live_R3C_E3.yaml summary
 
-> ⚠️ **兩種方式不可同時使用**。用 WebSocket 時要把 cron 裡的 `run_live.py` 註解掉。
-
-### 更新部署（加幣 / 改參數）
-
-```bash
-# 在本機改好 config，commit + push 後：
-ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255
-cd ~/quant-binance-spot
-git stash && git pull   # stash 本地改動再拉
-
-# 如果加了新幣，下載 K 線 + Funding Rate
-source .venv/bin/activate
-PYTHONPATH=src python scripts/download_data.py -c config/futures_tsmom.yaml
-PYTHONPATH=src python scripts/download_data.py -c config/futures_tsmom.yaml --funding-rate
-
-# 重啟 runner
-tmux attach -t trading   # Ctrl+C 停舊的
-PYTHONPATH=src python scripts/run_websocket.py -c config/futures_tsmom.yaml --real
-# Ctrl+B, d 離開（或直接關 SSH 視窗）
+# Re-generate this file
+PYTHONPATH=src python scripts/gen_cli_reference.py
 ```
 
 ---
 
-## 💡 快速提示
+## Documentation Index
 
-```bash
-# 任何腳本的幫助
-python scripts/<script>.py --help
+| Doc | Description |
+|-----|-------------|
+| [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
+| [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
+| [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
+| [`R3C_SYMBOL_GOVERNANCE_SPEC.md`](docs/R3C_SYMBOL_GOVERNANCE_SPEC.md) | R3C Symbol Governance Spec |
+| [`STRATEGY_DEV_PLAYBOOK_R2_1.md`](docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) | Strategy Development Playbook (R2.1) |
 
-# Oracle 部署後更新
-ssh ubuntu@<IP>
-cd ~/quant-binance-spot && git pull && ./scripts/setup_cron.sh --update
-
-# 查看實盤 log
-tail -100 /home/ubuntu/quant-binance-spot/logs/websocket.log    # WebSocket 模式
-tail -100 /home/ubuntu/quant-binance-spot/logs/futures_live.log  # Cron 模式
-
-# 查詢交易資料庫
-python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml summary
-python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml trades --limit 20
-python scripts/query_db.py -c config/futures_rsi_adx_atr.yaml export  # 匯出 CSV
-
-# 查看當前持倉
-python -c "
-from qtrade.live.binance_futures_broker import BinanceFuturesBroker
-b = BinanceFuturesBroker(dry_run=True)
-for p in b.get_positions():
-    print(f'{p.symbol} [{p.position_side}]: qty={p.qty:+.6f} pnl=\${p.unrealized_pnl:+,.2f}')
-"
-```
+> **Archive**: 4 historical docs in `docs/archive/`.

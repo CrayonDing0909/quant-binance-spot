@@ -240,6 +240,41 @@ live:
   flip_confirmation: false
   prefer_limit_order: true
   limit_order_timeout_s: 10
+
+  # ── Symbol Governance: Negative Edge Filter + Kill-List/Quarantine ──
+  # Weekly review → de-weight or quarantine symbols with persistent negative edge.
+  # When disabled (enabled: false), all weights remain unchanged (backward compatible).
+  symbol_governance:
+    enabled: false            # SAFETY: start disabled; enable after Phase 2
+    review_frequency: "weekly"
+    warmup_days: 14
+    quarantine_min_days: 14
+    consecutive_reviews_for_quarantine: 2
+    consecutive_reviews_for_recovery: 2
+    artifacts_dir: "reports/symbol_governance"
+
+    thresholds:
+      edge_sharpe_deweight: 0.3
+      edge_sharpe_quarantine: 0.0
+      edge_sharpe_recover_active: 0.8
+      edge_sharpe_recover_from_quarantine: 0.5
+      edge_per_turnover_min: 0.0
+      slippage_ratio_deweight: 1.5
+      slippage_ratio_quarantine: 1.8
+      slippage_ratio_recover_active: 1.2
+      slippage_ratio_recover_from_quarantine: 1.3
+      consistency_min: 99.0
+      consistency_recover: 99.5
+      missed_signals_quarantine: 5.0
+      dd_quarantine_pct: 25.0
+
+    weights:
+      active_multiplier: 1.0
+      deweight_multiplier: 0.5
+      quarantine_multiplier: 0.0
+      min_weight: 0.03
+      max_weight: 0.20
+
   watchdog:
     enabled: true
     interval_sec: 300

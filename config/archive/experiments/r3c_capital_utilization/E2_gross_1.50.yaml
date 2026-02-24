@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E2: Gross 1.50x
+# ═══════════════════════════════════════════════════════════════
+# 目的：將名義曝險提升至 ≈ 1.50x
+# 做法：所有幣種權重等比例放大 1.50 倍
+# 改動：
+#   - gross_multiplier: 1.0 → 1.50
+#   - 策略信號邏輯不變、風控參數不變
+#   - 注意：此組的 MDD 預期 ≈ 1.5x baseline MDD
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E2"
+  name: "Weight Multiplier 1.50x"
+  description: "權重等比例放大到總曝險 ≈ 1.50x"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 1.50
+
+  overrides: {}

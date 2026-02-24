@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E1: Gross 1.25x
+# ═══════════════════════════════════════════════════════════════
+# 目的：將名義曝險（gross exposure）提升至 ≈ 1.25x
+# 做法：所有幣種權重等比例放大 1.25 倍（保持相對比例不變）
+# 改動：
+#   - gross_multiplier: 1.0 → 1.25
+#   - 策略信號邏輯不變、風控參數不變
+#   - 實質效果：組合資金曲線收益/風險同步放大 25%
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E1"
+  name: "Weight Multiplier 1.25x"
+  description: "權重等比例放大到總曝險 ≈ 1.25x"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 1.25
+
+  overrides: {}

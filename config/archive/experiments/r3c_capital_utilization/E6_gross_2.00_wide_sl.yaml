@@ -1,0 +1,21 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E6: Gross 2.00x + 寬災難 SL
+# ═══════════════════════════════════════════════════════════════
+# 目的：在 2.00x 曝險下加入寬災難級止損
+# 做法：
+#   - gross_multiplier: 2.00（同 E4）
+#   - BTC breakout_vol_atr 的 stop_loss_atr: 3.5 → 4.0
+# 改動：
+#   - gross_multiplier: 1.0 → 2.00
+#   - BTC stop_loss_atr: 3.5 → 4.0
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E6"
+  name: "Weight Multiplier 2.00x + Wide SL"
+  description: "E4 + BTC 災難 SL 放寬到 4.0 ATR"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 2.00
+
+  overrides:
+    btc_stop_loss_atr: 4.0

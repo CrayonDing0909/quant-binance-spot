@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E4: Gross 2.00x
+# ═══════════════════════════════════════════════════════════════
+# 目的：將名義曝險提升至 ≈ 2.00x（目標上限）
+# 做法：所有幣種權重等比例放大 2.00 倍
+# 改動：
+#   - gross_multiplier: 1.0 → 2.00
+#   - 策略信號邏輯不變、風控參數不變
+#   - 風險：MDD 可能觸及 6%+、保證金使用率接近上限
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E4"
+  name: "Weight Multiplier 2.00x"
+  description: "權重等比例放大到總曝險 ≈ 2.00x"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 2.00
+
+  overrides: {}

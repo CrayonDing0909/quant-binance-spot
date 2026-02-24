@@ -1,0 +1,96 @@
+---
+globs: scripts/research_*.py,notebooks/**/*.ipynb,docs/research/**
+---
+# Research Methodology Rules
+
+These rules apply to all research-related files: exploratory scripts, Jupyter notebooks, and research documentation.
+
+## 1. Research Notebook Standards
+
+Every research Notebook (`notebooks/research/`) MUST contain these sections in order:
+
+1. **Hypothesis**: A clear, falsifiable statement of what you expect and why.
+2. **Data Description**: Sources used, time range, frequency, coverage percentage, known gaps.
+3. **EDA**: Distributions, correlations, time-series characteristics, regime analysis.
+4. **Feature Engineering**: How raw data is transformed into candidate signals/features.
+5. **Preliminary Signal**: Initial IC (Information Coefficient), rank IC, quintile spreads, or simple long/short returns.
+6. **Limitations**: Known biases, data gaps, survivorship issues, latency assumptions.
+7. **Conclusion**: Is this worth pursuing? Explicit YES/NO with reasoning.
+
+Naming convention: `YYYYMMDD_<topic>_<phase>.ipynb` (e.g., `20260224_funding_basis_exploration.ipynb`).
+
+## 2. Strategy Proposal Template
+
+Before handing off to Quant Developer, the Alpha Researcher MUST produce a structured Strategy Proposal in `docs/research/YYYYMMDD_<name>_proposal.md`. The proposal MUST fill ALL fields from the template defined in `.cursor/agents/alpha-researcher.md`:
+
+- Hypothesis, Mechanism, Market Regime Target
+- Expected Edge Source
+- On-chain / Alternative Data Dependencies (with coverage table)
+- Primary Risk / Failure Mode
+- Data Requirements & Coverage Check
+- Ablation Plan
+- Validation Gates checklist
+- Promotion Criteria (quantitative thresholds)
+- Rollback Criteria
+
+Incomplete proposals MUST NOT be passed to Quant Developer.
+
+## 3. Anti-Cherry-Picking in Research Phase
+
+- Report ALL results, not just favorable ones.
+- If you test N parameter combinations, document all N (or provide distribution summary).
+- Do not delete failed experiments from notebooks — mark them as "failed" with explanation.
+- When showing IC or returns, always include the full sample period, not cherry-picked windows.
+- If using multiple data sources, report results from each separately before combining.
+
+## 4. On-Chain Data Usage Guidelines
+
+### Coverage Gate
+- Minimum 70% coverage required (target 90%) before any signal can use on-chain data.
+- Coverage = (non-null bars) / (total expected bars in the time range).
+- If coverage < 70%, the signal MUST be marked as `EXPERIMENTAL` and cannot enter validation.
+
+### Latency Awareness
+- On-chain data typically has 1-15 minute latency depending on provider.
+- Document the expected latency for each on-chain data source.
+- For backtesting, apply appropriate delay to on-chain features (similar to `signal_delay`).
+- Never assume on-chain data is available at the same timestamp as kline close.
+
+### Provider Reliability
+- Document the data provider (e.g., Glassnode, Dune, Coinglass, direct RPC).
+- Note if the provider has historical outages or data revisions.
+- For live trading signals that depend on on-chain data, ensure fallback behavior when data is unavailable.
+
+## 5. Research Output Paths
+
+```
+notebooks/research/           ← Jupyter exploration notebooks
+docs/research/                ← Strategy proposals and research summaries
+reports/research/<topic>/     ← Generated reports and figures
+scripts/research_*.py         ← Standalone research scripts
+config/research_*.yaml        ← Research-specific configurations
+```
+
+- NEVER put research outputs in production paths (`config/futures_*.yaml`, `reports/futures/live/`).
+- Research configs MUST be prefixed with `research_` to prevent accidental production use.
+- Keep notebooks self-contained: include data loading, not just analysis.
+
+## 6. Research Script Standards
+
+Research scripts (`scripts/research_*.py`) MUST:
+
+1. Have a docstring explaining the hypothesis being tested.
+2. Save results to `reports/research/<topic>/<timestamp>/`.
+3. Generate both human-readable (`.md`) and machine-readable (`.json`) output.
+4. Use `PYTHONPATH=src` and import from `qtrade.*` (not relative imports).
+5. Include a `if __name__ == "__main__":` block with argparse for reproducibility.
+6. Set a random seed for any stochastic process.
+
+## 7. Data Quality Before Research
+
+Before using any dataset in research:
+
+1. Run `DataQualityChecker.validate()` from `src/qtrade/data/quality.py`.
+2. Document the `DataQualityReport` results in the notebook.
+3. If `is_valid == False`, fix data issues before proceeding (or document why you proceed despite issues).
+4. For new data sources not yet integrated, document the ingestion pipeline needed.

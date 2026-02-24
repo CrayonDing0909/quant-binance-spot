@@ -1,0 +1,177 @@
+---
+globs: "*.py"
+---
+# Python Coding Standards & Architecture Guardrails
+
+These rules apply to ALL Python files. Every agent MUST follow these when writing or modifying code.
+
+## 1. Runtime & Environment
+
+- Python 3.11 (venv symlink). Activate: `source .venv/bin/activate`
+- Scripts run with: `PYTHONPATH=src python scripts/<script>.py`
+- Install packages: `python3.11 -m pip install <pkg>` (ensures correct site-packages)
+- Tests: `python -m pytest tests/ -x -q --tb=short`
+
+## 2. Imports
+
+```python
+# Standard library (always first)
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# Third party
+import numpy as np
+import pandas as pd
+import vectorbt as vbt
+
+# Project (absolute imports only)
+from qtrade.config import AppConfig, load_config
+from qtrade.strategy.base import StrategyContext
+from qtrade.backtest.run_backtest import BacktestResult, run_symbol_backtest
+```
+
+- Use absolute imports from `qtrade.*` — NEVER use relative imports (`../`, `.module`)
+- Group: stdlib → third-party → project, separated by blank lines
+
+## 3. Type Hints & Dataclasses
+
+- Use type hints on ALL function signatures (arguments + return type)
+- Use `from __future__ import annotations` for modern syntax (`str | None`, `list[str]`)
+- Prefer `@dataclass` for structured data over plain `dict` — see `BacktestResult`, `SignalResult`, `AppConfig`
+- Use `@dataclass(frozen=True)` for immutable config/context objects (see `StrategyContext`)
+
+## 4. Logging — STRICT
+
+- **In `src/qtrade/`**: Use `from qtrade.utils.log import get_logger` — NEVER `import logging` directly
+- **In `scripts/`**: `print()` is allowed for report/CLI output only
+- **In `src/qtrade/`**: `print()` is FORBIDDEN — use `logger.info()` or `logger.debug()`
+- Logger instance: `logger = get_logger(__name__)`
+- Tracebacks: `logger.exception("message")` — NEVER `logger.error(str(e))`
+- Sensitive data: `get_logger()` auto-applies `SecretFilter` — never log API keys/secrets manually
+
+## 5. Error Handling — STRICT
+
+- **NEVER** use bare `except:` — always `except Exception:` at minimum, prefer specific exceptions
+- API calls (Binance): must handle `requests.exceptions.RequestException`, use retry with backoff
+- Data loading failures: MUST raise, never silently return empty DataFrame
+- Live trading errors: log + Telegram notification (`from qtrade.monitor.notifier import ...`)
+- Backtest/validation errors: clear error message with what failed and why
+
+```python
+# BAD
+try:
+    data = load_data(symbol)
+except:
+    data = pd.DataFrame()  # Silent failure — FORBIDDEN
+
+# GOOD
+try:
+    data = load_data(symbol)
+except FileNotFoundError:
+    logger.error(f"Data file not found for {symbol}")
+    raise
+except Exception:
+    logger.exception(f"Unexpected error loading {symbol}")
+    raise
+```
+
+## 6. Config Access
+
+- Load: `cfg = load_config("config/xxx.yaml")`
+- Market type: `cfg.market_type_str` (returns `"spot"` or `"futures"`)
+- Direction: `cfg.direction` (returns `"both"`, `"long_only"`, `"short_only"`)
+- Backtest kwargs: `cfg.to_backtest_dict()` — NEVER manually assemble
+- Strategy params: `cfg.strategy.get_params(symbol)` — NEVER hardcode params
+- Research configs: `config/research_*.yaml` — NEVER modify production configs (`config/futures_*.yaml`)
+
+## 7. Strategy Architecture Pattern
+
+ALL strategies MUST follow this pattern:
+
+```python
+@register_strategy("my_strategy")
+def generate_positions(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.Series:
+    """
+    策略名稱 — 一行描述
+
+    策略邏輯詳細說明。
+    """
+    # 1. 計算指標
+    # 2. 生成 raw signal [-1, 1]
+    # 3. 回傳 — 框架自動處理 signal_delay + direction clip
+    return pos
+```
+
+Rules:
+- ALL strategies MUST use `@register_strategy` decorator
+- Function signature: `(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.Series`
+- Return raw position `[-1, 1]` — framework handles `signal_delay` shift and `direction` clip automatically
+- Do NOT call `.shift()` or `.clip()` in strategy code unless `auto_delay=False` (advanced: only for strategies with exit rules that need pre-shift processing)
+- Use `ctx.is_futures`, `ctx.can_long`, `ctx.can_short` for conditional logic
+- Import indicators from `qtrade.indicators` — do NOT reimplement RSI/ATR/EMA etc.
+
+## 8. New Module Checklist
+
+When creating a new module under `src/qtrade/`:
+
+1. Add `__init__.py` that exports public API with `__all__`
+2. ALL public classes/functions MUST have docstrings (Google style)
+3. Use `@dataclass` for return types (not raw `dict`)
+4. Add the module to the project overview if it's a major component
+5. If the module has dependencies not in `requirements.txt`, add them
+
+## 9. Script Standards
+
+Scripts in `scripts/` MUST:
+
+1. Have a module docstring explaining purpose and usage
+2. Use `argparse` for CLI arguments (reproducibility)
+3. Include `if __name__ == "__main__":` guard
+4. Save results to `reports/` with timestamp subdirectory
+5. Generate both `.md` (human) and `.json` (machine) output where applicable
+6. Set random seed for any stochastic process (`np.random.seed(42)` or `--seed` flag)
+
+```python
+#!/usr/bin/env python3
+"""
+Script Name — 一行描述
+
+Usage:
+    PYTHONPATH=src python scripts/my_script.py -c config/research_xxx.yaml
+"""
+from __future__ import annotations
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+def main():
+    parser = argparse.ArgumentParser(description="...")
+    parser.add_argument("-c", "--config", required=True)
+    args = parser.parse_args()
+    # ...
+
+if __name__ == "__main__":
+    main()
+```
+
+## 10. Testing Standards
+
+- Test files: `tests/test_*.py`
+- Strategy tests MUST include look-ahead bias checks (see `test_strategy_no_lookahead.py`)
+- Use `pytest` fixtures for shared setup
+- Mock external APIs (Binance) in unit tests — never call real APIs in CI
+- Test both spot and futures modes for strategy/backtest code
+
+## 11. Code Style
+
+- Follow PEP 8
+- Max line length: 120 characters (not 79 — we use modern editors)
+- Use f-strings for formatting (not `.format()` or `%`)
+- Constants: `UPPER_SNAKE_CASE`
+- Classes: `PascalCase`
+- Functions/variables: `snake_case`
+- Private methods: `_leading_underscore`
+- Docstrings: Google style (Args, Returns, Raises sections)

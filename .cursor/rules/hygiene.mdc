@@ -1,0 +1,89 @@
+---
+description: Project hygiene — keep docs fresh, archive dead artifacts
+globs:
+alwaysApply: true
+---
+
+# Project Hygiene Rules
+
+These rules prevent documentation rot and config sprawl. ALL agents must follow them.
+
+## 1. CLI_REFERENCE.md is Auto-Generated
+
+`docs/CLI_REFERENCE.md` is produced by `scripts/gen_cli_reference.py`. **Never edit it by hand.**
+
+When to regenerate:
+- After adding, renaming, or removing any script in `scripts/`
+- After adding, renaming, or removing any config in `config/`
+- After changing a script's argparse `description=`
+
+Command:
+```bash
+PYTHONPATH=src python scripts/gen_cli_reference.py
+```
+
+## 2. Archive Completed Research
+
+When a research round is finished (promoted to production OR abandoned):
+
+1. Move research configs to `config/archive/`:
+   ```bash
+   mv config/research_<round>_*.yaml config/archive/
+   ```
+2. Move one-off research scripts to `scripts/archive/`:
+   ```bash
+   mv scripts/run_<round>_*.py scripts/archive/
+   ```
+3. Regenerate CLI_REFERENCE.md (see above)
+
+Do NOT delete files — move them to `archive/` so git history remains navigable.
+
+## 3. Doc Freshness Headers
+
+Every living doc in `docs/` (except CLI_REFERENCE.md which is auto-generated) MUST have a header like:
+
+```markdown
+> **Last updated**: YYYY-MM-DD
+```
+
+When you modify code that a doc describes, update the `Last updated` date in that doc.
+
+### Living docs and their triggers:
+
+| Doc | Update when... |
+|-----|---------------|
+| `STRATEGY_DEV_PLAYBOOK_R2_1.md` | Methodology or lifecycle changes |
+| `R3C_STRATEGY_OVERVIEW.md` | Production strategy changes |
+| `R3C_SYMBOL_GOVERNANCE_SPEC.md` | Symbol governance logic changes |
+| `CURSOR_WORKFLOW.md` | Agent roles or workflow changes |
+
+## 4. Config Naming Convention
+
+| Prefix | Meaning | Location |
+|--------|---------|----------|
+| `futures_<strategy>.yaml` | Strategy definition (reusable) | `config/` |
+| `prod_live_*.yaml` | Frozen production config | `config/` |
+| `prod_candidate_*.yaml` | Production candidate (under review) | `config/` |
+| `prod_scale_rules_*.yaml` | Scale-up/down rules | `config/` |
+| `risk_guard_*.yaml` | Risk guard rules | `config/` |
+| `research_*.yaml` | Active research experiment | `config/` |
+| (completed) | Archived | `config/archive/` |
+
+New research configs MUST use the `research_` prefix.
+
+## 5. No Ghost References
+
+Before mentioning a script or config path in any doc, code comment, or agent output:
+- Verify the file exists at the referenced path
+- If it was archived, update the reference or remove it
+
+## 6. Directory Structure Summary
+
+```
+config/                    ← Active configs only (~15)
+config/archive/            ← Deprecated / completed research configs
+scripts/                   ← Active scripts only (~30)
+scripts/archive/           ← One-off research / migration scripts
+docs/                      ← Living documentation (~5 files)
+docs/archive/              ← Historical / superseded docs
+```

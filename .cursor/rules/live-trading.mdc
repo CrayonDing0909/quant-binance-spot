@@ -1,0 +1,53 @@
+---
+globs: src/qtrade/live/*.py,scripts/run_live.py,scripts/run_websocket.py
+---
+# Live Trading Rules
+
+Triggered when editing live trading code. Production safety is paramount.
+
+## Architecture
+
+- **BaseRunner** ([base_runner.py](mdc:src/qtrade/live/base_runner.py)) — ABC with 14 shared safety mechanisms:
+  drawdown circuit breaker, position calculator, SL/TP cooldown, orphan order cleanup,
+  SL/TP re-placement, direction-error TP detection, unnecessary rebalance prevention,
+  direction switch confirmation, signal state persistence, SQLite logging, periodic summary
+- **LiveRunner** ([runner.py](mdc:src/qtrade/live/runner.py)) — Polling mode (cron), inherits BaseRunner
+- **WebSocketRunner** ([websocket_runner.py](mdc:src/qtrade/live/websocket_runner.py)) — Event-driven, inherits BaseRunner
+
+New runner types MUST inherit `BaseRunner`. Never duplicate safety mechanisms.
+
+## Critical Safety Rules
+
+1. **Direction from config**: `cfg.direction` — never hardcode in runner code
+2. **Position sizing clip**: `_apply_position_sizing` clips to `[-1, 1]` — NOT `[0, 1]`
+3. **Spot negative clip**: Happens in `runner.run_once()` line ~367-369, NOT in position_sizing
+4. **After reducing position**: MUST re-place SL/TP orders
+5. **Paper broker precision**: Close position when >= 98% to handle floating point
+6. **Flip confirmation**: Direction switch requires confirmation when `flip_confirmation=True`
+7. **Circuit breaker**: Triggers at `max_drawdown_pct` — all trading stops
+
+## Broker Interface
+
+- `broker.execute_target_position(symbol, target_pct, price)` — single call handles direction switch
+- Supports Maker-priority orders (Taker 0.04% → Maker 0.02%)
+- [binance_futures_broker.py](mdc:src/qtrade/live/binance_futures_broker.py) inherits [binance_spot_broker.py](mdc:src/qtrade/live/binance_spot_broker.py)
+
+## SignalResult
+
+All signals use `SignalResult` dataclass ([signal_generator.py](mdc:src/qtrade/live/signal_generator.py)):
+- `symbol`, `signal` (target position), `price`, `timestamp`, `strategy`, `indicators`
+- Type-safe with IDE autocomplete — never use raw dicts
+
+## Deployment (Oracle Cloud)
+
+- WebSocket mode via tmux (`r3c_e3_live`): `run_websocket.py -c config/prod_live_R3C_E3.yaml --real`
+- Health check: `scripts/health_check.py -c config/prod_live_R3C_E3.yaml --real --notify`
+- DB query: `scripts/query_db.py -c config/prod_live_R3C_E3.yaml summary`
+- Logs: `~/quant-binance-spot/logs/websocket.log`
+
+## Anti-Patterns (DO NOT)
+
+- Do NOT bypass BaseRunner safety mechanisms
+- Do NOT write direct Binance API calls outside broker classes
+- Do NOT use `--real` flag in tests or development — always `--paper` or `--dry-run`
+- Do NOT restart live runner without checking current positions first

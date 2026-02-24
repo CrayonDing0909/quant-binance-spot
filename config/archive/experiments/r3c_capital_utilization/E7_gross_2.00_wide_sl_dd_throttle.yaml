@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E7: Gross 2.00x + 寬 SL + DD Throttle
+# ═══════════════════════════════════════════════════════════════
+# 目的：在 2.00x 曝險下同時啟用寬 SL 和 Portfolio DD Throttle
+# 做法：
+#   - gross_multiplier: 2.00（同 E4/E6）
+#   - BTC breakout_vol_atr 的 stop_loss_atr: 3.5 → 4.0
+#   - DD Throttle:
+#     dd_on: 8%（投組回撤 > 8% 時啟動）
+#     dd_off: 5%（回撤恢復到 < 5% 時關閉）
+#     scale: 0.50（throttle 啟動時曝險縮至 50%）
+# 改動：
+#   - gross_multiplier: 1.0 → 2.00
+#   - BTC stop_loss_atr: 3.5 → 4.0
+#   - dd_throttle: enabled, dd_on=0.08, dd_off=0.05, scale=0.50
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E7"
+  name: "Weight Multiplier 2.00x + Wide SL + DD Throttle"
+  description: "E4 + BTC SL 4.0 ATR + Portfolio DD Throttle (8%/5%/50%)"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 2.00
+
+  overrides:
+    btc_stop_loss_atr: 4.0
+    dd_throttle:
+      enabled: true
+      dd_on: 0.08
+      dd_off: 0.05
+      scale: 0.50

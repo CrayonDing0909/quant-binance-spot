@@ -1,4 +1,3 @@
-
 # Strategy Development Playbook (R2.1)
 
 This playbook captures the end-to-end process used to evolve from R1 -> R2 -> R2.1.

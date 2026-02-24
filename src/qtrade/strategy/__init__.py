@@ -106,3 +106,5 @@ from . import breakout_vol_strategy  # noqa: E402
 from . import funding_carry_strategy  # noqa: E402
 from . import mr_microstructure_strategy  # noqa: E402
 from . import oi_bb_rv_strategy  # noqa: E402
+from . import mean_revert_liquidity  # noqa: E402
+from . import x_model_weekend  # noqa: E402

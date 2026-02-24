@@ -1,0 +1,42 @@
+---
+globs: src/qtrade/strategy/*.py,src/qtrade/strategy/**/*.py
+---
+# Strategy Development Rules
+
+Triggered when editing strategy source files. Follow these conventions strictly.
+
+## Strategy Architecture
+
+- All strategies receive `(df, ctx: StrategyContext, params: dict)` and return `pd.Series` of positions
+- `StrategyContext` MUST include `market_type` and `direction` — check [base.py](mdc:src/qtrade/strategy/base.py)
+- Use `ctx.supports_short`, `ctx.is_futures`, `ctx.can_long`, `ctx.can_short` for conditional logic
+- `signal_delay`: when `ctx.signal_delay > 0`, the position series is shifted automatically — strategies do NOT need to handle this
+
+## Signal Output Convention
+
+- Output raw positions in `[-1, 1]` range (even for Spot strategies)
+- Clipping to market-appropriate range is done downstream by `clip_positions_by_direction()`
+- NEVER manually clip inside the strategy function — use the shared utility
+
+## Development Lifecycle
+
+Follow [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md):
+
+1. **Baseline Freeze** — Record current production KPIs (Return, CAGR, Sharpe, MaxDD, Calmar)
+2. **Hypothesis** — Write: hypothesis, mechanism, failure mode, scope
+3. **Implementation** — Add as opt-in (default disabled), backward compatible, use `config/research_*.yaml`
+4. **Validation** — Must pass in order: Causality → Backtest → Generalization → Delay fragility
+5. **Ablation** — Test components independently (A only, B only, A+B)
+6. **Decision** — Only 4 verdicts: `GO_NEXT`, `KEEP_BASELINE`, `NEED_MORE_WORK`, `FAIL`
+7. **Rollout** — Paper gate >= 7-14 days → Capital ramp 25% → 50% → 100%
+
+## Anti-Patterns (DO NOT)
+
+- Do NOT use `close[i]` to generate signals that execute at `open[i]` — this is look-ahead bias
+- Do NOT hardcode `direction` in strategy — it comes from `ctx.direction`
+- Do NOT modify production config (`config/prod_live_R3C_E3.yaml`) during research
+- Do NOT skip the ablation step when adding multiple components
+
+## Reference Implementation
+
+See [tsmom_strategy.py](mdc:src/qtrade/strategy/tsmom_strategy.py) for the current production strategy pattern.

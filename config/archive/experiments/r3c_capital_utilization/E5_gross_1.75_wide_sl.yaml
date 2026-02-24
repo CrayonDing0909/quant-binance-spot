@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════════════════
+# R3C Capital Utilization Experiment — E5: Gross 1.75x + 寬災難 SL
+# ═══════════════════════════════════════════════════════════════
+# 目的：在 1.75x 曝險下加入更寬的災難級止損，測試風控補強效果
+# 做法：
+#   - gross_multiplier: 1.75（同 E3）
+#   - BTC breakout_vol_atr 的 stop_loss_atr: 3.5 → 4.0
+#     (止損更寬 → 減少因波動被洗出的假止損，但單次虧損更大)
+# 改動：
+#   - gross_multiplier: 1.0 → 1.75
+#   - BTC stop_loss_atr: 3.5 → 4.0
+# ═══════════════════════════════════════════════════════════════
+
+experiment:
+  id: "E5"
+  name: "Weight Multiplier 1.75x + Wide SL"
+  description: "E3 + BTC 災難 SL 放寬到 4.0 ATR"
+  base_config: "config/prod_candidate_R3C_universe.yaml"
+  gross_multiplier: 1.75
+
+  overrides:
+    btc_stop_loss_atr: 4.0
