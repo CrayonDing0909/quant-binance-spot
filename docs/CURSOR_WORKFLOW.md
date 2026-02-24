@@ -3,6 +3,7 @@
 > **Last updated**: 2026-02-24
 
 > 日常開發時的 prompt 參考。5 個 Agent、什麼時候用誰、怎麼下 prompt。
+> Slash commands 可用 `/` 快速觸發常用流程，見下方「Slash Commands」段落。
 
 ---
 
@@ -31,6 +32,31 @@
 | 加新幣 / 下載數據 | `@devops` | `幫 config 加入 AAVEUSDT 並下載數據` |
 | 修 bug / 重構程式碼 | `@quant-developer` | `重構 xxx 模組，把 print 改成 logger` |
 | 跑測試 | 任何 Agent | `跑一下 pytest 確認沒壞東西` |
+
+---
+
+## Slash Commands（快捷指令）
+
+常用的 prompt 已做成 slash command，存放在 `.cursor/commands/`。
+在 Chat 輸入框打 `/` 就會看到可用指令，選擇後會自動填入完整 prompt。
+
+| Command | Agent | 用途 |
+|---------|-------|------|
+| `/deploy` | `@devops` | 部署最新改動到 Oracle Cloud（git push → pull → 重啟） |
+| `/healthcheck` | `@devops` | 完整健康檢查（runner 狀態、持倉、系統資源） |
+| `/backtest` | `@quant-developer` | 跑回測 + WFA（需填入 config 路徑） |
+| `/risk-review` | `@risk-manager` | 每週風控快速檢查 |
+| `/research-audit` | `@quant-researcher` | 審查回測結果（需填入報告路徑） |
+
+> **帶有 `<填入...>` 的指令**：選擇 command 後，把 placeholder 替換成實際路徑再送出。
+
+### 新增自訂 Command
+
+如果有新的常用流程想做成 command：
+
+1. 在 `.cursor/commands/` 建立 `<command-name>.md`
+2. 檔案內容就是完整 prompt（包含 `@agent` tag）
+3. 重啟 Cursor 或重新載入後即可使用 `/<command-name>`
 
 ---
 
