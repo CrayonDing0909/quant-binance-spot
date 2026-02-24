@@ -108,3 +108,4 @@ from . import mr_microstructure_strategy  # noqa: E402
 from . import oi_bb_rv_strategy  # noqa: E402
 from . import mean_revert_liquidity  # noqa: E402
 from . import x_model_weekend  # noqa: E402
+from . import oi_liq_bounce_strategy  # noqa: E402

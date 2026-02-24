@@ -1,0 +1,36 @@
+# 大型資料檔（可重新下載）
+data/
+reports/
+
+# Archive（已完成/棄用的舊檔案）
+config/archive/
+scripts/archive/
+docs/archive/
+
+# 虛擬環境與依賴
+.venv/
+node_modules/
+*.egg-info/
+
+# 編譯產物
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+
+# 日誌與暫存
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 測試快取
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage

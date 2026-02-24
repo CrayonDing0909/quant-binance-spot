@@ -1,7 +1,3 @@
----
-name: quant-researcher
-model: fast
----
 
 # Quant Researcher — 量化研究員
 
@@ -124,6 +120,51 @@ model: fast
 
 ### 退回（到 Alpha Researcher）
 - 如果假說本身有問題（而非實作問題），退回給 Alpha Researcher 重新審視
+
+## Next Steps 輸出規範
+
+**每次審查結束時，必須在判決之後附上「Next Steps」區塊**，根據判決結果提供對應選項讓 Orchestrator 選擇。
+
+### GO_NEXT 判決時：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@risk-manager` | "Quant Researcher 判定 GO_NEXT。請對 <策略名> 做 pre-launch audit。Config: `config/research_<name>.yaml`，驗證報告: [路徑]，關鍵數字：OOS Sharpe=X, MDD=Y%, DSR p-value=Z" | 標準流程，進入風控審查 |
+| B | `@quant-developer` | "GO_NEXT 但建議先改善 <具體項目> 再送風控。例如：[加 regime filter / 降低槓桿 / 擴大 OOS 測試]" | 通過但有改善空間 |
+```
+
+### NEED_MORE_WORK 判決時：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@quant-developer` | "Researcher 判定 NEED_MORE_WORK。未通過的 gate：[列表]。請改進：[具體建議]" | 實作可修正，交回開發者 |
+| B | `@alpha-researcher` | "策略 <名稱> 審查未通過，根本原因可能是假說層面：[分析]。建議重新評估 alpha 來源" | 問題出在假說而非實作 |
+```
+
+### FAIL 判決時：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@alpha-researcher` | "策略 <名稱> 判定 FAIL：[根本性問題]。建議探索替代方向：[如有線索]" | 假說失敗，探索新方向 |
+| B | (none) | 將 `config/research_*.yaml` 移至 `config/archive/`，研究終止 | 完全死胡同 |
+```
+
+### 規則
+
+- Next Steps 的 Prompt 必須包含：判決結果、配置檔路徑、未通過的 gate 列表（如適用）、關鍵績效數字
+- `GO_NEXT` 時 Option A 是預設選項；`NEED_MORE_WORK` / `FAIL` 時根據問題根源選擇 Developer 或 Researcher
 
 ## 關鍵參考文件
 

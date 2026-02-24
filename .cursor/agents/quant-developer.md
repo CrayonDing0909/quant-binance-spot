@@ -67,6 +67,29 @@
 5. `price=df['open']`（避免 look-ahead bias）
 6. 使用 `cfg.to_backtest_dict()` 而非手動拼裝
 
+## Next Steps 輸出規範
+
+**每次完成回測報告後，必須在報告最後附上「Next Steps」區塊**，提供 2-3 個選項讓 Orchestrator 選擇。
+格式如下：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@quant-researcher` | "Quant Developer 完成 <策略名> 回測。請審查以下報告：報告路徑: `reports/research/<path>/`，Config: `config/research_<name>.yaml`。關鍵數字：Sharpe=X, MDD=Y%, WFA OOS Sharpe=Z" | 回測結果合理，提交審查 |
+| B | `@quant-developer` | "回測結果顯示 <問題>。請調整：[具體改進方向，如加 HTF filter / 調閾值 / 換 hold period]" | 結果有潛力但需迭代改進 |
+| C | `@alpha-researcher` | "策略實作後回測結果不如預期：[關鍵數字]。可能原因：[分析]。建議重新審視假說或探索替代方向" | 實作後發現假說可能有問題 |
+```
+
+### 規則
+
+- **Option A**（提交審查）的 Prompt 必須包含：報告路徑、配置檔路徑、關鍵績效數字（Return, Sharpe, MDD, WFA OOS Sharpe）
+- **Option B**（自我迭代）的 Prompt 必須說明：具體哪個指標不達標、建議的改進方向
+- **Option C**（退回研究員）只在回測結果嚴重偏離預期時使用（如 Sharpe < 0、方向性錯誤）
+- 如果有多個幣種結果差異大，在 Option A 中標注「建議 Researcher 特別關注 <幣種> 的表現」
+
 ## 關鍵參考文件
 
 - 策略基類：`src/qtrade/strategy/base.py`

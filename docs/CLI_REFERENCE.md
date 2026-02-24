@@ -88,6 +88,13 @@
 | `futures_tsmom.yaml` | `config/futures_tsmom.yaml` |
 | `futures_xsmom.yaml` | `config/futures_xsmom.yaml` |
 
+### Research (active experiments)
+
+| Config | File |
+|--------|------|
+| `research_risk_mitigation_A_20260224.yaml` | `config/research_risk_mitigation_A_20260224.yaml` |
+| `research_risk_mitigation_B_20260224.yaml` | `config/research_risk_mitigation_B_20260224.yaml` |
+
 ### Utility
 
 | Config | File |
@@ -100,7 +107,7 @@
 |--------|------|
 | `dual_momentum.yaml` | `config/dual_momentum.yaml` |
 
-> **Archive**: 50 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
+> **Archive**: 51 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
 
 ---
 

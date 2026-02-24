@@ -242,6 +242,52 @@ PYTHONPATH=src python scripts/prod_report.py
 ### Next Review Date: YYYY-MM-DD
 ```
 
+### 週期性審查報告格式（/risk-review 輸出）
+
+每次 `/risk-review` 結束後，除了 WARNING 標記，**必須**在報告最後輸出結構化的 Action Items，
+方便 orchestrator 直接餵給 `/risk-action`（交 @quant-developer 執行）：
+
+```yaml
+# ── ACTION ITEMS ──
+verdict: WARNING  # HEALTHY / WARNING / REDUCE / FLATTEN
+
+action_items:
+  - id: 1
+    severity: WARNING    # WARNING / CRITICAL
+    category: concentration  # concentration / alpha_decay / correlation / drawdown / leverage
+    symbols: [BTCUSDT]
+    description: "BTC effective allocation 35.4% exceeds 30% threshold"
+    current_value: "weight: 0.8900"
+    suggested_value: "weight: 0.4450"
+    next_agent: quant-developer
+    next_action: "跑 BTC 1x vs 2x 回測比較"
+
+  - id: 2
+    severity: WARNING
+    category: alpha_decay
+    symbols: [ETHUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, LINKUSDT]
+    description: "5 symbols IC decay >50%, recent IC ≈ 0"
+    current_value: "tsmom_ema default params"
+    suggested_value: "deweight 0.5x or parameter refresh"
+    next_agent: quant-researcher
+    next_action: "跑完整 IC 分析，判斷需否 deweight 或參數刷新"
+
+  - id: 3
+    severity: WARNING
+    category: correlation
+    symbols: [ALL]
+    description: "30D avg corr 0.681 vs historical 0.439 (+0.242)"
+    current_value: "multiplier: 3.5x"
+    suggested_value: "multiplier: 3.0x"
+    next_agent: quant-developer
+    next_action: "跑 3.0x vs 3.5x multiplier 回測比較"
+
+next_review_date: YYYY-MM-DD  # 建議下次審查日期
+```
+
+> **重要**：Action Items 是給 orchestrator 的結構化建議，不是自動執行指令。
+> Orchestrator 根據 items 決定是否觸發 `/risk-action`。
+
 ## Handoff 協議
 
 ### 接收（來自 Quant Researcher）
@@ -249,12 +295,71 @@ PYTHONPATH=src python scripts/prod_report.py
 - 確認 BacktestResult 路徑和配置檔案
 - 開始 Pre-Launch Audit
 
+### 接收（來自 Orchestrator — /risk-review）
+- 每週例行風控檢查
+- 產出 Periodic Verdict + Action Items
+- Orchestrator 決定是否觸發 `/risk-action`
+
+### 接收（來自 Quant Developer — /risk-action 結果）
+- 收到對比回測結果（baseline vs 保守 vs 積極方案）
+- 審查改善方案的風險影響
+- 給出最終判決：APPROVED (部署新 config) / REJECTED (維持現狀)
+
 ### 發出（到 DevOps）
 - `APPROVED`：附上 Risk Audit Report，配置檔案路徑，部署建議
 - `CONDITIONAL`：附上條件清單（如降低槓桿、限制倉位）
 
 ### 退回（到 Quant Developer）
 - `REJECTED`：附上具體失敗項目和建議修正方向
+
+## Next Steps 輸出規範
+
+**每次審查結束時，必須在判決之後附上「Next Steps」區塊**，根據判決結果提供對應選項讓 Orchestrator 選擇。
+
+> 週期性審查（`/risk-review`）已有 `action_items` YAML 格式，繼續使用。
+> 以下 Next Steps 表格用於 **Pre-Launch Audit** 和 **/risk-action 最終判決**。
+
+### APPROVED 判決時：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@devops` | "Risk Manager 判定 APPROVED。請部署 <策略名>。Config: `config/futures_<name>.yaml`，Risk Audit: [路徑]。部署注意：[條件摘要，如槓桿/倉位限制]" | 標準流程，部署上線 |
+| B | `@devops` | "APPROVED，但先跑 paper trading 1 週。Config: `config/futures_<name>.yaml`，加 `--paper` 參數" | 保守起見先觀察 |
+```
+
+### CONDITIONAL 判決時：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@quant-developer` | "Risk Manager 判定 CONDITIONAL。條件：[具體條件列表]。請調整配置後重新提交" | 需要開發者調整參數 |
+| B | `@devops` | "CONDITIONAL 部署：[條件]。請以降低的參數部署：[具體調整]" | 接受條件直接部署 |
+```
+
+### REJECTED 判決時：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@quant-developer` | "Risk Manager 判定 REJECTED。失敗項目：[列表]。建議修正：[具體方向]" | 可修正的問題，交回開發者 |
+| B | `@alpha-researcher` | "策略 <名稱> 風控不通過，根本風險：[描述]。建議重新評估策略設計" | 風險問題出在策略設計層面 |
+```
+
+### 規則
+
+- Next Steps 的 Prompt 必須包含：判決結果、配置檔路徑、具體條件或失敗項目
+- APPROVED 時預設 Option A（部署）；高風險策略建議選 Option B（先 paper trading）
+- 週期性審查繼續使用 `action_items` YAML 格式（已有完善機制）
 
 ## 關鍵參考文件
 

@@ -133,6 +133,7 @@ def generate_signal(
     df: pd.DataFrame | None = None,
     market_type: str = "spot",
     direction: str = "both",
+    overlay_cfg: dict | None = None,
 ) -> SignalResult:
     """
     生成單個交易對的信號
@@ -146,6 +147,8 @@ def generate_signal(
         df: 可選，直接傳入 K 線數據（測試用）
         market_type: 市場類型 "spot" 或 "futures"
         direction: 交易方向 "both", "long_only", "short_only"
+        overlay_cfg: overlay 配置 dict（與 backtest pipeline 一致）
+            例: {"enabled": True, "mode": "vol_pause", "params": {...}}
 
     Returns:
         SignalResult 標準化信號結果
@@ -170,6 +173,23 @@ def generate_signal(
     )
     strategy_func = get_strategy(strategy_name)
     positions = strategy_func(df, ctx, params)
+
+    # ── Overlay 後處理（與 run_symbol_backtest 一致）──────────
+    # 確保 live pipeline 和 backtest pipeline 套用相同的 overlay
+    if overlay_cfg and overlay_cfg.get("enabled", False):
+        from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
+
+        overlay_mode = overlay_cfg.get("mode", "vol_pause")
+        overlay_params = overlay_cfg.get("params", {})
+
+        positions = apply_overlay_by_mode(
+            position=positions,
+            price_df=df,
+            oi_series=None,  # live 不載入 OI 檔案；vol_pause 模式不需要
+            params=overlay_params,
+            mode=overlay_mode,
+        )
+        logger.info(f"📊 Live overlay applied: mode={overlay_mode}")
 
     # 取最後一根 K 線的信號
     latest_signal = float(positions.iloc[-1])

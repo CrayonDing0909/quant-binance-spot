@@ -195,6 +195,29 @@ print(f'Rows: {len(df)}, Range: {df.index[0]} ~ {df.index[-1]}')
 3. 明確標示 data dependencies（Developer 需要先確認數據可用性）
 4. 在 Proposal 中標注初步 IC / Sharpe 估計值
 
+## Next Steps 輸出規範
+
+**每次研究結束時，必須在報告最後附上「Next Steps」區塊**，提供 2-3 個選項讓 Orchestrator 選擇。
+格式如下：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@quant-developer` | "Alpha Researcher 完成 <策略名> 提案 (GO_NEXT)。請根據以下 proposal 實作策略：[關鍵參數摘要]..." | 研究結果正面，進入實作 |
+| B | `@alpha-researcher` | "<方向> 假說不成立。請改為探索 <替代方向>，初步線索：[摘要]..." | 當前方向失敗但有替代線索 |
+| C | (none) | 將 `config/research_*.yaml` 移至 `config/archive/`，研究結束 | 死胡同，無可行方向 |
+```
+
+### 規則
+
+- **Option A**（交付開發）的 Prompt 必須包含：策略名稱、信號定義摘要、關鍵數據需求、初步績效數字
+- **Option B**（轉換方向）的 Prompt 必須說明：為什麼當前方向失敗、替代方向的初步線索
+- **Option C**（歸檔停止）只在所有探索方向都判定 FAIL 時使用
+- 如果研究產出了多個候選方向，可以提供 Option A1、A2 讓 Orchestrator 選優先順序
+
 ## 關鍵參考文件
 
 - 開發 Playbook：`docs/STRATEGY_DEV_PLAYBOOK_R2_1.md`

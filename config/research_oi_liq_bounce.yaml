@@ -1,0 +1,109 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — OI Liquidation Bounce (oi_liq_bounce)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-24
+# Origin: Alpha Researcher proposal — OI 急降 + 價格急跌 → 清算瀑布結束 → 做多反彈
+# Scope: BTC/ETH/SOL 合約, Long-only
+#
+# Hypothesis:
+#   大量清算（多頭爆倉）造成 OI 急降伴隨價格急跌。
+#   清算瀑布結束後賣壓消失，價格傾向反彈。
+#   使用 OI 變化率 z-score 和 Price 變化率 z-score 偵測清算事件。
+#
+# Mechanism:
+#   - OI_change_24h z-score < -1.5 → 大量持倉被清算
+#   - Price_change_8h z-score < -1.0 → 伴隨顯著價格下跌
+#   - 兩者同時發生 → 清算瀑布結束信號
+#   - 固定持有 24h 捕捉反彈
+#
+# Failure mode:
+#   - 持續性下跌趨勢中反彈幅度不足 → HTF EMA50 filter 防護
+#   - 清算事件稀少 → 交易頻率低但每筆品質高
+#   - OI 數據覆蓋率不足 → 需 >= 70% 覆蓋率
+#
+# Alpha Researcher 原型數據:
+#   BTC: Sharpe=1.04, WR=61.5%, 122 trades
+#   ETH: Sharpe=0.58, WR=59.1%, 132 trades
+#   SOL: Sharpe=0.52, WR=59.5%, 116 trades
+#   與 TSMOM 相關性 ≈ 0.01
+#
+# CHANGE HISTORY:
+#   v1 (2026-02-24): Initial implementation
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "long_only"  # 本策略只做多反彈
+
+strategy:
+  name: "oi_liq_bounce"
+  params:
+    # ── Core signal ──
+    oi_change_lookback: 24       # OI 24h 變化率
+    price_change_lookback: 8     # Price 8h 變化率
+    z_window: 720                # 滾動 z-score 窗口 = 30 天
+    oi_z_threshold: -1.5         # OI z-score 入場門檻
+    price_z_threshold: -1.0      # Price z-score 入場門檻
+
+    # ── Exit ──
+    hold_bars: 24                # 固定持有 24h
+
+    # ── HTF Trend Filter ──
+    htf_filter_enabled: true
+    htf_ema_period: 50           # Daily EMA50
+
+    # ── Vol Scaling ──
+    vol_scale_enabled: true
+    vol_target: 0.15             # 年化波動率目標 15%
+    vol_lookback: 168            # 7 天波動率回看
+
+    # ── Cooldown ──
+    cooldown_bars: 12            # 出場後 12h 冷卻
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.40
+    ETHUSDT: 0.35
+    SOLUSDT: 0.25
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 # PRODUCTION LIVE — R3C 10-Symbol 3.5x (Concentrated Portfolio)
 # ═══════════════════════════════════════════════════════════════
-# Updated: 2026-02-23
+# Updated: 2026-02-24
 # Origin: prod_candidate_R3C_universe.yaml (19-symbol E0 baseline)
 # Lineage: R3C Capital Utilization → E3 1.75x → 10S 3.5x (current)
 #
@@ -13,10 +13,12 @@
 #   - ALL strategy signal logic UNCHANGED
 #   - ALL cost/risk/position params UNCHANGED
 #
-# 2026-02-24 UPDATE: BTC weight doubled (0.4450 → 0.8900)
-#   Rationale: BTC breakout_vol_atr has SL, Sharpe 1.71, WR 41%,
-#              Long PF 1.99, MDD 19.6%. Justified for higher allocation.
-#   New weight sum: ~3.95 (was ~3.50)
+# 2026-02-24 REVERTED: BTC weight back to 1x (0.8900 → 0.4450)
+#   Reason: Kelly analysis shows Full Kelly = 14.2%, BTC 2x gave 22.6%
+#           effective allocation (1.6× Full Kelly = over-bet).
+#           Kelly CV = 0.86 (unstable). Risk Manager APPROVED Option A.
+#   Ref: config/research_risk_mitigation_A_20260224.yaml
+#   Weight sum: ~3.50 (reverted from ~3.95)
 #
 # Dropped symbols: DOTUSDT NEARUSDT APTUSDT ARBUSDT OPUSDT
 #                   FILUSDT ATOMUSDT UNIUSDT AAVEUSDT
@@ -94,9 +96,12 @@ strategy:
       atr_period: 14
       vol_z_window: 168
 
-  # ── Microstructure Accel Overlay (R3 Track A — AGGRESSIVE) ──
+  # ── Microstructure Accel Overlay (R3 Track A — DISABLED) ──
+  # IC 分析顯示此 overlay 降低信號品質（0/10 改善，4/10 惡化）。
+  # Evidence: reports/ic_deep_analysis/overlay_ic_analysis_20260224_210443.json
+  # 停用日期: 2026-02-24
   micro_accel_overlay:
-    enabled: true
+    enabled: false
     params:
       # Feature computation
       taker_window: 12
@@ -131,7 +136,7 @@ ensemble:
   # Vol-parity weights: renormalized for 10 symbols × 3.5
   # Formula: base_w × (3.5 / 0.5678) = base_w × 6.163
   fixed_weights:
-    BTCUSDT: 0.8900    # base 0.0722 × 6.163 × 2 (doubled)
+    BTCUSDT: 0.4450    # base 0.0722 × 6.163
     ETHUSDT: 0.3316    # base 0.0538 × 6.163
     SOLUSDT: 0.3137    # base 0.0509 × 6.163
     BNBUSDT: 0.4358    # base 0.0707 × 6.163
@@ -204,13 +209,12 @@ position_sizing:
   method: "fixed"
   position_pct: 1.0
 
-# ── Portfolio allocation: 10 symbols (BTC 2x) ──
-# Sum of weights ≈ 3.95 (was 3.50, BTC doubled)
-# BTC: ~0.89, others unchanged
+# ── Portfolio allocation: 10 symbols ──
+# Sum of weights ≈ 3.50
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.8900    # base 0.0722 × 6.163 × 2 (doubled)
+    BTCUSDT: 0.4450    # base 0.0722 × 6.163
     ETHUSDT: 0.3316    # base 0.0538 × 6.163
     SOLUSDT: 0.3137    # base 0.0509 × 6.163
     BNBUSDT: 0.4358    # base 0.0707 × 6.163
@@ -290,7 +294,7 @@ live:
 notification:
   telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
   telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
-  prefix: "🚀 [PROD-R3C-10S-BTC2x]"
+  prefix: "🚀 [PROD-R3C-10S-3.5x]"
   enabled: true
 
 output:

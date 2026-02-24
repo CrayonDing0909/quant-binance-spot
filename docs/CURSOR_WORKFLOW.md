@@ -1,6 +1,6 @@
 # Cursor Agent 工作流指南
 
-> **Last updated**: 2026-02-24
+> **Last updated**: 2026-02-25
 
 > 日常開發時的 prompt 參考。5 個 Agent、什麼時候用誰、怎麼下 prompt。
 > Slash commands 可用 `/` 快速觸發常用流程，見下方「Slash Commands」段落。
@@ -46,6 +46,7 @@
 | `/healthcheck` | `@devops` | 完整健康檢查（runner 狀態、持倉、系統資源） |
 | `/backtest` | `@quant-developer` | 跑回測 + WFA（需填入 config 路徑） |
 | `/risk-review` | `@risk-manager` | 每週風控快速檢查 |
+| `/risk-action` | `@quant-developer` | 根據 risk-review WARNING 產出改善方案並跑對比回測 |
 | `/research-audit` | `@quant-researcher` | 審查回測結果（需填入報告路徑） |
 
 > **帶有 `<填入...>` 的指令**：選擇 command 後，把 placeholder 替換成實際路徑再送出。
@@ -128,7 +129,10 @@ Step 5: @devops
   @devops  「跑健康檢查和每日報表」
 
 每週:
-  @risk-manager  「跑這週的風控快速檢查」
+  Step 1: /risk-review → @risk-manager 產出風控報告
+  Step 2: 如果有 WARNING → /risk-action → @quant-developer 跑改善方案 + 對比回測
+  Step 3: 把對比結果交給 @risk-manager 做最終判決
+  Step 4: 如果 APPROVED → @devops 部署新 config
 
 每月:
   @risk-manager  「跑月度深度風控審查（Monte Carlo + 相關性 + Kelly 校準）」
@@ -221,6 +225,50 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 ```
 
 > **注意**：tmux 裡的 `while true; do git pull && run_websocket.py; done` 循環會在 runner 停止後自動 pull 最新 code 並重啟。所以 `Ctrl+C` 停止 runner 就等於「重啟」。
+
+---
+
+## 讀取 Agent 輸出 — Next Steps 機制
+
+每個 Agent 完成任務後，都會在輸出最後附上一個 **「Next Steps (pick one)」** 表格。
+這讓你（Orchestrator）不需要記住完整的流程，只需要看建議選項、選一個、貼上 Prompt。
+
+### 格式
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@next-agent` | "就緒可用的 prompt 文字..." | 什麼情況選這個 |
+| B | `@other-agent` | "另一個可用的 prompt..." | 什麼情況選這個 |
+```
+
+### 使用方式
+
+1. **看完 Agent 的報告結果**
+2. **捲到最後的 Next Steps 表格**
+3. **選一個 Option**，複製它的 Prompt 欄位
+4. **新開 Chat，貼上 Prompt，必要時微調**（如填入路徑、加上你的判斷）
+5. **送出**
+
+### 關鍵原則
+
+- 建議是 **advisory（建議性的）**，你永遠可以選不在表上的動作
+- 如果你不確定選哪個，通常 **Option A 是預設推薦**
+- 每個 Prompt 裡會包含足夠的上下文（路徑、數字、判決），下一個 Agent 不需要回頭翻
+- 如果表格沒有出現，提醒 Agent：「請附上 Next Steps 選項」
+
+### 各 Agent 的典型 Next Steps
+
+| Agent 完成後 | 常見選項 |
+|-------------|---------|
+| Alpha Researcher | A: 交給 Developer 實作 · B: 轉換研究方向 · C: 歸檔停止 |
+| Quant Developer | A: 提交 Researcher 審查 · B: 自我迭代改進 · C: 退回 Researcher |
+| Quant Researcher | GO→ Risk Manager · NMW→ Developer · FAIL→ Researcher 或歸檔 |
+| Risk Manager | APPROVED→ DevOps · CONDITIONAL→ Developer · REJECTED→ Developer |
+| DevOps | A: 跑健康檢查 · B: 排定風控觀察 |
 
 ---
 

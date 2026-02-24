@@ -94,10 +94,10 @@ Strategy: R3C 10-Symbol Ensemble
   - ETH: tsmom_multi_ema
   - SOL/BNB/XRP/DOGE/ADA/AVAX/LINK/LTC: tsmom_ema
 Leverage: 3x ISOLATED
-Weight sum: ~3.95 (BTC doubled)
+Weight sum: ~3.50
 Circuit breaker: 40% MDD
 Overlays: oi_vol + Microstructure Accel (both enabled)
-Telegram prefix: 🚀 [PROD-R3C-10S-BTC2x]
+Telegram prefix: 🚀 [PROD-R3C-10S-3.5x]
 ```
 
 ### 部署 / 重啟 WebSocket Runner
@@ -200,6 +200,41 @@ data/binance/futures/<SYMBOL>/funding_rate.csv ← Funding Rate
 4. **熔斷觸發**：檢查 `max_drawdown_pct` 設定（目前 40%），確認是真實虧損還是 API 數據延遲
 5. **OOM (Out of Memory)**：確認 Swap 已設定（`free -h`），1GB RAM 機器必備
 6. **Algo Order 404**：Binance 可能調整 API，最新修復已使用 STOP_MARKET first, fallback STOP+price
+
+## Next Steps 輸出規範
+
+**每次完成部署或維運任務後，必須在輸出最後附上「Next Steps」區塊**，提供 1-2 個選項讓 Orchestrator 選擇。
+
+### 部署完成後：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | `@devops` | "部署完成，請跑健康檢查確認 runner 運行正常" | 標準流程，確認部署成功 |
+| B | `@risk-manager` | "新策略 <名稱> 已部署上線。請排定下週 /risk-review 時一併檢查新策略表現" | 新策略上線，排定首次風控檢查 |
+```
+
+### 故障排查完成後：
+
+```markdown
+---
+## Next Steps (pick one)
+
+| Option | Agent | Prompt | When to pick |
+|--------|-------|--------|-------------|
+| A | (none) | 問題已解決，無需後續動作 | 簡單問題已修復 |
+| B | `@quant-developer` | "排查發現 <問題描述>，需要修改程式碼：[具體位置]" | 問題根因在程式碼 |
+| C | `@risk-manager` | "發生 <事件描述>，建議做一次臨時風控檢查" | 事件可能影響持倉風險 |
+```
+
+### 規則
+
+- 部署後 **一定**建議跑健康檢查（Option A 為預設）
+- 新策略首次上線時，建議排定 paper trading 觀察期或首次風控檢查
+- 故障排查如果涉及資金安全，必須建議 Risk Manager 介入
 
 ## 安全注意事項
 

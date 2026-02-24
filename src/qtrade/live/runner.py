@@ -137,6 +137,7 @@ class LiveRunner(BaseRunner):
                     market_type=self.market_type,
                     direction=direction,
                     df=cached_df,
+                    overlay_cfg=getattr(self.cfg, '_overlay_cfg', None),
                 )
             except Exception as e:
                 self._log.error(f"❌ {symbol} 信號生成失敗: {e}")
