@@ -1,0 +1,31 @@
+---
+alwaysApply: true
+---
+# Recent Changes (Rolling Log)
+
+Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目，超過的刪除。
+新 Chat 開啟時 agent 可從此處了解最近發生的所有變更。
+
+---
+
+## 2026-02-25
+
+### OI Liquidation Bounce 策略（完整生命週期）
+- 新增 `src/qtrade/strategy/oi_liq_bounce_strategy.py` — OI 清算反彈策略 v4.2
+- 新增 `config/research_oi_liq_bounce.yaml` — 5-symbol long-only (BTC/ETH/SOL/DOGE/AVAX)
+- 通過完整驗證棧：DSR, WFA, Cost Stress, Delay Stress 全 PASS
+- 通過風控審計：Monte Carlo 4/4 PASS, Portfolio Risk 3/3 PASS, APPROVED
+- 更新 `project-overview.mdc` 和 `devops.md` 記錄候選狀態
+
+### 策略組合管理框架（新工具鏈）
+- 新增 `docs/STRATEGY_PORTFOLIO_GOVERNANCE.md` — 策略組合治理規範（納入/替換/退場標準）
+- 新增 `scripts/compare_strategies.py` — 策略比較工具（邊際 Sharpe、相關性矩陣、最佳權重）
+- 新增 `scripts/generate_blend_config.py` — meta_blend YAML 配置自動生成
+- 修改 `scripts/run_portfolio_backtest.py` — 新增 `--multi-strategy` 多策略組合回測模式
+- 重新生成 `docs/CLI_REFERENCE.md`
+
+### 跨 Chat 知識同步機制
+- 新增 `.cursor/rules/session-checklist.mdc` — session 結束自查 checklist
+- 新增 `.cursor/rules/recent-changes.mdc` — 滾動變更日誌（本檔案）
+- 更新 `project-overview.mdc` — 加入 meta_blend 候選、策略組合管理工具鏈
+- 更新 `hygiene.mdc` — Living docs 表加入 STRATEGY_PORTFOLIO_GOVERNANCE.md

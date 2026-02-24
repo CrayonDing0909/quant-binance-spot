@@ -55,6 +55,7 @@ When you modify code that a doc describes, update the `Last updated` date in tha
 | `STRATEGY_DEV_PLAYBOOK_R2_1.md` | Methodology or lifecycle changes |
 | `R3C_STRATEGY_OVERVIEW.md` | Production strategy changes |
 | `R3C_SYMBOL_GOVERNANCE_SPEC.md` | Symbol governance logic changes |
+| `STRATEGY_PORTFOLIO_GOVERNANCE.md` | Strategy portfolio addition/replacement/retirement rules change |
 | `CURSOR_WORKFLOW.md` | Agent roles or workflow changes |
 
 ## 4. Config Naming Convention

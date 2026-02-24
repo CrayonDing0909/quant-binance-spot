@@ -3,22 +3,24 @@
 # ═══════════════════════════════════════════════════════════════
 # Created: 2026-02-24
 # Origin: Alpha Researcher proposal — OI 急降 + 價格急跌 → 清算瀑布結束 → 做多反彈
-# Scope: BTC/ETH/SOL 合約, Long-only
+# Scope: BTC/ETH/SOL/DOGE/AVAX 合約, Long-only
 #
 # Hypothesis:
 #   大量清算（多頭爆倉）造成 OI 急降伴隨價格急跌。
 #   清算瀑布結束後賣壓消失，價格傾向反彈。
 #   使用 OI 變化率 z-score 和 Price 變化率 z-score 偵測清算事件。
+#   v4: Volume spike 作為替代入場路徑 — 捕捉 OI 數據未反映的恐慌拋售事件
+#       (OI drop 與 Volume spike 僅 30% 重疊 → OR gate 可增加 ~50-70% 交易)
 #
 # Mechanism:
-#   - OI_change_24h z-score < -1.5 → 大量持倉被清算
-#   - Price_change_8h z-score < -1.0 → 伴隨顯著價格下跌
-#   - 兩者同時發生 → 清算瀑布結束信號
-#   - 固定持有 24h 捕捉反彈
+#   - Path A (OI): OI_change z-score < threshold → 大量持倉被清算
+#   - Path B (Vol, v4): Volume z-score > threshold → 恐慌拋售量能激增
+#   - 兩條路徑均需: Price z-score < threshold + HTF 趨勢過濾通過
+#   - HTF 趨勢過濾 → 只在牛市環境中入場（BTC: EMA+ADX, ETH/SOL: EMA）
 #
 # Failure mode:
-#   - 持續性下跌趨勢中反彈幅度不足 → HTF EMA50 filter 防護
-#   - 清算事件稀少 → 交易頻率低但每筆品質高
+#   - 持續性下跌趨勢中反彈幅度不足 → HTF filter 防護（EMA / ADX）
+#   - Volume spike 在盤整期產生假信號 → HTF + price_z 雙重過濾
 #   - OI 數據覆蓋率不足 → 需 >= 70% 覆蓋率
 #
 # Alpha Researcher 原型數據:
@@ -28,7 +30,55 @@
 #   與 TSMOM 相關性 ≈ 0.01
 #
 # CHANGE HISTORY:
-#   v1 (2026-02-24): Initial implementation
+#   v1 (2026-02-24): Initial implementation — fixed_hold exit
+#   v2 (2026-02-24): Add ATR SL hybrid exit + symbol_overrides
+#     - sweep 結論: oi_z=-1.5 仍最佳, -1.2 反而降質
+#     - BTC: fixed_hold/24 最適 (bounce 快速, SL 反傷)
+#     - ETH: hybrid/36/sl3.0 提升 SR 1.67→1.90
+#     - SOL: hybrid/48/sl3.0 提升 SR 0.88→1.73, 修復 2025 負回報
+#     - Portfolio SR: 1.77→2.39, Return: 15.4%→25.0%
+#   v3 (2026-02-24): ADX regime filter + FR spike option
+#     - BTC 2025 負回報的根因: EMA50 filter 不足以避免「有價位無動能」環境
+#     - ADX regime (ema_adx, th=20): BTC SR 1.03→1.17, 2025: -1.7%→+0.2%
+#     - FR spike tested: 能修復 2025 但交易數太少，作為 optional feature 保留
+#     - ETH/SOL: 維持 EMA mode（ADX 對它們略負面）
+#     - BTC: ema_adx/adx_th=20 + fixed_hold/24
+#   v4 (2026-02-24): Volume spike OR gate — 大幅增加交易頻率
+#     - Volume spike 與 OI drop 僅 30% 重疊，捕捉不同類型的恐慌事件
+#     - BTC: oi_z=-1.3 + vol_spike(1.5/48h) → trades 31→54 (+74%), SR 1.18→1.26
+#       2025: +0.2%→+1.6%, Ret: +11.2%→+17.1%
+#     - ETH: vol_spike(2.5/24h) → trades 39→46 (+18%), SR 1.90→1.93
+#       2025: +3.3%→+5.7%, Ret: +26.8%→+29.8%
+#     - SOL: vol_spike 對 SOL 有負面影響（2025 轉負），維持 v3 設定
+#     - Portfolio: avgSR 1.60→1.64, wtdRet 24.7%→28.1%
+#   v4.1 (2026-02-24): 擴展至 5 幣種 — 分散時間集中度 + DSR/PBO 驗證
+#     - 下載 DOGE/AVAX/BNB/XRP/LINK/ADA OI 數據 (binance_vision, ~100% coverage)
+#     - Screening: DOGE(SR1.20✓✓) AVAX(SR1.22✓) | BNB/LINK/ADA(<0.8✗) XRP(0.94~)
+#     - DOGE 2024=+24.3% → 完美補充 2023-heavy 的 BTC/ETH
+#     - Portfolio: SR 2.50→2.62, Calmar 4.19, Ret +29.7%
+#     - 時間集中度: 2023=43% / 2024=41% (vs 3sym: 2023=46%)
+#     - DSR/PBO Validation (5/5 PASS):
+#       Gate 1 DSR(n=200):   PASS (DSR=+2.43, p≈0)
+#       Gate 2 Portfolio PBO: PASS (3.6% < 50%)
+#       Gate 3 CPCV Degrad:   PASS (5.9% < 50%)
+#       Gate 4 WFA OOS>0:    PASS (75% ≥ 60%)
+#       Gate 5 Cost Stress:   PASS (2x SR=2.39 > 1.5)
+#     - Per-symbol PBO: BTC 7% / ETH 11% / SOL 4% / DOGE 4% / AVAX 11% — ALL PASS
+#     - VERDICT: GO_NEXT
+#   v4.2 (2026-02-25): Bug fixes — double-delay + SL/TP entry_price + slippage_model
+#     - 移除策略內部所有 .shift(1)，消除與框架 signal_delay 的 double-delay
+#     - SL/TP entry_price 改用 close[i] 替代 open[i] (close[i] ≈ open[i+1])
+#     - 啟用 volume-based slippage_model 取代固定 slippage_bps
+#     - v4.1→v4.2 performance delta:
+#       Portfolio SR: 2.62→2.49 (-0.13, 修正 look-ahead bias)
+#       Portfolio Ret: +29.8%→+28.4%, MDD: -1.5%→-1.3%
+#     - DSR/WFA/Cost/Delay Validation (4/4 PASS):
+#       Gate 3 WFA OOS>0:   PASS (67% >= 60%)
+#       Gate 5 DSR(n=200):  PASS (DSR=+2.33, p=0.010)
+#       Gate 6 Cost 2x:     PASS (SR=2.33 > 1.5)
+#       Gate 7 Delay +1bar: PASS (SR=2.62, 105% retained)
+#     - Per-symbol PBO: BTC 12% / ETH 0% / SOL 25% / DOGE 25% / AVAX 38% — ALL < 50%
+#     - VERDICT: GO_NEXT
 # ═══════════════════════════════════════════════════════════════
 
 market:
@@ -36,6 +86,8 @@ market:
     - BTCUSDT
     - ETHUSDT
     - SOLUSDT
+    - DOGEUSDT
+    - AVAXUSDT
   interval: "1h"
   start: "2022-01-01"
   end: null
@@ -50,19 +102,35 @@ futures:
 strategy:
   name: "oi_liq_bounce"
   params:
-    # ── Core signal ──
+    # ── Core signal — Path A (OI Liquidation) ──
     oi_change_lookback: 24       # OI 24h 變化率
     price_change_lookback: 8     # Price 8h 變化率
     z_window: 720                # 滾動 z-score 窗口 = 30 天
-    oi_z_threshold: -1.5         # OI z-score 入場門檻
+    oi_z_threshold: -1.5         # OI z-score 入場門檻 (base, BTC overrides to -1.3)
     price_z_threshold: -1.0      # Price z-score 入場門檻
 
-    # ── Exit ──
-    hold_bars: 24                # 固定持有 24h
+    # ── Core signal — Path B (Volume Spike, v4 新增) ──
+    vol_spike_enabled: false     # 預設關閉; BTC/ETH 各自啟用
+    vol_spike_threshold: 2.0     # Volume z-score 門檻 (正值 = 成交量高)
+    vol_spike_lookback: 24       # Volume 累計窗口 (bars)
 
-    # ── HTF Trend Filter ──
+    # ── Exit (defaults — overridden per symbol below) ──
+    exit_mode: "hybrid"          # v2: ATR SL + hold time-stop
+    hold_bars: 36                # 持有時間上限 (hybrid 模式)
+    stop_loss_atr: 3.0           # ATR 止損倍數 (hybrid/atr_sl 模式)
+    # take_profit_atr: null      # 不設止盈 (讓反彈自然結束)
+
+    # ── HTF Trend Filter (v3: 支援三種模式) ──
     htf_filter_enabled: true
+    htf_regime_mode: "ema"       # 預設 EMA50; BTC 用 ema_adx
     htf_ema_period: 50           # Daily EMA50
+    htf_adx_period: 14           # Daily ADX 週期 (adx/ema_adx 模式)
+    htf_adx_threshold: 20        # ADX 閾值 (adx/ema_adx 模式)
+
+    # ── FR Spike Filter (v3, optional) ──
+    fr_spike_enabled: false      # 預設關閉
+    fr_z_threshold: -0.5         # FR change z-score 門檻
+    fr_change_lookback: 2        # FR 差分回看 (8h 單位, 2=16h)
 
     # ── Vol Scaling ──
     vol_scale_enabled: true
@@ -72,7 +140,51 @@ strategy:
     # ── Cooldown ──
     cooldown_bars: 12            # 出場後 12h 冷卻
 
-  symbol_overrides: {}
+  symbol_overrides:
+    # BTC v4: vol_spike OR gate + oi_z 放寬 → trades 31→54 (+74%)
+    # vol_spike(1.5/48h) 捕捉 OI 未反映的恐慌事件, oi_z -1.5→-1.3 放寬 + ADX 保護品質
+    # SR: 1.18→1.26, 2025: +0.2%→+1.6%, Ret: +11.2%→+17.1%
+    BTCUSDT:
+      exit_mode: "fixed_hold"
+      hold_bars: 24
+      htf_regime_mode: "ema_adx"
+      htf_adx_threshold: 20
+      oi_z_threshold: -1.3
+      vol_spike_enabled: true
+      vol_spike_threshold: 1.5
+      vol_spike_lookback: 48
+    # ETH v4: vol_spike(2.5/24h) → trades 39→46 (+18%)
+    # SR: 1.90→1.93, 2025: +3.3%→+5.7%, Ret: +26.8%→+29.8%
+    ETHUSDT:
+      exit_mode: "hybrid"
+      hold_bars: 36
+      stop_loss_atr: 3.0
+      htf_regime_mode: "ema"
+      vol_spike_enabled: true
+      vol_spike_threshold: 2.5
+      vol_spike_lookback: 24
+    # SOL: 維持 v3 設定 (vol_spike 對 SOL 有負面影響: 2025 轉負)
+    SOLUSDT:
+      exit_mode: "hybrid"
+      hold_bars: 48
+      stop_loss_atr: 3.0
+      htf_regime_mode: "ema"
+    # DOGE v4.1: vol_spike OR gate 是 DOGE 的核心驅動力
+    # ema+vol25/fh24: SR=1.20, 64 trades, 2024=+24.3% (分散 2023 集中度)
+    DOGEUSDT:
+      exit_mode: "fixed_hold"
+      hold_bars: 24
+      htf_regime_mode: "ema"
+      vol_spike_enabled: true
+      vol_spike_threshold: 2.5
+      vol_spike_lookback: 24
+    # AVAX v4.1: EMA filter + hybrid/48/sl3.0 最穩定
+    # default_ema/hy48sl3: SR=1.22, 31 trades, 2023=+18.2%
+    AVAXUSDT:
+      exit_mode: "hybrid"
+      hold_bars: 48
+      stop_loss_atr: 3.0
+      htf_regime_mode: "ema"
 
 backtest:
   initial_cash: 10000
@@ -86,7 +198,12 @@ backtest:
     default_rate_8h: 0.0001
     use_historical: true
   slippage_model:
-    enabled: false
+    enabled: true
+    base_bps: 2.0
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
 
 risk:
   max_drawdown_pct: 0.30
@@ -98,9 +215,11 @@ position_sizing:
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.40
-    ETHUSDT: 0.35
-    SOLUSDT: 0.25
+    BTCUSDT: 0.30
+    ETHUSDT: 0.25
+    SOLUSDT: 0.20
+    DOGEUSDT: 0.15
+    AVAXUSDT: 0.10
 
 notification:
   enabled: false

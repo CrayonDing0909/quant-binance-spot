@@ -1,3 +1,4 @@
+
 # Quant Developer — 量化策略開發者
 
 你是一位專業的量化策略開發者，負責在 quant-binance-spot 系統中實作交易策略、撰寫回測、產出績效報告。
@@ -58,6 +59,56 @@
 | Hyperopt | `PYTHONPATH=src python scripts/run_hyperopt.py -c config/<cfg>.yaml` |
 | 跑測試 | `python -m pytest tests/ -x -q --tb=short` |
 
+### 多策略混合 (meta_blend Pattern)
+
+當需要在**同一帳戶**同時運行多個策略（避免 ONE_WAY 衝突），使用 `meta_blend` 策略：
+
+**什麼時候用**：
+- 已有生產策略在跑，想加入新策略但不能開子帳號
+- 某些幣種在策略 A 表現好，另一些在策略 B 表現好 → per-symbol routing
+- 兩個策略低相關性，混合可降低 MDD
+
+**開發步驟**：
+1. **Phase 1 — 混合權重優化**：用 `scripts/research_strategy_blend.py` sweep 權重
+   ```bash
+   PYTHONPATH=src python scripts/research_strategy_blend.py
+   ```
+2. **Phase 2 — 配置 meta_blend**：在 YAML 中定義 `sub_strategies` 和 per-symbol overrides
+3. **Phase 3 — 驗證**：跑 backtest + WFA + cost stress + ablation（純 A / 純 B / A+B 三者對比）
+4. **Phase 4 — 生產候選**：建立 `config/prod_candidate_meta_blend.yaml`
+
+**⚠️ 關鍵 gotcha — `auto_delay=False`**：
+- `meta_blend` 必須用 `@register_strategy("meta_blend", auto_delay=False)` 註冊
+- 原因：子策略透過 `get_strategy()` 呼叫時，各自已處理 delay 和 direction clip
+- 如果 meta_blend 也套用 `auto_delay=True`，`auto_delay=False` 的子策略（如 `breakout_vol_atr`，內建 delay）會被**雙重 delay**，信號錯位一個 bar
+- 這是一個真實踩過的坑，BTC Sharpe 從 1.18 掉到 0.50 就是因為雙重 delay
+
+**Per-symbol 路由範例**（YAML config）：
+```yaml
+strategy:
+  name: "meta_blend"
+  params:
+    sub_strategies:                    # 預設子策略組合（用於大部分幣種）
+      - name: "tsmom_carry_v2"
+        weight: 1.0
+        params: {tier: "default", ...}
+  symbol_overrides:
+    BTCUSDT:                          # BTC 用不同的組合
+      sub_strategies:
+        - name: "breakout_vol_atr"
+          weight: 0.30
+          params: {...}
+        - name: "tsmom_carry_v2"
+          weight: 0.70
+          params: {tier: "btc_enhanced", ...}
+```
+
+**參考檔案**：
+- 策略實作：`src/qtrade/strategy/meta_blend_strategy.py`
+- 研究配置：`config/research_meta_blend.yaml`
+- 生產候選：`config/prod_candidate_meta_blend.yaml`
+- 權重優化腳本：`scripts/research_strategy_blend.py`
+
 ### 改動後自我檢查清單
 
 1. `python -m pytest tests/ -x -q --tb=short` — 所有測試通過
@@ -66,6 +117,7 @@
 4. `vbt.Portfolio.from_orders(` 的 `direction` 不是寫死的（除了 Buy&Hold）
 5. `price=df['open']`（避免 look-ahead bias）
 6. 使用 `cfg.to_backtest_dict()` 而非手動拼裝
+7. 如果實作 meta 策略（呼叫其他策略），必須用 `auto_delay=False` 註冊
 
 ## Next Steps 輸出規範
 
@@ -94,6 +146,7 @@
 
 - 策略基類：`src/qtrade/strategy/base.py`
 - 生產策略範例：`src/qtrade/strategy/tsmom_strategy.py`
+- 多策略混合器：`src/qtrade/strategy/meta_blend_strategy.py`
 - 回測引擎：`src/qtrade/backtest/run_backtest.py`
 - 開發 Playbook：`docs/STRATEGY_DEV_PLAYBOOK_R2_1.md`
 - 專案地圖：`docs/CLI_REFERENCE.md`

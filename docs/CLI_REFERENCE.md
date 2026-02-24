@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-02-24 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-02-25 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
@@ -60,7 +60,17 @@
 | `setup_cron.sh` | Quant Trading Bot - Cron Jobs 自動設定腳本 |
 | `setup_swap.sh` | 自動建立 Swap (虛擬記憶體) 腳本 |
 
-> **Archive**: 26 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
+### Other
+
+| Script | Description |
+|--------|-------------|
+| `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
+| `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
+| `research_ic_deep_analysis.py` | IC Deep Analysis — Quant Researcher |
+| `research_overlay_ic_analysis.py` | P0: Overlay-Adjusted IC Analysis |
+| `research_strategy_blend.py` | ═══════════════════════════════════════════════════════════════ |
+
+> **Archive**: 28 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
 
 ---
 
@@ -71,6 +81,7 @@
 | Config | File |
 |--------|------|
 | `prod_candidate_R3C_universe.yaml` | `config/prod_candidate_R3C_universe.yaml` |
+| `prod_candidate_meta_blend.yaml` | `config/prod_candidate_meta_blend.yaml` |
 | `prod_live_R3C_E3.yaml` | `config/prod_live_R3C_E3.yaml` |
 | `prod_scale_rules_R3C_universe.yaml` | `config/prod_scale_rules_R3C_universe.yaml` |
 | `risk_guard_alt_ensemble.yaml` | `config/risk_guard_alt_ensemble.yaml` |
@@ -92,8 +103,13 @@
 
 | Config | File |
 |--------|------|
+| `research_meta_blend.yaml` | `config/research_meta_blend.yaml` |
+| `research_oi_liq_bounce.yaml` | `config/research_oi_liq_bounce.yaml` |
+| `research_param_refresh_BTC.yaml` | `config/research_param_refresh_BTC.yaml` |
+| `research_param_refresh_XRP.yaml` | `config/research_param_refresh_XRP.yaml` |
 | `research_risk_mitigation_A_20260224.yaml` | `config/research_risk_mitigation_A_20260224.yaml` |
 | `research_risk_mitigation_B_20260224.yaml` | `config/research_risk_mitigation_B_20260224.yaml` |
+| `research_tsmom_carry_v2.yaml` | `config/research_tsmom_carry_v2.yaml` |
 
 ### Utility
 
@@ -107,7 +123,7 @@
 |--------|------|
 | `dual_momentum.yaml` | `config/dual_momentum.yaml` |
 
-> **Archive**: 51 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
+> **Archive**: 53 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
 
 ---
 
@@ -190,5 +206,6 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 | [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
 | [`R3C_SYMBOL_GOVERNANCE_SPEC.md`](docs/R3C_SYMBOL_GOVERNANCE_SPEC.md) | R3C Symbol Governance Spec |
 | [`STRATEGY_DEV_PLAYBOOK_R2_1.md`](docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) | Strategy Development Playbook (R2.1) |
+| [`STRATEGY_PORTFOLIO_GOVERNANCE.md`](docs/STRATEGY_PORTFOLIO_GOVERNANCE.md) | 策略組合治理規範 (Strategy Portfolio Governance) |
 
 > **Archive**: 4 historical docs in `docs/archive/`.

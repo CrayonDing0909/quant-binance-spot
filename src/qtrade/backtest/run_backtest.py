@@ -421,6 +421,10 @@ def run_symbol_backtest(
     strategy_name = strategy_name or cfg.get("strategy_name", "rsi_adx_atr")
     strategy_func = get_strategy(strategy_name)
 
+    # 自動注入 _data_dir（讓策略可以自動載入 OI/FR 等輔助數據）
+    if data_dir is not None and "_data_dir" not in cfg["strategy_params"]:
+        cfg["strategy_params"]["_data_dir"] = data_dir
+
     # positions: [-1, 1] (Futures) 或 [0, 1] (Spot)
     pos = strategy_func(df, ctx, cfg["strategy_params"])
 

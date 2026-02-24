@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+# Session End Checklist
+
+**每個 agent 在完成主要任務後、結束 session 前，必須執行以下自查。**
+跳過此 checklist 會導致其他 Chat session 的 agent 不知道最新狀態。
+
+## 觸發條件
+
+如果本次 session 做了以下任何一項，就必須執行對應的更新：
+
+| 你做了什麼 | 必須更新 |
+|-----------|---------|
+| 新增/修改/刪除 `scripts/` 下的腳本 | 1. 重新生成 `CLI_REFERENCE.md`：`PYTHONPATH=src python scripts/gen_cli_reference.py` <br> 2. 若為重要工具，更新 `project-overview.mdc` |
+| 策略狀態變更（新策略通過驗證、風控審計、上線、退役） | 1. 更新 `project-overview.mdc`（Production Strategy / Approved Candidates） <br> 2. 更新 `devops.md`（候選策略 / 部署資訊） |
+| 新增 `docs/` 下的 living doc | 更新 `hygiene.mdc` 的 Living docs 表 |
+| 新增概念/工具/流程（如策略治理、新回測模式） | 更新相關 `.mdc` rule 或建立新 rule |
+| 修改了 config 結構或命名規則 | 更新 `hygiene.mdc` 的 Config Naming Convention 表 |
+| 修改了 agent 職責或 handoff 流程 | 更新 `project-overview.mdc` 的 Workflow & Handoff |
+
+## 最後一步：更新變更日誌
+
+完成上述更新後，在 [recent-changes.mdc](mdc:.cursor/rules/recent-changes.mdc) 追加一條記錄：
+
+```
+## YYYY-MM-DD
+- 變更摘要 1（相關檔案）
+- 變更摘要 2（相關檔案）
+```
+
+並清理超過 30 天的舊條目。
+
+## 如何執行
+
+不需要用戶提醒。Agent 應在完成主要任務後主動執行此 checklist。
+如果不確定是否需要更新，寧可多更新也不要漏掉。

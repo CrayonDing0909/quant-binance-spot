@@ -205,14 +205,24 @@ class BaseRunner(ABC):
         取得指定 symbol 的策略名稱和參數。
 
         優先使用 ensemble.strategies 路由，否則 fallback 到全域策略。
+        自動注入 _data_dir，讓策略可在 live 模式自動載入輔助數據（OI, FR 等）。
 
         Returns:
             (strategy_name, params)
         """
         if self._ensemble_strategies and symbol in self._ensemble_strategies:
             sym_cfg = self._ensemble_strategies[symbol]
-            return sym_cfg["name"], sym_cfg.get("params", {})
-        return self.strategy_name, self.cfg.strategy.get_params(symbol)
+            name = sym_cfg["name"]
+            params = dict(sym_cfg.get("params", {}))
+        else:
+            name = self.strategy_name
+            params = self.cfg.strategy.get_params(symbol)
+
+        # 自動注入 _data_dir（讓策略可以在 live 模式自動載入 OI/FR 等輔助數據）
+        if "_data_dir" not in params:
+            params["_data_dir"] = str(self.cfg.data_dir)
+
+        return name, params
 
     # ══════════════════════════════════════════════════════════
     #  倉位計算器

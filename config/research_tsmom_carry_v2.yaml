@@ -1,0 +1,176 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — TSMOM + Carry V2 (Per-Symbol Composite)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-24
+# Origin:  Alpha Researcher BTC Enhancement Report + OOS Validation
+# Purpose: Per-symbol 多因子組合策略，替代純 TSMOM
+#
+# Combination Mode: CONFIRMATORY (carry scales TSMOM, not additive)
+#   - Carry agrees with TSMOM → 1.0x (full position)
+#   - Carry opposes TSMOM   → 0.5x (reduced, never reversed)
+#   - Either is flat        → 0.7x (neutral)
+#   This preserves TSMOM's trend-following alpha while using
+#   carry signals for risk management at potential reversals.
+#
+# Tiers:
+#   BTC:       TSMOM(720h, EMA 30/100) + Basis confirmation
+#   ETH:       TSMOM(168h) + OI/FR/Basis multi-confirmation
+#   SOL/AVAX:  TSMOM(168h) + BasisCarry confirmation
+#   Others:    TSMOM(168h) + BasisCarry confirmation
+#   REMOVED:   LTC (persistent negative OOS IC, QR recommendation)
+#   REMOVED:   XRP (Sharpe 0.046, WFA OOS+ 40%, fails 2x cost stress)
+#
+# Expected IC:
+#   BTC:       -0.011 → +0.046
+#   Portfolio: +0.001 → +0.044
+#
+# BTC OOS Validation:
+#   - Expanding OOS avg IC = +0.065
+#   - Purged WF avg IC = +0.064
+#   - Bootstrap P(IC>0.02) = 100%
+#   - All 7/7 OOS gates PASS
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+    # LTCUSDT removed — persistent negative OOS IC, Quant Researcher recommendation
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_carry_v2"
+  params:
+    # ── Combination Mode ──
+    combination_mode: "confirmatory"   # "confirmatory" | "additive"
+
+    # ── Default tier (BNB, DOGE, ADA, LINK) ──
+    tier: "default"
+
+    # TSMOM 子因子 (default)
+    tsmom_lookback: 168
+    tsmom_vol_target: 0.15
+    tsmom_ema_fast: 20
+    tsmom_ema_slow: 50
+    tsmom_agree_weight: 1.0
+    tsmom_disagree_weight: 0.3
+
+    # Basis 子因子
+    basis_ema_fast: 24
+    basis_ema_slow: 168
+    basis_tanh_scale: 50.0
+
+    # FR 子因子
+    fr_rolling_window: 72
+
+    # OI 子因子
+    oi_z_window: 168
+
+    # BasisCarry 混合比例 (default tier)
+    basis_carry_fr_weight: 0.7
+    basis_carry_basis_weight: 0.3
+
+    # Default tier weights (used in additive mode only)
+    w_tsmom: 0.50
+    w_basis_carry: 0.50
+
+    # ── Confirmatory Mode Parameters ──
+    carry_agree_scale: 1.0       # carry confirms TSMOM → full position
+    carry_disagree_scale: 0.7    # carry opposes TSMOM → 70% position
+    carry_neutral_scale: 0.85    # one side flat → 85% position
+    carry_confirm_smoothing: 24  # EMA smoothing for scale factor
+
+    # ── Turnover 控制 ──
+    composite_ema: 12             # 最終信號 EMA 平滑（12h）
+    position_step: 0.1            # 持倉量化步長（±0.1 離散）
+    min_change_threshold: 0.05    # 最小持倉變化閾值
+
+  symbol_overrides:
+    # ── Tier 1: BTC — TSMOM(720h) + Basis confirmation ──
+    BTCUSDT:
+      tier: "btc_enhanced"
+      tsmom_lookback: 720
+      tsmom_ema_fast: 30
+      tsmom_ema_slow: 100
+      # BTC-specific: slightly more aggressive disagree scaling
+      # because BTC trends are longer and more reliable
+      carry_disagree_scale: 0.6
+
+    # ── Tier 2: ETH — TSMOM + OI/FR/Basis multi-confirmation ──
+    ETHUSDT:
+      tier: "eth_enhanced"
+      w_tsmom: 0.40
+      w_oi: 0.25
+      w_fr: 0.15
+      w_basis: 0.20
+
+    # ── Tier 3: SOL — TSMOM + BasisCarry confirmation ──
+    SOLUSDT:
+      tier: "tsmom_heavy"
+      w_tsmom: 0.70
+      w_basis_carry: 0.30
+
+    # ── Tier 3: AVAX — TSMOM + BasisCarry confirmation ──
+    AVAXUSDT:
+      tier: "tsmom_heavy"
+      w_tsmom: 0.70
+      w_basis_carry: 0.30
+
+    # XRPUSDT removed — Sharpe 0.046, WFA OOS+ 40%, fails 2x cost
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+# ── Portfolio allocation: 8-symbol (LTC + XRP removed) ──
+# BTC/ETH overweight (15%) — strongest carry alpha
+# Others equal-weight (~11.67%)
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.1500
+    ETHUSDT: 0.1500
+    SOLUSDT: 0.1167
+    BNBUSDT: 0.1167
+    DOGEUSDT: 0.1167
+    ADAUSDT: 0.1167
+    AVAXUSDT: 0.1166
+    LINKUSDT: 0.1166
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

@@ -81,6 +81,24 @@
    - Rolling IC 是否穩定？
    - 年度 IC 是否持續下降？
 
+9. **混合策略額外驗證（meta_blend 專用）**
+
+   當審查策略為 `meta_blend`（多策略信號混合器），除上述 1-8 外需額外檢查：
+
+   | 驗證項 | 說明 | 通過標準 |
+   |--------|------|----------|
+   | **Ablation Study** | 純策略 A、純策略 B、A+B 三者回測對比 | 混合版 Sharpe >= max(純A, 純B) 或 MDD 顯著改善（>20%） |
+   | **Per-symbol IC 分析** | 按幣種分析各子策略的 IC 貢獻 | 混合版在多數幣種（>=60%）上 IC 優於單策略 |
+   | **信號方向衝突頻率** | 子策略方向相反的時間佔比 | 衝突時間 < 40%（過高代表混合後淨曝險太低） |
+   | **auto_delay 確認** | `meta_blend` 本身是否為 `auto_delay=False` | 必須為 `False`，防止子策略雙重 delay |
+   | **Per-symbol tier 過擬合** | CPCV/PBO 檢驗 per-symbol 配置是否過擬合 | PBO < 0.5 |
+   | **弱幣種排查** | 找出 WFA OOS+ < 50% 或 2x cost 不盈利的幣種 | 建議移除或降低這些幣種的配置權重 |
+
+   **⚠️ 常見問題清單**（來自真實開發經驗）：
+   - **BTC Sharpe 異常低**：幾乎肯定是 `auto_delay` 雙重 delay 問題（BTC 用的 `breakout_vol_atr` 自帶 delay）
+   - **Carry 信號結構性做空**：BasisCarry 在牛市中可能持續做空，需確認 confirmatory mode 是否正確（carry 只縮放 TSMOM，不反轉方向）
+   - **部分幣種 IC 持續為負**：如 XRP、LTC 等低市值幣 carry 信號不穩定，應建議使用 `tsmom_only` tier 或從 portfolio 移除
+
 ### 判決標準
 
 | 判決 | 條件 |

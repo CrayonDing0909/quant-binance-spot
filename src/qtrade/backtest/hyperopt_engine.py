@@ -1043,6 +1043,21 @@ TSMOM_MULTI_EMA_PARAM_SPACE = {
     "vol_regime_low_weight": ParamSpace.float("vol_regime_low_weight", 0.3, 0.7, step=0.1),
 }
 
+# Breakout + Vol ATR 策略 — 核心參數
+BREAKOUT_VOL_ATR_PARAM_SPACE = {
+    "channel_period": ParamSpace.integer("channel_period", 168, 504),       # 7d-21d
+    "channel_multiplier": ParamSpace.float("channel_multiplier", 1.5, 3.5, step=0.25),
+    "atr_period": ParamSpace.integer("atr_period", 10, 21),
+    "vol_fast_period": ParamSpace.integer("vol_fast_period", 10, 24),
+    "vol_slow_period": ParamSpace.integer("vol_slow_period", 48, 120),
+    "expansion_ratio": ParamSpace.float("expansion_ratio", 0.8, 1.5, step=0.1),
+    "fake_breakout_bars": ParamSpace.integer("fake_breakout_bars", 3, 12),
+    "min_hold_bars": ParamSpace.integer("min_hold_bars", 12, 48),
+    "stop_loss_atr": ParamSpace.float("stop_loss_atr", 2.0, 5.0, step=0.5),
+    "max_holding_bars": ParamSpace.integer("max_holding_bars", 48, 168),
+    "cooldown_bars": ParamSpace.integer("cooldown_bars", 12, 48),
+}
+
 # 預定義空間名稱查找
 XSMOM_PARAM_SPACE = {
     "lookbacks": ParamSpace.categorical("lookbacks", [
@@ -1072,6 +1087,7 @@ PREDEFINED_SPACES = {
     "tsmom": TSMOM_PARAM_SPACE,
     "tsmom_ema": TSMOM_EMA_PARAM_SPACE,
     "tsmom_multi_ema": TSMOM_MULTI_EMA_PARAM_SPACE,
+    "breakout_vol_atr": BREAKOUT_VOL_ATR_PARAM_SPACE,
     "xsmom": XSMOM_PARAM_SPACE,
     "xsmom_tsmom": XSMOM_TSMOM_PARAM_SPACE,
 }

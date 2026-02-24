@@ -82,7 +82,7 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 ## Oracle Cloud 部署
 
-### 當前架構（2026-02-24 verified）
+### 當前架構（2026-02-25 verified）
 
 ```
 Server: Oracle Cloud (1GB RAM, x86_64, Ubuntu 22.04)
@@ -98,6 +98,39 @@ Weight sum: ~3.50
 Circuit breaker: 40% MDD
 Overlays: oi_vol + Microstructure Accel (both enabled)
 Telegram prefix: 🚀 [PROD-R3C-10S-3.5x]
+```
+
+### 候選策略（待上線）
+
+```
+Config: config/prod_candidate_meta_blend.yaml
+Strategy: meta_blend 8-Symbol (R3C × tsmom_carry_v2)
+  - BTC: breakout_vol_atr(30%) + tsmom_carry_v2/btc_enhanced(70%)
+  - ETH: tsmom_carry_v2/eth_enhanced (OI/FR/Basis)
+  - SOL/AVAX: tsmom_carry_v2/tsmom_heavy
+  - BNB/DOGE/ADA/LINK: tsmom_carry_v2/default
+Leverage: 3x ISOLATED
+Circuit breaker: 40% MDD
+Note: 使用 meta_blend pattern（信號混合），非獨立 runner
+```
+
+### 候選策略 2 — OI Liquidation Bounce（已通過風控 ✅）
+
+```
+Config: config/research_oi_liq_bounce.yaml
+Strategy: oi_liq_bounce v4.2 — 5-Symbol Long-Only
+  - BTC(30%), ETH(25%), SOL(20%), DOGE(15%), AVAX(10%)
+  - Long-only, 1x leverage, ISOLATED margin
+  - 需要 OI 數據（binance_vision provider）
+Risk Audit: APPROVED (2026-02-25)
+  - MC 4/4 PASS, Portfolio Risk 3/3 PASS
+  - Portfolio SR: 2.49, MDD: -1.3%, Time-in-market: 4.2%
+Deployment Conditions (MANDATORY):
+  1. Paper trading ≥ 2 weeks first
+  2. position_pct = 0.50 (not 1.0)
+  3. Add circuit_breaker_pct: 0.10
+  4. Confirm OI data source stability before scaling up
+Note: 與 R3C 相關性極低（~0.01），可平行運行但需子帳號或 HEDGE_MODE
 ```
 
 ### 部署 / 重啟 WebSocket Runner
@@ -138,6 +171,52 @@ tmux attach -t r3c_e3_live   # Ctrl+C 停舊的
 PYTHONPATH=src python scripts/run_websocket.py -c config/prod_live_R3C_E3.yaml --real
 # Ctrl+B, d 離開
 ```
+
+### 部署 meta_blend 策略（替換或平行）
+
+#### 方案 A — 替換現有 R3C runner（推薦）
+只需更換 config，同一個 tmux session 即可：
+
+```bash
+ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255
+cd ~/quant-binance-spot && source .venv/bin/activate && git pull
+
+# 下載 meta_blend 所需數據（含 Funding Rate + OI）
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml --funding-rate
+PYTHONPATH=src python scripts/download_oi_data.py --symbols BTCUSDT ETHUSDT --provider binance
+
+# ⚠️ 先平倉舊策略所有持倉
+PYTHONPATH=src python scripts/close_all_positions.py --real --confirm
+
+# 替換 runner config
+tmux kill-session -t r3c_e3_live 2>/dev/null
+tmux new -d -s meta_blend_live 'while true; do
+  cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
+  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_meta_blend.yaml --real;
+  echo "Runner exited, restarting in 10s..."; sleep 10;
+done'
+sleep 10 && tmux capture-pane -t meta_blend_live -p | tail -20
+```
+
+#### 方案 B — 平行運行兩個策略（需子帳號或 HEDGE_MODE）
+
+⚠️ **ONE_WAY mode 下同帳戶不能跑兩個獨立 runner（倉位會互相覆蓋）**。如果要平行運行：
+
+1. **使用 Binance 子帳號**：主帳號跑 R3C，子帳號跑 meta_blend
+2. **使用 meta_blend 統一路由**：把兩個策略合併成一個 `meta_blend` runner（推薦）
+
+`meta_blend` 的優勢就是讓多個策略**共享同一帳戶**，信號在 runner 內部混合後才下單，避免 ONE_WAY 倉位衝突。
+
+#### meta_blend 額外數據需求
+meta_blend 策略中的 `tsmom_carry_v2` 子策略需要額外數據：
+
+| 數據 | 用途 | 下載指令 |
+|------|------|----------|
+| Funding Rate | FR carry signal | `download_data.py -c <cfg> --funding-rate` |
+| Open Interest | OI signal (BTC/ETH only) | `download_oi_data.py --symbols BTCUSDT ETHUSDT` |
+
+確保 Oracle Cloud 上的 cron 也包含這些數據的定期更新。
 
 ### 緊急回滾
 

@@ -20,6 +20,20 @@
 #   Ref: config/research_risk_mitigation_A_20260224.yaml
 #   Weight sum: ~3.50 (reverted from ~3.95)
 #
+# 2026-02-24 QUARANTINE: LTC weight → 0 (was 0.3729)
+#   Reason: Quant Researcher param refresh FAIL — tsmom_ema has no alpha
+#           on LTCUSDT in 2024-2026 regime. 200-trial TPE best OOS Sharpe
+#           = −0.30, all WFA folds negative. Strategy-level failure, not
+#           parameter issue. Symbol kept in market.symbols for data feed.
+#   Ref: reports/futures/tsmom_ema/optimize/20260224_212922/
+#   Weight sum: ~3.50 → ~3.13
+#
+# 2026-02-24 ENABLED: symbol_governance for automated edge monitoring
+#   Reason: IC analysis shows 8/10 symbols IC < 0.03. Governance will
+#           auto-deweight symbols whose rolling Sharpe drops below 0.3.
+#   BTC (breakout_vol_atr) WFA shows real but fragile edge (avg OOS
+#   Sharpe 0.71, overfit ratio 1.32x). Governance monitors for decay.
+#
 # Dropped symbols: DOTUSDT NEARUSDT APTUSDT ARBUSDT OPUSDT
 #                   FILUSDT ATOMUSDT UNIUSDT AAVEUSDT
 #
@@ -145,7 +159,7 @@ ensemble:
     ADAUSDT: 0.3150    # base 0.0511 × 6.163
     AVAXUSDT: 0.3359   # base 0.0545 × 6.163
     LINKUSDT: 0.3316   # base 0.0538 × 6.163
-    LTCUSDT: 0.3729    # base 0.0605 × 6.163
+    LTCUSDT: 0.0       # QUARANTINED 2026-02-24 (was 0.3729) — no alpha
   vol_parity:
     lookback: 720
     min_weight: 0.03
@@ -209,8 +223,8 @@ position_sizing:
   method: "fixed"
   position_pct: 1.0
 
-# ── Portfolio allocation: 10 symbols ──
-# Sum of weights ≈ 3.50
+# ── Portfolio allocation: 10 symbols (LTC quarantined) ──
+# Sum of weights ≈ 3.13 (was 3.50 before LTC quarantine)
 portfolio:
   cash_reserve: 0
   allocation:
@@ -223,7 +237,7 @@ portfolio:
     ADAUSDT: 0.3150    # base 0.0511 × 6.163
     AVAXUSDT: 0.3359   # base 0.0545 × 6.163
     LINKUSDT: 0.3316   # base 0.0538 × 6.163
-    LTCUSDT: 0.3729    # base 0.0605 × 6.163
+    LTCUSDT: 0.0       # QUARANTINED 2026-02-24 (was 0.3729) — no alpha
 
 live:
   kline_cache: true
@@ -239,9 +253,9 @@ live:
     threshold_pct: 0.03
     apply_on_same_direction_only: true
 
-  # ── Symbol Governance: disabled for now ──
+  # ── Symbol Governance: enabled 2026-02-24 (IC monitoring) ──
   symbol_governance:
-    enabled: false
+    enabled: true
     review_frequency: "weekly"
     warmup_days: 14
     quarantine_min_days: 14

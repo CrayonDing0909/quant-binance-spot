@@ -1,0 +1,172 @@
+# ═══════════════════════════════════════════════════════════════
+# PRODUCTION LIVE — OI Liquidation Bounce v4.2 (Paper Trading)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-25
+# Origin: config/research_oi_liq_bounce.yaml (Risk Manager APPROVED)
+# Purpose: Paper trading ≥ 2 weeks before live deployment
+#
+# Risk Audit Conditions (MANDATORY):
+#   1. position_pct = 0.50 (not 1.0) — half sizing
+#   2. circuit_breaker_pct = 0.10 (10% drawdown kills trading)
+#   3. Paper trading ≥ 2 weeks before scaling up
+#   4. Confirm OI data source stability
+#
+# Strategy Summary:
+#   5-symbol long-only (BTC/ETH/SOL/DOGE/AVAX), 1x leverage
+#   OR-gate entry: OI liquidation drop OR Volume spike
+#   Per-symbol tuning via symbol_overrides
+#   Portfolio SR=2.49, MDD=-1.3%, Time-in-market=4.2%
+#   Correlation with R3C ≈ 0.01 (fully independent)
+#
+# Deployment Note:
+#   與 R3C 同帳戶平行運行需 HEDGE_MODE 或子帳號。
+#   Paper Trading 模式下無此限制。
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - DOGEUSDT
+    - AVAXUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "long_only"
+
+strategy:
+  name: "oi_liq_bounce"
+  params:
+    # ── Core signal — Path A (OI Liquidation) ──
+    oi_change_lookback: 24
+    price_change_lookback: 8
+    z_window: 720
+    oi_z_threshold: -1.5
+    price_z_threshold: -1.0
+
+    # ── Core signal — Path B (Volume Spike) ──
+    vol_spike_enabled: false     # 預設關閉; BTC/ETH/DOGE 各自啟用
+    vol_spike_threshold: 2.0
+    vol_spike_lookback: 24
+
+    # ── Exit ──
+    exit_mode: "hybrid"
+    hold_bars: 36
+    stop_loss_atr: 3.0
+
+    # ── HTF Trend Filter ──
+    htf_filter_enabled: true
+    htf_regime_mode: "ema"
+    htf_ema_period: 50
+    htf_adx_period: 14
+    htf_adx_threshold: 20
+
+    # ── FR Spike Filter (optional, disabled) ──
+    fr_spike_enabled: false
+    fr_z_threshold: -0.5
+    fr_change_lookback: 2
+
+    # ── Vol Scaling ──
+    vol_scale_enabled: true
+    vol_target: 0.15
+    vol_lookback: 168
+
+    # ── Cooldown ──
+    cooldown_bars: 12
+
+  symbol_overrides:
+    BTCUSDT:
+      exit_mode: "fixed_hold"
+      hold_bars: 24
+      htf_regime_mode: "ema_adx"
+      htf_adx_threshold: 20
+      oi_z_threshold: -1.3
+      vol_spike_enabled: true
+      vol_spike_threshold: 1.5
+      vol_spike_lookback: 48
+    ETHUSDT:
+      exit_mode: "hybrid"
+      hold_bars: 36
+      stop_loss_atr: 3.0
+      htf_regime_mode: "ema"
+      vol_spike_enabled: true
+      vol_spike_threshold: 2.5
+      vol_spike_lookback: 24
+    SOLUSDT:
+      exit_mode: "hybrid"
+      hold_bars: 48
+      stop_loss_atr: 3.0
+      htf_regime_mode: "ema"
+    DOGEUSDT:
+      exit_mode: "fixed_hold"
+      hold_bars: 24
+      htf_regime_mode: "ema"
+      vol_spike_enabled: true
+      vol_spike_threshold: 2.5
+      vol_spike_lookback: 24
+    AVAXUSDT:
+      exit_mode: "hybrid"
+      hold_bars: 48
+      stop_loss_atr: 3.0
+      htf_regime_mode: "ema"
+
+# ── Backtest (for reference, used by PaperBroker fee/slippage) ──
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: true
+    base_bps: 2.0
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+# ── Risk (Risk Audit conditions) ──
+risk:
+  max_drawdown_pct: 0.10   # 10% circuit breaker (Risk Audit requirement)
+
+# ── Position Sizing (Risk Audit: half sizing) ──
+position_sizing:
+  method: "fixed"
+  position_pct: 0.50       # 50% sizing (Risk Audit requirement, not 1.0)
+
+# ── Portfolio Allocation ──
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.30
+    ETHUSDT: 0.25
+    SOLUSDT: 0.20
+    DOGEUSDT: 0.15
+    AVAXUSDT: 0.10
+
+# ── Live Settings ──
+live:
+  kline_cache: true
+  flip_confirmation: false
+
+# ── Notification ──
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "📋 [PAPER-OI-LIQ-5S-1x]"
+  enabled: true
+
+output:
+  report_dir: "./reports"

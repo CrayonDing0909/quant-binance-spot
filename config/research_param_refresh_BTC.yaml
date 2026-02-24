@@ -1,0 +1,83 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — Parameter Refresh: BTCUSDT (breakout_vol_atr)
+# ═══════════════════════════════════════════════════════════════
+# Purpose: IC dropped to -0.022 → re-optimize on 2024-2026 data
+# Baseline: prod_live_R3C_E3.yaml ensemble.strategies.BTCUSDT
+# DO NOT use in production. Research only.
+# Created: 2026-02-24
+
+market:
+  symbols: ["BTCUSDT"]
+  interval: "1h"
+  start: "2024-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "breakout_vol_atr"
+  params:
+    # ── Current prod params (baseline) ──
+    channel_period: 336
+    channel_multiplier: 2.5
+    atr_period: 14
+    vol_fast_period: 14
+    vol_slow_period: 72
+    expansion_ratio: 1.1
+    fake_breakout_bars: 6
+    min_hold_bars: 24
+    trail_exit_mid: true
+    stop_loss_atr: 3.5
+    max_holding_bars: 72
+    cooldown_bars: 24
+    # ── Vol scaling (keep fixed) ──
+    vol_scale_enabled: true
+    vol_scale_target: 99.0
+    vol_scale_lookback: 168
+    vol_scale_floor: 0.7
+    vol_scale_cap: 0.7
+    # ── Volume confirm (keep fixed) ──
+    volume_confirm_enabled: true
+    volume_confirm_period: 20
+    volume_confirm_ratio: 1.5
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.0
+
+live:
+  kline_cache: true
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

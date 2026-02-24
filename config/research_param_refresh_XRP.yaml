@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — Parameter Refresh: XRPUSDT (tsmom_ema)
+# ═══════════════════════════════════════════════════════════════
+# Purpose: IC dropped to -0.026 → re-optimize on 2024-2026 data
+# Baseline: prod_live_R3C_E3.yaml default tsmom_ema params
+# DO NOT use in production. Research only.
+# Created: 2026-02-24
+
+market:
+  symbols: ["XRPUSDT"]
+  interval: "1h"
+  start: "2024-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_ema"
+  params:
+    # ── Current prod params (baseline) ──
+    lookback: 168
+    vol_target: 0.15
+    ema_fast: 20
+    ema_slow: 50
+    agree_weight: 1.0
+    disagree_weight: 0.3
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    XRPUSDT: 1.0
+
+live:
+  kline_cache: true
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

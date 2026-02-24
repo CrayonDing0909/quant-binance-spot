@@ -174,7 +174,44 @@ print(f'Rows: {len(df)}, Range: {df.index[0]} ~ {df.index[-1]}')
 - `scripts/run_funding_basis_research.py` — Funding Rate basis 策略研究
 - `scripts/research_mean_revert_liquidity.py` — 均值回歸 + 流動性策略研究
 - `scripts/research_dual_momentum.py` — 雙動量策略研究
+- `scripts/research_strategy_blend.py` — **多策略混合權重優化**（sweep A/B allocation）
 - `docs/R2_100_RESEARCH_MATRIX.md` — 研究矩陣範例（6 個實驗的結構化規劃）
+
+## 多策略混合研究指引
+
+當探索「多策略組合」方向時（例如現有生產策略 + 新策略），需額外提供：
+
+### 混合可行性分析
+1. **信號相關性**：計算兩個策略在相同幣種上的信號/收益相關性（< 0.5 才有混合價值）
+2. **Per-symbol 表現差異**：哪些幣種在策略 A 表現好、哪些在策略 B？如果有互補性，建議 per-symbol routing
+3. **組合方式**：
+   - **線性加權**：`final = w_A * signal_A + w_B * signal_B`（簡單但可能信號抵消）
+   - **Confirmatory（確認式）**：`signal_B` 縮放 `signal_A`（保留主策略方向，副策略調整幅度）
+   - **Regime-switch**：根據市場狀態選擇使用哪個策略（需 ADX 等 regime detector）
+   
+   ⚠️ **線性加權的陷阱**：如果兩個策略方向相反（一個做多一個做空），線性加權會互相抵消，淨曝險接近零。應優先考慮 Confirmatory 或 Per-symbol routing。
+
+### Strategy Proposal 額外欄位
+混合策略提案需在標準模板中額外填寫：
+
+```markdown
+## 13. Blend Configuration (if applicable)
+- Candidate strategies: [策略 A, 策略 B]
+- Correlation (daily returns): X.XX
+- Per-symbol routing recommendation:
+  | Symbol | Best Strategy | Rationale |
+  |--------|--------------|-----------|
+  | BTC    | A            | ...       |
+  | ETH    | B            | ...       |
+- Recommended blend method: [Linear / Confirmatory / Per-symbol routing]
+- Weight sweep results: [附上 IC vs weight 或 Sharpe vs weight 圖]
+```
+
+### Handoff 到 Quant Developer
+混合策略的 handoff prompt 必須額外包含：
+- 推薦的混合權重（或 per-symbol 權重矩陣）
+- 使用的策略實作名稱（`@register_strategy` 的名稱）
+- 已知 `auto_delay` 設定（哪些子策略用 `auto_delay=False`）
 
 ## 自我檢查清單
 

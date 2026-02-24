@@ -117,6 +117,21 @@ PYTHONPATH=src python scripts/prod_launch_guard.py --dry-run
 - Risk Guard 狀態（是否有 FLATTEN 指令）
 - NTP 時鐘同步
 
+### Step 5b: 混合策略額外檢查（meta_blend 專用）
+
+當審查的策略是 `meta_blend`（多策略信號混合器），需額外檢查：
+
+| 檢查項 | 說明 | 通過標準 |
+|--------|------|----------|
+| **auto_delay 一致性** | meta_blend 本身必須 `auto_delay=False`，避免子策略被雙重 delay | 確認 `@register_strategy("meta_blend", auto_delay=False)` |
+| **子策略信號方向衝突** | 某些幣種上子策略可能方向相反（一個做多一個做空） | 混合後淨信號不應長期接近零（信號曝險 > 20%） |
+| **Concentration Risk** | 檢查 HHI（赫芬達爾指數）和 BTC+ETH 合計權重 | HHI < 0.2，top-2 合計 < 40% |
+| **子策略依賴數據** | `tsmom_carry_v2` 需 Funding Rate + OI | 確認 Oracle Cloud 有定期下載 |
+| **Ablation 驗證** | 純策略 A、純策略 B、A+B 三者對比 | 混合 Sharpe >= max(純A, 純B) 或 MDD 顯著改善 |
+
+**雙重 delay 是最常見的致命問題**：BTC Sharpe 曾因此從 1.18 掉到 0.50。
+審查時務必確認 `meta_blend_strategy.py` 的 `auto_delay` 設定。
+
 ## 週期性審查 (Periodic Review)
 
 ### 每週快速檢查

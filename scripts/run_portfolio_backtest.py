@@ -36,6 +36,12 @@
     # 成本敏感度測試
     python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --cost-mult 0.5
     python scripts/run_portfolio_backtest.py -c config/futures_ensemble_nw_tsmom.yaml --cost-mult 1.5
+
+    # 多策略組合回測（各策略獨立回測後合併）
+    python scripts/run_portfolio_backtest.py --multi-strategy config/prod_live_R3C_E3.yaml config/research_oi_liq_bounce.yaml
+
+    # 多策略組合 + 自訂策略權重
+    python scripts/run_portfolio_backtest.py --multi-strategy config/prod_live_R3C_E3.yaml config/research_oi_liq_bounce.yaml --strategy-weights 0.7 0.3
 """
 from __future__ import annotations
 import argparse
@@ -564,6 +570,289 @@ def plot_portfolio_equity(
     plt.close()
 
 
+def run_multi_strategy_backtest(
+    config_paths: list[str],
+    strategy_weights: list[float] | None = None,
+    simple_mode: bool = False,
+    output_dir: Path | None = None,
+) -> dict:
+    """
+    多策略組合回測：每個 config 代表一個獨立策略，各自回測後合併。
+
+    與 ensemble 模式不同：
+    - ensemble: 同一個 config 內 per-symbol 路由不同策略
+    - multi-strategy: 多個 config，每個策略完全獨立回測，最後合併資金曲線
+
+    Args:
+        config_paths: 策略 config 路徑列表
+        strategy_weights: 策略層級權重（None → 等權重）
+        simple_mode: True = 關閉成本模型
+        output_dir: 輸出目錄
+
+    Returns:
+        組合回測結果 dict
+    """
+    n_strats = len(config_paths)
+    if strategy_weights is None:
+        strategy_weights = [1.0 / n_strats] * n_strats
+    else:
+        sw = np.array(strategy_weights)
+        strategy_weights = (sw / sw.sum()).tolist()
+
+    print(f"\n{'='*70}")
+    print(f"  多策略組合回測 ({n_strats} 個策略)")
+    print(f"{'='*70}")
+    for i, (cp, w) in enumerate(zip(config_paths, strategy_weights)):
+        cfg = load_config(cp)
+        print(f"  [{i+1}] {cfg.strategy.name:<25} 權重={w*100:.1f}%  ({cp})")
+    print()
+
+    # ── 各策略獨立回測 ──
+    strategy_results = []  # list of {label, cfg, results, daily_returns, port_ret}
+
+    for cp, sw in zip(config_paths, strategy_weights):
+        cfg = load_config(cp)
+        strategy_name = cfg.strategy.name
+        symbols = cfg.market.symbols
+        market_type = cfg.market_type_str
+        data_dir = cfg.data_dir
+
+        # 檢查 ensemble
+        ens = load_ensemble_config(cp)
+
+        print(f"\n{'─'*50}")
+        print(f"  策略: {strategy_name} ({cp})")
+        print(f"  幣種: {', '.join(symbols)}")
+        print(f"{'─'*50}")
+
+        per_symbol: dict[str, BacktestResult] = {}
+        for symbol in symbols:
+            if ens and symbol in ens.get("strategies", {}):
+                sym_strat = ens["strategies"][symbol]
+                strat_name = sym_strat["name"]
+                bt_cfg = cfg.to_backtest_dict(symbol=symbol)
+                bt_cfg["strategy_params"] = sym_strat.get("params", bt_cfg["strategy_params"])
+            else:
+                strat_name = strategy_name
+                bt_cfg = cfg.to_backtest_dict(symbol=symbol)
+
+            if simple_mode:
+                bt_cfg["funding_rate"] = {"enabled": False}
+                bt_cfg["slippage_model"] = {"enabled": False}
+
+            data_path = (
+                data_dir / "binance" / market_type
+                / cfg.market.interval / f"{symbol}.parquet"
+            )
+            if not data_path.exists():
+                print(f"  ⚠️  {symbol}: 數據不存在")
+                continue
+
+            try:
+                res = run_symbol_backtest(
+                    symbol, data_path, bt_cfg,
+                    strategy_name=strat_name,
+                    data_dir=data_dir,
+                )
+                per_symbol[symbol] = res
+                print(
+                    f"  {symbol} [{strat_name}]: "
+                    f"Ret={res.total_return_pct():+.1f}%, "
+                    f"SR={res.sharpe():.2f}"
+                )
+            except Exception as e:
+                print(f"  ❌ {symbol} 失敗: {e}")
+
+        if not per_symbol:
+            print(f"  ⚠️  {strategy_name}: 沒有成功的回測")
+            continue
+
+        # 計算策略內的組合收益率
+        active_syms = list(per_symbol.keys())
+        if cfg.portfolio.allocation:
+            sym_weights = {}
+            for sym in active_syms:
+                sym_weights[sym] = cfg.portfolio.get_weight(sym, len(active_syms))
+        else:
+            sym_weights = {sym: 1.0 / len(active_syms) for sym in active_syms}
+        total_sw = sum(sym_weights.values())
+        sym_weights = {k: v / total_sw for k, v in sym_weights.items()}
+
+        # 提取日收益率
+        daily_rets = {}
+        for sym, res in per_symbol.items():
+            eq = res.equity()
+            if eq is not None and not eq.empty:
+                daily_eq = eq.resample("1D").last().dropna()
+                daily_rets[sym] = daily_eq.pct_change().dropna()
+
+        # 策略內加權組合
+        if daily_rets:
+            dr_df = pd.DataFrame(daily_rets).dropna()
+            strat_port_ret = pd.Series(0.0, index=dr_df.index)
+            for sym in active_syms:
+                if sym in dr_df.columns:
+                    strat_port_ret += dr_df[sym] * sym_weights.get(sym, 0)
+        else:
+            strat_port_ret = pd.Series(dtype=float)
+
+        strategy_results.append({
+            "label": strategy_name,
+            "config_path": cp,
+            "cfg": cfg,
+            "per_symbol": per_symbol,
+            "portfolio_daily_returns": strat_port_ret,
+            "strategy_weight": sw,
+        })
+
+    if not strategy_results:
+        print("❌ 沒有成功的策略回測")
+        return {}
+
+    # ── 合併策略資金曲線 ──
+    print(f"\n{'='*70}")
+    print(f"  合併 {len(strategy_results)} 個策略")
+    print(f"{'='*70}")
+
+    # 對齊時間
+    all_rets = [sr["portfolio_daily_returns"] for sr in strategy_results if not sr["portfolio_daily_returns"].empty]
+    if not all_rets:
+        print("❌ 沒有收益率數據")
+        return {}
+
+    common_idx = all_rets[0].index
+    for r in all_rets[1:]:
+        common_idx = common_idx.intersection(r.index)
+
+    if len(common_idx) < 10:
+        print(f"❌ 共同時間範圍太短 ({len(common_idx)} 天)")
+        return {}
+
+    print(f"  共同時間範圍: {common_idx[0].date()} → {common_idx[-1].date()} ({len(common_idx)} 天)")
+
+    # 正規化策略權重
+    active_strats = [sr for sr in strategy_results if not sr["portfolio_daily_returns"].empty]
+    active_sw = np.array([sr["strategy_weight"] for sr in active_strats])
+    active_sw = active_sw / active_sw.sum()
+
+    # 合併收益率
+    combined_ret = pd.Series(0.0, index=common_idx)
+    for sr, w in zip(active_strats, active_sw):
+        combined_ret += sr["portfolio_daily_returns"].loc[common_idx] * w
+
+    # 計算組合統計
+    combined_eq = (1 + combined_ret).cumprod()
+    years = len(common_idx) / 365.0
+    cum_ret = combined_eq.iloc[-1] - 1
+    annual_ret = (1 + cum_ret) ** (1 / years) - 1 if years > 0 else 0
+    sharpe = np.sqrt(365) * combined_ret.mean() / combined_ret.std() if combined_ret.std() > 0 else 0
+    rolling_max = combined_eq.expanding().max()
+    dd = (combined_eq - rolling_max) / rolling_max
+    max_dd = abs(dd.min())
+    calmar = annual_ret / max_dd if max_dd > 0 else 0
+
+    downside = combined_ret[combined_ret < 0]
+    down_std = downside.std() if len(downside) > 0 else 0.001
+    sortino = np.sqrt(365) * combined_ret.mean() / down_std if down_std > 0 else 0
+
+    # ── 報告 ──
+    print(f"\n{'─'*70}")
+    print(f"  多策略組合結果")
+    print(f"{'─'*70}")
+    print(f"  {'策略配置:':<30}")
+    for sr, w in zip(active_strats, active_sw):
+        print(f"    {sr['label']:<25} {w*100:.1f}%")
+    print()
+    print(f"  {'Total Return':<30} {cum_ret*100:>10.2f}%")
+    print(f"  {'Annual Return':<30} {annual_ret*100:>10.2f}%")
+    print(f"  {'Max Drawdown':<30} {max_dd*100:>10.2f}%")
+    print(f"  {'Sharpe Ratio':<30} {sharpe:>10.3f}")
+    print(f"  {'Sortino Ratio':<30} {sortino:>10.3f}")
+    print(f"  {'Calmar Ratio':<30} {calmar:>10.3f}")
+
+    # ── 跨策略相關性 ──
+    if len(active_strats) >= 2:
+        print(f"\n  跨策略相關性:")
+        strat_rets_df = pd.DataFrame({
+            sr["label"]: sr["portfolio_daily_returns"].loc[common_idx]
+            for sr in active_strats
+        })
+        corr = strat_rets_df.corr()
+        labels = corr.columns.tolist()
+        for i in range(len(labels)):
+            for j in range(i + 1, len(labels)):
+                c = corr.iloc[i, j]
+                print(f"    {labels[i]} vs {labels[j]}: {c:.3f}")
+
+    # ── 邊際貢獻（Leave-One-Out） ──
+    if len(active_strats) >= 2:
+        print(f"\n  邊際貢獻 (Leave-One-Out):")
+        for k, sr in enumerate(active_strats):
+            # 移除第 k 個策略，重算
+            remaining_w = np.delete(active_sw, k)
+            remaining_w = remaining_w / remaining_w.sum()
+            loo_ret = pd.Series(0.0, index=common_idx)
+            for m, (sr2, _) in enumerate(zip(active_strats, active_sw)):
+                if m == k:
+                    continue
+                idx = m if m < k else m - 1
+                loo_ret += sr2["portfolio_daily_returns"].loc[common_idx] * remaining_w[idx]
+
+            loo_sr = np.sqrt(365) * loo_ret.mean() / loo_ret.std() if loo_ret.std() > 0 else 0
+            delta = sharpe - loo_sr
+            marker = "+" if delta > 0 else ""
+            print(f"    移除 {sr['label']}: SR 從 {sharpe:.3f} → {loo_sr:.3f} (Δ={marker}{delta:.3f})")
+
+    # ── 儲存 ──
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        results_dict = {
+            "timestamp": datetime.now().isoformat(),
+            "mode": "multi-strategy",
+            "strategies": [
+                {
+                    "label": sr["label"],
+                    "config_path": sr["config_path"],
+                    "weight": float(w),
+                    "symbols": list(sr["per_symbol"].keys()),
+                }
+                for sr, w in zip(active_strats, active_sw)
+            ],
+            "portfolio_stats": {
+                "total_return_pct": round(cum_ret * 100, 2),
+                "annual_return_pct": round(annual_ret * 100, 2),
+                "max_drawdown_pct": round(max_dd * 100, 2),
+                "sharpe": round(sharpe, 3),
+                "sortino": round(sortino, 3),
+                "calmar": round(calmar, 3),
+            },
+            "common_days": len(common_idx),
+            "start": str(common_idx[0].date()),
+            "end": str(common_idx[-1].date()),
+        }
+
+        with open(output_dir / "multi_strategy_stats.json", "w") as f:
+            json.dump(results_dict, f, indent=2, default=str)
+
+        # 儲存資金曲線
+        eq_df = pd.DataFrame({"combined_equity": combined_eq})
+        for sr in active_strats:
+            sr_eq = (1 + sr["portfolio_daily_returns"].loc[common_idx]).cumprod()
+            eq_df[sr["label"]] = sr_eq
+        eq_df.to_csv(output_dir / "multi_strategy_equity.csv")
+
+        print(f"\n📁 結果已儲存: {output_dir}")
+
+    return {
+        "sharpe": sharpe,
+        "total_return": cum_ret,
+        "max_drawdown": max_dd,
+        "calmar": calmar,
+        "sortino": sortino,
+    }
+
+
 def load_ensemble_config(config_path: str) -> dict | None:
     """
     從 YAML 配置檔讀取 ensemble 段落
@@ -621,8 +910,40 @@ def main():
         "--cost-mult", type=float, default=1.0,
         help="成本乘數（1.0=baseline, 0.5=低成本, 1.5=高成本）",
     )
+    parser.add_argument(
+        "--multi-strategy", nargs="+", default=None,
+        metavar="CONFIG",
+        help="多策略組合回測：提供多個 config 路徑，各自獨立回測後合併",
+    )
+    parser.add_argument(
+        "--strategy-weights", nargs="+", type=float, default=None,
+        help="策略層級權重（與 --multi-strategy 搭配使用）",
+    )
 
     args = parser.parse_args()
+
+    # ── 多策略組合回測模式 ──
+    if args.multi_strategy:
+        if args.strategy_weights and len(args.strategy_weights) != len(args.multi_strategy):
+            print(
+                f"❌ --strategy-weights 數量 ({len(args.strategy_weights)}) "
+                f"與 --multi-strategy 數量 ({len(args.multi_strategy)}) 不符"
+            )
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir = Path("reports/multi_strategy") / timestamp
+
+        run_multi_strategy_backtest(
+            config_paths=args.multi_strategy,
+            strategy_weights=args.strategy_weights,
+            simple_mode=args.simple,
+            output_dir=output_dir,
+        )
+        return
 
     # 載入配置
     cfg = load_config(args.config)

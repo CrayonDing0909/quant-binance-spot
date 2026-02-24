@@ -1,0 +1,262 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — Meta-Blend Strategy (R3C × tsmom_carry_v2)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-25
+# Purpose: 混合兩個策略的信號，在同一帳戶/同一 Runner 中執行
+#
+# Phase 1 Blend Optimizer 結論 (research_strategy_blend.py):
+#   - 純 R3C:  Sharpe=1.013, Return=+54.4%, MDD=-9.5%
+#   - 純 V2:   Sharpe=1.127, Return=+37.9%, MDD=-5.0%
+#   - R3C/V2 平均相關性 = +0.87（高）→ flat blend 分散效果有限
+#
+#   但 BTC 是特例：
+#     R3C breakout_vol_atr: Sharpe=1.182, Ret=+203%, Corr=0.60
+#     V2 btc_enhanced:      Sharpe=0.894, Ret=+36%
+#   → BTC 適合混合（低相關 + R3C 大幅領先）
+#
+# 方案：Per-Symbol 路由
+#   BTC:   breakout_vol_atr(30%) + tsmom_carry_v2 btc_enhanced(70%)
+#   ETH:   100% tsmom_carry_v2 eth_enhanced
+#   SOL/AVAX: 100% tsmom_carry_v2 tsmom_heavy
+#   Others: 100% tsmom_carry_v2 default
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "meta_blend"
+  params:
+    # ── Default sub-strategy combo (BNB, DOGE, ADA, LINK) ──
+    # 100% V2 — carry confirmation provides better risk-adjusted returns
+    sub_strategies:
+      - name: "tsmom_carry_v2"
+        weight: 1.0
+        params:
+          # ── Combination Mode ──
+          combination_mode: "confirmatory"
+          tier: "default"
+          tsmom_lookback: 168
+          tsmom_vol_target: 0.15
+          tsmom_ema_fast: 20
+          tsmom_ema_slow: 50
+          tsmom_agree_weight: 1.0
+          tsmom_disagree_weight: 0.3
+          basis_ema_fast: 24
+          basis_ema_slow: 168
+          basis_tanh_scale: 50.0
+          fr_rolling_window: 72
+          oi_z_window: 168
+          basis_carry_fr_weight: 0.7
+          basis_carry_basis_weight: 0.3
+          w_tsmom: 0.50
+          w_basis_carry: 0.50
+          carry_agree_scale: 1.0
+          carry_disagree_scale: 0.7
+          carry_neutral_scale: 0.85
+          carry_confirm_smoothing: 24
+          composite_ema: 12
+          position_step: 0.1
+          min_change_threshold: 0.05
+
+  symbol_overrides:
+    # ── BTC: breakout_vol_atr(30%) + tsmom_carry_v2(70%) ──
+    # breakout_vol_atr has Sharpe 1.18 vs V2's 0.89 on BTC
+    # Correlation = 0.60 → real diversification benefit
+    BTCUSDT:
+      sub_strategies:
+        - name: "breakout_vol_atr"
+          weight: 0.30
+          params:
+            channel_period: 336
+            channel_multiplier: 2.5
+            atr_period: 14
+            vol_fast_period: 14
+            vol_slow_period: 72
+            expansion_ratio: 1.1
+            fake_breakout_bars: 6
+            min_hold_bars: 24
+            trail_exit_mid: true
+            stop_loss_atr: 3.5
+            max_holding_bars: 72
+            cooldown_bars: 24
+            vol_scale_enabled: true
+            vol_scale_target: 99.0
+            vol_scale_lookback: 168
+            vol_scale_floor: 0.7
+            vol_scale_cap: 0.7
+            volume_confirm_enabled: true
+            volume_confirm_period: 20
+            volume_confirm_ratio: 1.5
+        - name: "tsmom_carry_v2"
+          weight: 0.70
+          params:
+            combination_mode: "confirmatory"
+            tier: "btc_enhanced"
+            tsmom_lookback: 720
+            tsmom_ema_fast: 30
+            tsmom_ema_slow: 100
+            tsmom_vol_target: 0.15
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.6
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+
+    # ── ETH: 100% tsmom_carry_v2 (eth_enhanced) ──
+    ETHUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "eth_enhanced"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            w_tsmom: 0.40
+            w_oi: 0.25
+            w_fr: 0.15
+            w_basis: 0.20
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            oi_z_window: 168
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+
+    # ── SOL: 100% tsmom_carry_v2 (tsmom_heavy) ──
+    SOLUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "tsmom_heavy"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            w_tsmom: 0.70
+            w_basis_carry: 0.30
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            basis_carry_fr_weight: 0.7
+            basis_carry_basis_weight: 0.3
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+
+    # ── AVAX: 100% tsmom_carry_v2 (tsmom_heavy) ──
+    AVAXUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "tsmom_heavy"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            w_tsmom: 0.70
+            w_basis_carry: 0.30
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            basis_carry_fr_weight: 0.7
+            basis_carry_basis_weight: 0.3
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+# ── Portfolio allocation: 8-symbol ──
+# BTC/ETH overweight (15%) — strongest alpha
+# Others equal-weight (~11.67%)
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.1500
+    ETHUSDT: 0.1500
+    SOLUSDT: 0.1167
+    BNBUSDT: 0.1167
+    DOGEUSDT: 0.1167
+    ADAUSDT: 0.1167
+    AVAXUSDT: 0.1166
+    LINKUSDT: 0.1166
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"
