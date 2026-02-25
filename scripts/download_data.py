@@ -356,6 +356,13 @@ def main() -> None:
         help="同時下載 Futures 歷史 Funding Rate（合約模式自動啟用）"
     )
     
+    # OI 下載
+    parser.add_argument(
+        "--oi",
+        action="store_true",
+        help="同時下載 Open Interest 數據（oi_liq_bounce 等策略自動啟用）"
+    )
+    
     # 資訊查詢選項
     parser.add_argument(
         "--list-sources",
@@ -511,6 +518,92 @@ def main() -> None:
                         print(f"  ⚠️  {sym} 無 funding rate 資料")
             except Exception as e:
                 print(f"  ❌ {sym} Funding rate 下載失敗: {e}")
+        print("-" * 60)
+
+    # ── OI 下載 ──────────────────────────────────────
+    # oi_liq_bounce 等策略自動啟用，或 --oi 手動啟用
+    oi_strategies = {"oi_liq_bounce", "oi_bb_rv"}
+    strategy_name = getattr(cfg.strategy, "name", "")
+    should_download_oi = (
+        args.oi
+        or (market_type == "futures" and strategy_name in oi_strategies)
+    )
+    if should_download_oi:
+        try:
+            from qtrade.data.open_interest import (
+                download_open_interest,
+                save_open_interest,
+                load_open_interest,
+                get_oi_path,
+                merge_oi_sources,
+            )
+        except ImportError:
+            print("⚠️  open_interest 模組不可用，跳過 OI 下載")
+            should_download_oi = False
+
+    if should_download_oi:
+        print(f"\n📥 下載 Open Interest 數據...")
+        print("-" * 60)
+
+        # 1) binance_vision（完整歷史）
+        for sym in symbols:
+            try:
+                print(f"  📥 {sym} OI via binance_vision...")
+                df_vision = download_open_interest(
+                    symbol=sym,
+                    start=start_date,
+                    end=end_date,
+                    interval=interval,
+                    provider="binance_vision",
+                )
+                if not df_vision.empty:
+                    path = get_oi_path(cfg.data_dir, sym, "binance_vision")
+                    save_open_interest(df_vision, path)
+                    print(f"  ✅ {sym} binance_vision: {len(df_vision)} 筆")
+                else:
+                    print(f"  ⚠️  {sym} binance_vision: 無數據")
+            except Exception as e:
+                print(f"  ❌ {sym} binance_vision OI 下載失敗: {e}")
+
+        # 2) binance API（近期補齊）
+        for sym in symbols:
+            try:
+                print(f"  📥 {sym} OI via binance API...")
+                df_api = download_open_interest(
+                    symbol=sym,
+                    start=start_date,
+                    end=end_date,
+                    interval=interval,
+                    provider="binance",
+                )
+                if not df_api.empty:
+                    path = get_oi_path(cfg.data_dir, sym, "binance")
+                    save_open_interest(df_api, path)
+                    print(f"  ✅ {sym} binance API: {len(df_api)} 筆")
+                else:
+                    print(f"  ⚠️  {sym} binance API: 無數據")
+            except Exception as e:
+                print(f"  ❌ {sym} binance API OI 下載失敗: {e}")
+
+        # 3) 合併所有來源
+        print(f"\n  🔀 合併 OI 來源...")
+        for sym in symbols:
+            try:
+                sources = []
+                for prov in ["binance_vision", "coinglass", "binance"]:
+                    path = get_oi_path(cfg.data_dir, sym, prov)
+                    loaded = load_open_interest(path)
+                    if loaded is not None and not loaded.empty:
+                        sources.append(loaded)
+                if sources:
+                    combined = merge_oi_sources(sources, max_ffill_bars=2)
+                    save_path = get_oi_path(cfg.data_dir, sym, "merged")
+                    save_open_interest(combined, save_path)
+                    print(f"  ✅ {sym} merged: {len(combined)} 筆")
+                else:
+                    print(f"  ⚠️  {sym}: 無任何 OI 來源可合併")
+            except Exception as e:
+                print(f"  ❌ {sym} OI 合併失敗: {e}")
         print("-" * 60)
 
 

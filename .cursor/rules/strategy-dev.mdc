@@ -26,6 +26,7 @@ Follow [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md):
 2. **Hypothesis** — Write: hypothesis, mechanism, failure mode, scope
 3. **Implementation** — Add as opt-in (default disabled), backward compatible, use `config/research_*.yaml`
 4. **Validation** — Must pass in order: Causality → Backtest → Generalization → Delay fragility
+   > Developer 只跑 `validate.py --quick`（causality + 基本健全檢查）。完整 pipeline（WFA, CPCV, DSR, Cost Stress, Delay Stress）由 Quant Researcher 獨立執行。
 5. **Ablation** — Test components independently (A only, B only, A+B)
 6. **Decision** — Only 4 verdicts: `GO_NEXT`, `KEEP_BASELINE`, `NEED_MORE_WORK`, `FAIL`
 7. **Rollout** — Paper gate >= 7-14 days → Capital ramp 25% → 50% → 100%

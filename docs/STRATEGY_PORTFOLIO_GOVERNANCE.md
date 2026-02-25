@@ -1,6 +1,6 @@
 # 策略組合治理規範 (Strategy Portfolio Governance)
 
-> **Last updated**: 2026-02-25
+> **Last updated**: 2026-02-25 (審查排程分工更新)
 
 本文件定義多策略組合的治理規則：新策略如何納入、何時替換、如何決定 meta_blend vs. 獨立 Runner。
 與 `R3C_SYMBOL_GOVERNANCE_SPEC.md`（幣種層級治理）互補，本文件聚焦**策略層級**治理。
@@ -167,11 +167,16 @@ strategy_portfolio:
 
 ## 7) 定期審查排程
 
-| 頻率 | 審查內容 | 負責人 |
-|------|---------|--------|
-| **每週** | 各策略滾動 SR、MDD、交易數 | Risk Manager (自動) |
-| **每月** | 跨策略相關性變化、邊際貢獻重算 | Quant Researcher |
-| **每季** | 全組合 re-optimization、策略淘汰評估 | 全團隊 |
+| 頻率 | 審查內容 | 主導人 | 協作 |
+|------|---------|--------|------|
+| **每週** | 各策略滾動 SR、MDD、交易數 | Risk Manager | — |
+| **每月** | MC 重跑 + 相關性矩陣 + Kelly 校準 + 邊際貢獻 | Risk Manager | 如發現 alpha decay 異常，交 Quant Researcher 做深度 IC 分析 |
+| **每季** | 全組合 re-optimization、策略淘汰評估 | Risk Manager (召集) | 全團隊參與 |
+
+> **分工原則**：月度審查由 Risk Manager 主導（執行 MC + 相關性 + Kelly），涵蓋組合風險面向。
+> 如果月度審查發現 alpha decay 跡象（如 IC 持續下降、滾動 SR 惡化），
+> Risk Manager 將相關幣種/策略交給 Quant Researcher 做深入 IC 分析和 alpha 失效判定。
+> 避免 Risk Manager 和 Researcher 重複計算相關性矩陣。
 
 ### 審查輸出
 

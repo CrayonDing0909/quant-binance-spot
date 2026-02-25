@@ -22,6 +22,7 @@ model: fast
 - 不開發交易策略（交給 Quant Developer）
 - 不判斷策略績效（交給 Quant Researcher）
 - 不修改策略參數
+- 不建立生產配置（`config/prod_live_*.yaml` 由 Quant Developer 凍結後交付給你）
 
 ## 部署同步（Local → Oracle Cloud）
 
@@ -114,10 +115,11 @@ Circuit breaker: 40% MDD
 Note: 使用 meta_blend pattern（信號混合），非獨立 runner
 ```
 
-### 候選策略 2 — OI Liquidation Bounce（已通過風控 ✅）
+### OI Liquidation Bounce — Paper Trading 中 🟡
 
 ```
-Config: config/research_oi_liq_bounce.yaml
+Config: config/prod_live_oi_liq_bounce.yaml
+tmux session: oi_liq_paper
 Strategy: oi_liq_bounce v4.2 — 5-Symbol Long-Only
   - BTC(30%), ETH(25%), SOL(20%), DOGE(15%), AVAX(10%)
   - Long-only, 1x leverage, ISOLATED margin
@@ -125,12 +127,24 @@ Strategy: oi_liq_bounce v4.2 — 5-Symbol Long-Only
 Risk Audit: APPROVED (2026-02-25)
   - MC 4/4 PASS, Portfolio Risk 3/3 PASS
   - Portfolio SR: 2.49, MDD: -1.3%, Time-in-market: 4.2%
-Deployment Conditions (MANDATORY):
-  1. Paper trading ≥ 2 weeks first
-  2. position_pct = 0.50 (not 1.0)
-  3. Add circuit_breaker_pct: 0.10
-  4. Confirm OI data source stability before scaling up
-Note: 與 R3C 相關性極低（~0.01），可平行運行但需子帳號或 HEDGE_MODE
+Paper Trading Started: 2026-02-25 (至少跑到 2026-03-11)
+Risk Conditions Applied:
+  ✅ position_pct = 0.50
+  ✅ circuit_breaker_pct = 0.10
+  ✅ 1x leverage
+Data Pipeline:
+  ✅ OI cron: binance API every 2h + binance_vision daily
+  ✅ Watchdog: OI freshness monitoring enabled
+  ✅ OI in-memory cache in BaseRunner (refreshes every 30min)
+  ✅ download_data.py --oi auto-detects oi_liq_bounce strategy
+Graduation Criteria:
+  1. ≥ 2 weeks paper trading without critical errors
+  2. OI data source stable (no gaps > 4h)
+  3. Signal consistency with backtest expectations
+  4. No circuit breaker triggers
+Note: 與 R3C 平行運行中（Paper 模式無倉位衝突）
+      實盤需子帳號或 HEDGE_MODE
+      Watchdog 已按策略名隔離（不再 PID 衝突）
 ```
 
 ### 部署 / 重啟 WebSocket Runner
@@ -252,23 +266,71 @@ for p in positions:
 
 ## 數據管理
 
-### 下載 K 線數據
+> **數據管理分工**：
+> - **研究階段**：Alpha Researcher 探索新數據源、初次下載、評估 coverage
+> - **回測/驗證階段**：Quant Developer 自行按 config 下載本機所需數據
+> - **生產/持久化階段（你負責）**：Oracle Cloud 上的 cron 定期更新、數據品質監控、確保新策略所需的額外數據源已納入定期下載
+>
+> 當新策略上線需要額外數據（如 OI、Funding Rate），你必須確認 cron job 已包含這些數據的下載。
+> Alpha Researcher 在 Strategy Proposal 中會標注數據需求，部署時以此為 checklist。
+
+### 下載數據
 
 ```bash
 source .venv/bin/activate
-# 全量下載（首次或加新幣）
-PYTHONPATH=src python scripts/download_data.py -c config/prod_live_R3C_E3.yaml --full
-# 增量下載（日常更新）
-PYTHONPATH=src python scripts/download_data.py -c config/prod_live_R3C_E3.yaml
-# 下載 Funding Rate
-PYTHONPATH=src python scripts/download_data.py -c config/prod_live_R3C_E3.yaml --funding-rate
+
+# ── R3C（klines + FR）──
+PYTHONPATH=src python scripts/download_data.py -c config/prod_live_R3C_E3.yaml        # 增量 kline
+PYTHONPATH=src python scripts/download_data.py -c config/prod_live_R3C_E3.yaml --full # 全量 kline
+
+# ── OI Liq Bounce（klines + FR + OI，統一指令）──
+# --oi flag 自動下載 binance_vision + binance API OI 並合併
+PYTHONPATH=src python scripts/download_data.py -c config/prod_live_oi_liq_bounce.yaml --oi
+
+# ── OI 單獨下載（也可直接用 download_oi_data.py）──
+PYTHONPATH=src python scripts/download_oi_data.py --provider binance_vision --symbols BTCUSDT ETHUSDT SOLUSDT DOGEUSDT AVAXUSDT
+PYTHONPATH=src python scripts/download_oi_data.py --provider binance --symbols BTCUSDT ETHUSDT SOLUSDT DOGEUSDT AVAXUSDT
 ```
 
 ### 數據存放路徑
 
 ```
-data/binance/futures/<SYMBOL>/<interval>.csv   ← K 線 CSV
-data/binance/futures/<SYMBOL>/funding_rate.csv ← Funding Rate
+data/binance/futures/1h/{SYMBOL}.parquet              ← K 線
+data/binance/futures/funding_rate/{SYMBOL}.parquet     ← Funding Rate
+data/binance/futures/open_interest/merged/{SYMBOL}.parquet      ← OI（合併）
+data/binance/futures/open_interest/binance_vision/{SYMBOL}.parquet ← OI（binance_vision）
+data/binance/futures/open_interest/binance/{SYMBOL}.parquet      ← OI（binance API）
+```
+
+### Cron Jobs（Oracle Cloud，UTC 時區）
+
+```
+# R3C Kline + FR (every 6h)
+15 */6 * * * download_data.py -c config/prod_live_R3C_E3.yaml
+
+# OI Liq Bounce Kline + FR (every 6h)
+20 */6 * * * download_data.py -c config/prod_live_oi_liq_bounce.yaml
+
+# OI binance_vision (daily at 02:30 UTC)
+30 2 * * * download_oi_data.py --provider binance_vision --symbols ...
+
+# OI binance API (every 2h at :45)
+45 */2 * * * download_oi_data.py --provider binance --symbols ...
+```
+
+### 多 Runner Watchdog
+
+Watchdog 輸出目錄按策略名隔離：
+```
+reports/live_watchdog/{strategy_name}/
+  ├── latest_status.json
+  ├── history.jsonl
+  └── watchdog.pid
+```
+查看特定策略 watchdog 狀態：
+```bash
+cat reports/live_watchdog/oi_liq_bounce/latest_status.json | python3 -m json.tool
+cat reports/live_watchdog/R3C_E3/latest_status.json | python3 -m json.tool  # (名稱取決於 config strategy.name)
 ```
 
 ## 故障排查 SOP

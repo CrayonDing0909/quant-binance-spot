@@ -1,0 +1,238 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — TSMOM + MR Composite (Multi-Factor Strategy)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-24
+# Origin: Alpha Researcher IC decay analysis
+# Purpose: Replace single-factor tsmom_ema with 3-factor composite
+#
+# Hypothesis:
+#   TSMOM IC ≈ 0 in 2023-2025 (regime shift to mean-reverting).
+#   Composite = TSMOM 50% + Bollinger MR 25% + 24h Reversal 25%
+#   achieves portfolio IC +0.038 (vs baseline +0.001).
+#   TSMOM negatively correlated with MR/Rev → natural hedge.
+#
+# Baseline: config/prod_live_R3C_E3.yaml (tsmom_ema, 10-symbol 3.5x)
+#
+# Changes vs baseline:
+#   - Default strategy: tsmom_ema → tsmom_mr_composite
+#   - BTCUSDT: breakout_vol_atr unchanged (different alpha source)
+#   - ETHUSDT: tsmom_multi_ema → tsmom_mr_composite (subject to test)
+#   - 8 others: tsmom_ema → tsmom_mr_composite
+#   - Per-symbol factor weight override for SOL/AVAX (TSMOM still strong)
+#   - ALL cost/risk/position params UNCHANGED
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+    - LTCUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_mr_composite"
+  params:
+    # ── Factor Weights (default) ──
+    w_tsmom: 0.70
+    w_mr: 0.15
+    w_reversal: 0.15
+
+    # ── Regime Gate ──
+    regime_gate_enabled: true
+    trend_strength_thresh: 0.4
+
+    # ── Signal Smoothing ──
+    mr_smooth_period: 12
+    rev_smooth_period: 12
+
+    # ── TSMOM Sub-factor ──
+    tsmom_lookback: 168
+    tsmom_vol_target: 0.15
+    tsmom_ema_fast: 20
+    tsmom_ema_slow: 50
+    tsmom_agree_weight: 1.0
+    tsmom_disagree_weight: 0.3
+
+    # ── Bollinger MR Sub-factor ──
+    mr_bb_period: 20
+    mr_bb_std: 2.0
+    mr_overbought: 0.8
+    mr_oversold: 0.2
+    mr_exit_upper: 0.65
+    mr_exit_lower: 0.35
+
+    # ── Reversal Sub-factor ──
+    rev_lookback: 24
+    rev_vol_target: 0.15
+    rev_vol_lookback: 168
+
+    # ── Per-Symbol Factor Weight Overrides ──
+    # SOL/AVAX: TSMOM still has positive IC → keep higher TSMOM weight
+    symbol_factor_weights:
+      SOLUSDT:
+        w_tsmom: 0.70
+        w_mr: 0.15
+        w_reversal: 0.15
+      AVAXUSDT:
+        w_tsmom: 0.60
+        w_mr: 0.20
+        w_reversal: 0.20
+
+  symbol_overrides: {}
+
+  # ── Overlays: inherited from production (vol-only) ──
+  overlay:
+    enabled: true
+    mode: "oi_vol"
+    params:
+      oi_extreme_z: 999.0
+      oi_reversal_window: 6
+      reduce_pct: 0.5
+      oi_lookback: 24
+      oi_z_window: 168
+      vol_spike_z: 2.0
+      overlay_cooldown_bars: 12
+      trend_lookback: 20
+      atr_period: 14
+      vol_z_window: 168
+
+  micro_accel_overlay:
+    enabled: false
+
+ensemble:
+  enabled: true
+  weight_mode: "fixed"
+  # Same vol-parity weights as production (3.5x)
+  fixed_weights:
+    BTCUSDT: 0.4450
+    ETHUSDT: 0.3316
+    SOLUSDT: 0.3137
+    BNBUSDT: 0.4358
+    XRPUSDT: 0.3026
+    DOGEUSDT: 0.3156
+    ADAUSDT: 0.3150
+    AVAXUSDT: 0.3359
+    LINKUSDT: 0.3316
+    LTCUSDT: 0.3729
+  vol_parity:
+    lookback: 720
+    min_weight: 0.03
+    max_weight: 0.50
+
+  strategies:
+    # BTC: keep breakout_vol_atr (different alpha source, no change)
+    BTCUSDT:
+      name: "breakout_vol_atr"
+      params:
+        channel_period: 336
+        channel_multiplier: 2.5
+        atr_period: 14
+        vol_fast_period: 14
+        vol_slow_period: 72
+        expansion_ratio: 1.1
+        fake_breakout_bars: 6
+        min_hold_bars: 24
+        trail_exit_mid: true
+        stop_loss_atr: 3.5
+        max_holding_bars: 72
+        cooldown_bars: 24
+        vol_scale_enabled: true
+        vol_scale_target: 99.0
+        vol_scale_lookback: 168
+        vol_scale_floor: 0.7
+        vol_scale_cap: 0.7
+        volume_confirm_enabled: true
+        volume_confirm_period: 20
+        volume_confirm_ratio: 1.5
+
+    # ETH: upgrade from tsmom_multi_ema → tsmom_mr_composite
+    # (ETH tsmom_multi_ema IC = -0.003, noise level)
+    ETHUSDT:
+      name: "tsmom_mr_composite"
+      params:
+        w_tsmom: 0.70
+        w_mr: 0.15
+        w_reversal: 0.15
+        tsmom_lookback: 168
+        tsmom_vol_target: 0.15
+        tsmom_ema_fast: 20
+        tsmom_ema_slow: 50
+        regime_gate_enabled: true
+        trend_strength_thresh: 0.4
+        mr_smooth_period: 12
+        rev_smooth_period: 12
+
+    # All other 8 symbols use the default tsmom_mr_composite strategy
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+# ── Portfolio allocation: same as production ──
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.4450
+    ETHUSDT: 0.3316
+    SOLUSDT: 0.3137
+    BNBUSDT: 0.4358
+    XRPUSDT: 0.3026
+    DOGEUSDT: 0.3156
+    ADAUSDT: 0.3150
+    AVAXUSDT: 0.3359
+    LINKUSDT: 0.3316
+    LTCUSDT: 0.3729
+
+live:
+  kline_cache: true
+  flip_confirmation: false
+  prefer_limit_order: true
+  limit_order_timeout_s: 10
+  rebalance_band:
+    enabled: true
+    threshold_pct: 0.03
+    apply_on_same_direction_only: true
+  symbol_governance:
+    enabled: false
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔬 [RESEARCH-MR-Composite]"
+  enabled: false
+
+output:
+  report_dir: "./reports"

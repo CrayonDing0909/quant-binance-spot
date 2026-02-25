@@ -10,6 +10,23 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-25
 
+### Rules / Commands / Workflow 一致性修正（8 處）
+- 修改 `.cursor/rules/project-overview.mdc` — 更新 Handoff Rules（Developer 不跑 WFA、新增 config-freeze 步驟）、更新 Workflow 圖（插入 Developer config-freeze 節點）、更新 Agent Scope 欄位
+- 修改 `.cursor/rules/backtest.mdc` — Validation Stack 區塊加入分工 note（Developer 只跑 --quick，完整驗證由 Researcher 執行）
+- 修改 `.cursor/rules/strategy-dev.mdc` — Development Lifecycle Step 4 加入驗證分工說明
+- 修改 `.cursor/commands/backtest.md` — 移除 WFA，改為回測 + --quick 驗證
+- 修改 `.cursor/commands/research-audit.md` — 擴充為完整驗證 pipeline（新增 CPCV、Cost Stress、Delay Stress）
+- 修改 `docs/CURSOR_WORKFLOW.md` — Mode A/B 加入 config-freeze 步驟、速查表移除 WFA、上線前 checklist 修正 config 前綴和 owner、文件產出路徑表修正生產配置前綴、Slash Commands 表加入 /config-freeze、Risk Manager Next Steps 更新
+- 新增 `.cursor/commands/config-freeze.md` — 凍結研究配置為生產配置的快捷指令
+
+### Agent 職責釐清（7 項修正）
+- 修改 `.cursor/agents/quant-developer.md` — 釐清驗證分工（Developer 只跑 `--quick`，完整驗證交 Researcher）、新增「生產配置凍結」職責、新增「共用模組維護」職責、釐清假說確認 vs 定義的分工（Mode A/B）、新增數據下載步驟
+- 修改 `.cursor/agents/quant-researcher.md` — 新增「驗證分工原則」（獨立重跑，不信任 Developer 數字）、新增「不修改 src/qtrade/ 程式碼」規則
+- 修改 `.cursor/agents/alpha-researcher.md` — 新增「數據管理職責」分工、新增「初步驗證邊界」（可以做 IC 分析，不應做 vectorbt 回測）
+- 修改 `.cursor/agents/risk-manager.md` — 新增「不修改 src/qtrade/ 程式碼」規則、新增「月度審查分工」（主導 MC+相關性+Kelly，異常交 Researcher 深入分析）
+- 修改 `.cursor/agents/devops.md` — 新增「不建立生產配置」規則、新增「數據管理分工」（生產/持久化階段獨佔）
+- 修改 `docs/STRATEGY_PORTFOLIO_GOVERNANCE.md` — 統一定期審查排程（月度由 Risk Manager 主導，Researcher 僅在 alpha decay 異常時介入）
+
 ### OI Liquidation Bounce 策略（完整生命週期）
 - 新增 `src/qtrade/strategy/oi_liq_bounce_strategy.py` — OI 清算反彈策略 v4.2
 - 新增 `config/research_oi_liq_bounce.yaml` — 5-symbol long-only (BTC/ETH/SOL/DOGE/AVAX)
@@ -29,3 +46,18 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 - 新增 `.cursor/rules/recent-changes.mdc` — 滾動變更日誌（本檔案）
 - 更新 `project-overview.mdc` — 加入 meta_blend 候選、策略組合管理工具鏈
 - 更新 `hygiene.mdc` — Living docs 表加入 STRATEGY_PORTFOLIO_GOVERNANCE.md
+
+### OI Liq Bounce Paper Trading 部署
+- **Bug Fix**: `BaseRunner._get_strategy_for_symbol()` 新增自動注入 `_data_dir`（修正 OI/FR 策略在 live 模式下拿不到輔助數據、返回全 0 信號的問題）
+- 新增 `config/prod_live_oi_liq_bounce.yaml` — 套用 Risk Audit 條件（position_pct=0.50, circuit_breaker=10%, 1x leverage）
+- Oracle Cloud 部署：tmux session `oi_liq_paper`，與 `r3c_e3_live` 平行運行
+- Paper trading 起始日：2026-02-25，畢業門檻：≥ 2 weeks 無異常
+- 更新 `devops.md` — OI Liq Bounce 狀態從「候選」更新為「Paper Trading 中 🟡」
+
+### 多 Runner 數據管線修復（6 項）
+- **P0 Fix**: `LiveWatchdog` 輸出目錄按策略名隔離（`reports/live_watchdog/{strategy_name}/`），修正多 runner 共用 PID 檔導致的假 critical 告警
+- **P1 新增**: `LiveWatchdog._check_oi_freshness()` — OI parquet mtime 監控，warn=6h / critical=12h，`config/prod_live_oi_liq_bounce.yaml` 已啟用 `oi_freshness_enabled: true`
+- **P1 Cron**: Oracle Cloud OI Binance API cron 從 `*/4` 改為 `*/2`（每 2 小時），減少 OI 空窗期
+- **P2 新增**: `BaseRunner._oi_cache` — OI 記憶體快取（每 30 分鐘刷新），避免每次信號生成都讀 parquet
+- **P3 新增**: `scripts/download_data.py --oi` — 統一數據管線，`oi_liq_bounce` 策略自動觸發 OI 下載+合併
+- 更新 `devops.md` — 數據管理區塊重寫（統一指令、cron 列表、watchdog 路徑說明）

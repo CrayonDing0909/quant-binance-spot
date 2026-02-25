@@ -53,6 +53,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "error_warn_count": 5,
     "error_critical_count": 12,
     "error_scan_tail_lines": 2000,
+    # OI 數據新鮮度（僅 oi_liq_bounce 等需要 OI 的策略啟用）
+    "oi_freshness_enabled": False,
+    "oi_warn_age_sec": 21600,      # 6 小時
+    "oi_critical_age_sec": 43200,  # 12 小時
+    "oi_providers": ["merged"],    # 要檢查的 provider 子目錄
 }
 
 
@@ -97,6 +102,13 @@ class LiveWatchdog:
         self.notifier = notifier or getattr(runner, "notifier", None)
         self.pid = os.getpid()
 
+        # 策略名稱：用於隔離多 runner 的 PID / 狀態檔案
+        self.strategy_name = str(
+            getattr(getattr(cfg, "strategy", None), "name", None)
+            or getattr(runner, "strategy_name", None)
+            or "default"
+        )
+
         live_watchdog_cfg = getattr(getattr(cfg, "live", None), "watchdog", {}) or {}
         merged: dict[str, Any] = dict(DEFAULT_SETTINGS)
         merged.update(live_watchdog_cfg)
@@ -133,7 +145,9 @@ class LiveWatchdog:
         self._last_ws_phase: str | None = None
         self._alert_cooldowns: dict[str, float] = {}
 
-        self._output_dir = Path(self.settings.get("output_dir", "reports/live_watchdog"))
+        # ── 輸出目錄按策略名隔離，避免多 runner 衝突 ──
+        base_output_dir = Path(self.settings.get("output_dir", "reports/live_watchdog"))
+        self._output_dir = base_output_dir / self.strategy_name
         self._latest_path = self._output_dir / "latest_status.json"
         self._history_path = self._output_dir / "history.jsonl"
         self._pid_path = self._output_dir / "watchdog.pid"
@@ -189,13 +203,18 @@ class LiveWatchdog:
         checks: dict[str, Any] = {}
         issues: list[str] = []
 
-        for check_name, check_result in (
+        check_list: list[tuple[str, dict[str, Any]]] = [
             ("heartbeat", self._check_heartbeat()),
             ("websocket_kline", self._check_websocket_and_kline()),
             ("data_freshness", self._check_data_freshness()),
             ("error_density", self._check_error_density()),
             ("session_uniqueness", self._check_session_uniqueness()),
-        ):
+        ]
+        # OI 數據新鮮度（僅在啟用時檢查）
+        if self.settings.get("oi_freshness_enabled", False):
+            check_list.append(("oi_freshness", self._check_oi_freshness()))
+
+        for check_name, check_result in check_list:
             checks[check_name] = check_result
             status = check_result.get("status", "warn")
             overall_status = _max_status(overall_status, status)
@@ -204,6 +223,7 @@ class LiveWatchdog:
 
         result = {
             "timestamp": now.isoformat(),
+            "strategy": self.strategy_name,
             "overall_status": overall_status,
             "checks": checks,
             "issues": issues,
@@ -498,6 +518,83 @@ class LiveWatchdog:
             "source": source,
             "symbols_total": len(symbols),
             "details": detail,
+        }
+
+    def _check_oi_freshness(self) -> dict[str, Any]:
+        """
+        檢查 OI (Open Interest) Parquet 檔案的新鮮度。
+
+        針對每個 symbol 檢查 merged/ 下的 OI parquet mtime。
+        若超過 warn/critical 閾值則告警。
+        """
+        symbols = list(getattr(self.cfg.market, "symbols", []))
+        now_ts = time.time()
+
+        warn_age = float(self.settings.get("oi_warn_age_sec", 21600))
+        critical_age = float(self.settings.get("oi_critical_age_sec", 43200))
+        providers = list(self.settings.get("oi_providers", ["merged"]))
+
+        data_dir = Path(getattr(self.cfg, "data_dir", "data"))
+        stale_symbols: list[str] = []
+        missing_symbols: list[str] = []
+        ages: dict[str, float] = {}
+
+        for sym in symbols:
+            found = False
+            for prov in providers:
+                oi_path = data_dir / "binance" / "futures" / "open_interest" / prov / f"{sym}.parquet"
+                if oi_path.exists():
+                    age_sec = now_ts - oi_path.stat().st_mtime
+                    ages[sym] = age_sec
+                    if age_sec >= warn_age:
+                        stale_symbols.append(sym)
+                    found = True
+                    break
+            if not found:
+                missing_symbols.append(sym)
+
+        # 判定狀態
+        overall = "ok"
+        notes: list[str] = []
+
+        if missing_symbols:
+            if len(missing_symbols) >= len(symbols):
+                overall = "critical"
+                notes.append(f"所有 {len(symbols)} 個 symbol 缺少 OI 數據")
+            elif len(missing_symbols) >= max(1, len(symbols) // 2):
+                overall = _max_status(overall, "critical")
+                notes.append(f"{len(missing_symbols)}/{len(symbols)} symbol 缺少 OI")
+            else:
+                overall = _max_status(overall, "warn")
+                notes.append(f"{len(missing_symbols)} symbol 缺少 OI: {missing_symbols}")
+
+        if stale_symbols:
+            oldest = max(ages[s] for s in stale_symbols if s in ages)
+            if oldest >= critical_age:
+                overall = _max_status(overall, "critical")
+                notes.append(f"{len(stale_symbols)} symbol OI 過期 (最舊 {oldest/3600:.1f}h)")
+            else:
+                overall = _max_status(overall, "warn")
+                notes.append(f"{len(stale_symbols)} symbol OI 偏舊 (最舊 {oldest/3600:.1f}h)")
+
+        if not notes:
+            freshest = min(ages.values()) if ages else 0
+            notes.append(f"OI 數據正常 ({len(ages)} symbols, 最新 {freshest/3600:.1f}h)")
+
+        if ages:
+            logger.debug(
+                f"oi_freshness: stale={len(stale_symbols)}, missing={len(missing_symbols)}, "
+                f"freshest={min(ages.values()):.0f}s, stalest={max(ages.values()):.0f}s"
+            )
+
+        return {
+            "status": overall,
+            "message": " ; ".join(notes),
+            "stale_count": len(stale_symbols),
+            "missing_count": len(missing_symbols),
+            "stale_symbols": stale_symbols[:10],
+            "missing_symbols": missing_symbols[:10],
+            "ages": {s: round(a, 0) for s, a in ages.items()},
         }
 
     def _get_symbol_data_age(

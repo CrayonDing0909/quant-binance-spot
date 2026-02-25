@@ -83,6 +83,7 @@
 | `prod_candidate_R3C_universe.yaml` | `config/prod_candidate_R3C_universe.yaml` |
 | `prod_candidate_meta_blend.yaml` | `config/prod_candidate_meta_blend.yaml` |
 | `prod_live_R3C_E3.yaml` | `config/prod_live_R3C_E3.yaml` |
+| `prod_live_oi_liq_bounce.yaml` | `config/prod_live_oi_liq_bounce.yaml` |
 | `prod_scale_rules_R3C_universe.yaml` | `config/prod_scale_rules_R3C_universe.yaml` |
 | `risk_guard_alt_ensemble.yaml` | `config/risk_guard_alt_ensemble.yaml` |
 

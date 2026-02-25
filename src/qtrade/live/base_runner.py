@@ -109,6 +109,12 @@ class BaseRunner(ABC):
         # K 線快取（子類在自己的 __init__ 中設定）
         self._kline_cache: IncrementalKlineCache | None = None
 
+        # OI 記憶體快取（避免每次信號都重讀 parquet）
+        self._oi_cache: dict[str, pd.Series] = {}
+        self._oi_cache_ts: float = 0.0
+        self._oi_refresh_interval_s: float = 1800.0  # 每 30 分鐘刷新一次
+        self._init_oi_cache()
+
         # Rebalance Band 計數器（監控用）
         self._band_skip_count: int = 0
         self._band_skip_notional_est: float = 0.0
@@ -222,7 +228,74 @@ class BaseRunner(ABC):
         if "_data_dir" not in params:
             params["_data_dir"] = str(self.cfg.data_dir)
 
+        # 注入 OI 記憶體快取（避免策略每次從磁碟讀取）
+        if symbol in self._oi_cache and "_oi_series" not in params:
+            self._maybe_refresh_oi_cache()
+            if symbol in self._oi_cache:
+                params["_oi_series"] = self._oi_cache[symbol]
+
         return name, params
+
+    # ══════════════════════════════════════════════════════════
+    #  OI 記憶體快取
+    # ══════════════════════════════════════════════════════════
+
+    def _needs_oi(self) -> bool:
+        """判斷當前策略是否需要 OI 數據。"""
+        oi_strategies = {"oi_liq_bounce", "oi_bb_rv"}
+        if self.strategy_name in oi_strategies:
+            return True
+        for sym_cfg in self._ensemble_strategies.values():
+            if sym_cfg.get("name") in oi_strategies:
+                return True
+        return False
+
+    def _init_oi_cache(self) -> None:
+        """啟動時載入 OI 到記憶體（僅需要 OI 的策略）。"""
+        if not self._needs_oi():
+            return
+        self._load_oi_from_disk()
+
+    def _load_oi_from_disk(self) -> None:
+        """從 parquet 載入所有 symbol 的 OI 到記憶體快取。"""
+        try:
+            from ..data.open_interest import get_oi_path, load_open_interest
+        except ImportError:
+            self._log.warning("⚠️  open_interest 模組不可用，OI 快取停用")
+            return
+
+        data_dir = self.cfg.data_dir
+        loaded = 0
+        for sym in self.symbols:
+            for prov in ["merged", "binance_vision", "coinglass", "binance"]:
+                oi_path = get_oi_path(data_dir, sym, prov)
+                oi_df = load_open_interest(oi_path)
+                if oi_df is not None and not oi_df.empty:
+                    # 只保留 sumOpenInterest 欄位作為 Series
+                    if "sumOpenInterest" in oi_df.columns:
+                        self._oi_cache[sym] = oi_df["sumOpenInterest"]
+                    else:
+                        # fallback: 取第一個數值欄
+                        num_cols = oi_df.select_dtypes(include="number").columns
+                        if len(num_cols) > 0:
+                            self._oi_cache[sym] = oi_df[num_cols[0]]
+                    loaded += 1
+                    break
+
+        self._oi_cache_ts = time.time()
+        if loaded > 0:
+            self._log.info(f"📊 OI 記憶體快取已載入: {loaded}/{len(self.symbols)} symbols")
+        else:
+            self._log.warning("⚠️  OI 記憶體快取: 無任何 symbol 載入成功")
+
+    def _maybe_refresh_oi_cache(self) -> None:
+        """若快取過期，從磁碟重新載入 OI 數據。"""
+        if not self._needs_oi():
+            return
+        now = time.time()
+        if now - self._oi_cache_ts >= self._oi_refresh_interval_s:
+            self._log.debug("🔄 OI 記憶體快取刷新中...")
+            self._load_oi_from_disk()
 
     # ══════════════════════════════════════════════════════════
     #  倉位計算器

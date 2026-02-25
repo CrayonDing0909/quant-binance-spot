@@ -22,10 +22,11 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
 ## Approved Candidates (pending paper trading)
 
 - **OI Liquidation Bounce v4.2**: 5-symbol long-only (BTC/ETH/SOL/DOGE/AVAX), 1x leverage
-  - **Config**: [research_oi_liq_bounce.yaml](mdc:config/research_oi_liq_bounce.yaml)
+  - **Config**: [prod_live_oi_liq_bounce.yaml](mdc:config/prod_live_oi_liq_bounce.yaml)
   - **Strategy code**: [oi_liq_bounce_strategy.py](mdc:src/qtrade/strategy/oi_liq_bounce_strategy.py)
-  - **Status**: Risk Manager APPROVED (2026-02-25), pending paper trading ≥ 2 weeks
-  - **Deployment conditions**: position_pct=0.50, circuit_breaker_pct=0.10, confirm OI data stability
+  - **Status**: 🟡 Paper Trading 中 (2026-02-25 起, tmux: `oi_liq_paper`)
+  - **Risk conditions applied**: position_pct=0.50, circuit_breaker=10%, 1x leverage
+  - **Graduation**: ≥ 2026-03-11, OI data stable, no circuit breaker triggers
   - **Key metrics**: Portfolio SR=2.49, MDD=-1.3%, time-in-market=4.2%, correlation w/ R3C ≈ 0.01
 
 - **Meta-Blend 8-Symbol** (R3C x tsmom_carry_v2): multi-strategy signal blend, 3x leverage
@@ -101,10 +102,10 @@ This project uses 5 specialized agents. Each agent has a clear scope and handoff
 | Agent | Definition | Scope |
 |-------|------------|-------|
 | Alpha Researcher | `.cursor/agents/alpha-researcher.md` | Strategy discovery, on-chain data, Notebook EDA, Strategy Proposal |
-| Quant Developer | `.cursor/agents/quant-developer.md` | Strategy implementation, backtest execution, report generation |
-| Quant Researcher | `.cursor/agents/quant-researcher.md` | Alpha validation, bias detection, statistical testing, GO/FAIL verdict |
-| Risk Manager | `.cursor/agents/risk-manager.md` | Pre-launch risk audit, weekly/monthly portfolio risk review |
-| DevOps | `.cursor/agents/devops.md` | Oracle Cloud deployment, monitoring, data management, incident response |
+| Quant Developer | `.cursor/agents/quant-developer.md` | Strategy implementation, backtest execution, report generation, shared module maintenance, config freeze |
+| Quant Researcher | `.cursor/agents/quant-researcher.md` | Full validation pipeline (WFA/CPCV/DSR/Cost Stress/Delay Stress), GO/FAIL verdict |
+| Risk Manager | `.cursor/agents/risk-manager.md` | Pre-launch risk audit, weekly/monthly portfolio risk review (monthly lead) |
+| DevOps | `.cursor/agents/devops.md` | Oracle Cloud deployment, monitoring, production data management, incident response |
 
 ### Workflow & Handoff
 
@@ -114,7 +115,7 @@ Alpha Researcher ─── Strategy Proposal ──→ Quant Developer
                                     BacktestResult + Report
                                               │
                                               ▼
-                               Quant Researcher (validation)
+                               Quant Researcher (full validation)
                                   │                  │
                              GO_NEXT            NEED_MORE_WORK / FAIL
                                   │                  │
@@ -124,7 +125,11 @@ Alpha Researcher ─── Strategy Proposal ──→ Quant Developer
                          APPROVED  REJECTED
                               │       │
                               ▼       ▼
-                           DevOps   Back to Developer
+                    Quant Developer  Back to Developer
+                    (config freeze)
+                              │
+                              ▼
+                           DevOps
                               │
                     ┌─────────┴─────────┐
                     │   Production      │
@@ -138,9 +143,10 @@ Alpha Researcher ─── Strategy Proposal ──→ Quant Developer
 ### Handoff Rules
 
 1. **Alpha Researcher → Quant Developer**: Strategy Proposal must be complete (all fields filled). Developer confirms data availability before starting.
-2. **Quant Developer → Quant Researcher**: BacktestResult + full report (metrics, yearly, WFA, cost stress). Must use `config/research_*.yaml`.
+2. **Quant Developer → Quant Researcher**: BacktestResult + report (metrics, yearly, `--quick` validation). Must use `config/research_*.yaml`. Developer does NOT run WFA/CPCV/Cost Stress — that's Researcher's job.
 3. **Quant Researcher → Risk Manager**: Only on `GO_NEXT` verdict. Includes validation report + BacktestResult path.
-4. **Risk Manager → DevOps**: Only on `APPROVED` verdict. Includes Risk Audit Report + deployment config.
-5. **Risk Manager → Quant Developer**: On `REJECTED`, includes specific failures and remediation guidance.
-6. **Quant Researcher → Quant Developer**: On `NEED_MORE_WORK`, includes specific gates that failed.
-7. **Quant Researcher → Alpha Researcher**: If the hypothesis itself is flawed (not just implementation).
+4. **Risk Manager → Quant Developer**: On `APPROVED`, Developer freezes config (`config/research_*.yaml` → `config/prod_live_*.yaml`).
+5. **Quant Developer → DevOps**: Frozen `prod_live_*.yaml` + Risk Audit Report. DevOps does NOT create production configs.
+6. **Risk Manager → Quant Developer**: On `REJECTED`, includes specific failures and remediation guidance.
+7. **Quant Researcher → Quant Developer**: On `NEED_MORE_WORK`, includes specific gates that failed.
+8. **Quant Researcher → Alpha Researcher**: If the hypothesis itself is flawed (not just implementation).

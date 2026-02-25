@@ -160,6 +160,15 @@ portfolio:
 live:
   kline_cache: true
   flip_confirmation: false
+  watchdog:
+    enabled: true
+    check_interval_s: 3600
+    error_threshold: 3
+    error_critical_count: 12
+    # OI 數據新鮮度監控（oi_liq_bounce 策略特有）
+    oi_freshness_enabled: true
+    oi_warn_age_sec: 21600       # 6 小時
+    oi_critical_age_sec: 43200   # 12 小時
 
 # ── Notification ──
 notification:

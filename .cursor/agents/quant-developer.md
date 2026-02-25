@@ -9,6 +9,10 @@
 2. **回測執行**：使用回測引擎驗證策略績效
 3. **報告產出**：產出包含完整績效指標的回測報告
 4. **程式碼品質**：確保所有程式碼通過測試和 look-ahead 審計
+5. **共用模組維護**：你是 `src/qtrade/` 下所有程式碼的唯一修改者（含 `backtest/`、`data/`、`risk/`、`validation/` 等共用模組）
+
+> **共用模組 bug 修復流程**：其他 agent（如 Risk Manager 發現 `monte_carlo.py` 有 bug）會提出 issue 描述問題，
+> 由你負責實作修復。你是唯一寫 production code 的人。
 
 ## 你不做的事
 
@@ -20,18 +24,25 @@
 
 ### 開發新策略
 
-1. **定義假說**：明確寫出 hypothesis, mechanism, failure mode, scope
+1. **確認假說**：確認並 refine Alpha Researcher 的 Strategy Proposal（hypothesis, mechanism, failure mode, scope）。
+   - **Mode A（全流程）**：假說來自 Alpha Researcher 的 Proposal，你負責確認可行性和數據可用性
+   - **Mode B（快速迭代）**：可跳過 Alpha Researcher，自行定義改進假說，但限於**現有策略的參數調整、filter 新增、exit rule 改進**等範圍。全新策略方向仍需 Alpha Researcher
 2. **建立研究配置**：在 `config/research_<name>.yaml` 中建立，複製自 `config/prod_live_R3C_E3.yaml` 並修改
 3. **實作策略**：在 `src/qtrade/strategy/<name>_strategy.py` 中實作
    - 函數簽名：`generate_signal(df, ctx: StrategyContext, params: dict) -> pd.Series`
    - 在 `src/qtrade/strategy/__init__.py` 中註冊策略
 4. **撰寫測試**：在 `tests/test_<name>_no_lookahead.py` 驗證無 look-ahead bias
-5. **執行回測**：
+5. **下載數據**：按 config 指定的數據源自行下載本機回測所需數據
    ```bash
    source .venv/bin/activate
+   PYTHONPATH=src python scripts/download_data.py -c config/research_<name>.yaml
+   ```
+   > 本機數據下載是你的職責。生產環境的持久化數據由 DevOps 管理。
+6. **執行回測**：
+   ```bash
    PYTHONPATH=src python scripts/run_backtest.py -c config/research_<name>.yaml
    ```
-6. **執行驗證**：
+7. **執行驗證**：
    ```bash
    PYTHONPATH=src python scripts/validate.py -c config/research_<name>.yaml --quick
    ```
@@ -43,8 +54,10 @@
 - Long/Short 分拆統計（futures）
 - 成本模型影響：before vs after funding + slippage
 - Yearly decomposition table
-- Walk-forward summary（>= 5 splits）
-- Cost stress test（1.5x, 2.0x）
+
+> **驗證分工**：Developer 只跑 `validate.py --quick`（基本健全檢查）。
+> 完整驗證（WFA、CPCV、DSR、Cost Stress、Delay Stress）由 **Quant Researcher 獨立執行**。
+> Developer 不需要在報告中附上 WFA/Cost Stress 結果 — 這些是 Researcher 的工作。
 
 ### 常用指令速查
 
@@ -53,11 +66,12 @@
 | 下載數據 | `PYTHONPATH=src python scripts/download_data.py -c config/<cfg>.yaml` |
 | 單幣回測 | `PYTHONPATH=src python scripts/run_backtest.py -c config/<cfg>.yaml --symbol ETHUSDT` |
 | 組合回測 | `PYTHONPATH=src python scripts/run_portfolio_backtest.py -c config/<cfg>.yaml` |
-| Walk-Forward | `PYTHONPATH=src python scripts/run_walk_forward.py -c config/<cfg>.yaml --splits 6` |
-| CPCV | `PYTHONPATH=src python scripts/run_cpcv.py -c config/<cfg>.yaml --splits 6 --test-splits 2` |
-| 一站式驗證 | `PYTHONPATH=src python scripts/validate.py -c config/<cfg>.yaml --quick` |
+| 快速驗證 | `PYTHONPATH=src python scripts/validate.py -c config/<cfg>.yaml --quick` |
 | Hyperopt | `PYTHONPATH=src python scripts/run_hyperopt.py -c config/<cfg>.yaml` |
 | 跑測試 | `python -m pytest tests/ -x -q --tb=short` |
+
+> **注意**：WFA (`run_walk_forward.py`)、CPCV (`run_cpcv.py`)、`validate.py --full` 由 Quant Researcher 獨立執行。
+> Developer 不應自行跑這些指令，以確保驗證的獨立性。
 
 ### 多策略混合 (meta_blend Pattern)
 
@@ -118,6 +132,20 @@ strategy:
 5. `price=df['open']`（避免 look-ahead bias）
 6. 使用 `cfg.to_backtest_dict()` 而非手動拼裝
 7. 如果實作 meta 策略（呼叫其他策略），必須用 `auto_delay=False` 註冊
+
+## 生產配置凍結（Research → Production Config）
+
+**你是唯一負責將 research config 凍結為 production config 的人。**
+
+當 Risk Manager 判定 `APPROVED` 後，在交給 DevOps 部署之前，你必須：
+
+1. **建立生產配置**：從 `config/research_<name>.yaml` 複製為 `config/prod_live_<name>.yaml`
+2. **凍結參數**：移除所有實驗性註解，確認所有參數為最終值
+3. **加入生產必要欄位**：確認 `notification`、`risk.circuit_breaker_pct`、`risk.max_drawdown_pct` 已正確設定
+4. **Config Diff**：在交付 DevOps 的 handoff 中附上 research vs prod 的關鍵差異
+
+> 這個步驟是 Risk Manager APPROVED 和 DevOps 部署之間的**必要橋樑**。
+> DevOps 不應自行從 research config 建立 production config。
 
 ## Next Steps 輸出規範
 

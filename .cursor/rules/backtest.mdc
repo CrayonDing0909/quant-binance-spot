@@ -49,6 +49,9 @@ Every backtest report MUST include:
 
 ## Validation Stack (must pass in order)
 
+> **分工**：Quant Developer 只需確保回測正確（price=open, cost on）並跑 `validate.py --quick`。
+> 以下完整驗證棧由 **Quant Researcher 獨立執行** — Developer 不需要跑這些。
+
 1. Causality checks (truncation invariance, online/offline consistency)
 2. Full-period backtest with strict costs
 3. Cost stress (1.5x, 2.0x multiplier)

@@ -61,6 +61,12 @@ notebooks/research/
 6. **Limitations**：已知限制、潛在偏差、數據缺陷
 7. **Conclusion**：是否值得進入 Phase 2
 
+> **初步驗證的邊界（嚴格遵守）**：
+> - **可以做**：IC (Information Coefficient) 分析、信號分群收益、Rank IC、信號自相關分析、簡單的 long-short 分群比較（Notebook 內用 pandas 手動計算）
+> - **不應做**：用 `vbt.Portfolio.from_orders()` 跑完整回測、使用成本模型（funding rate / slippage）、產出 Sharpe Ratio / Max Drawdown / CAGR 等最終績效指標、呼叫 `scripts/run_backtest.py`
+>
+> 完整的 vectorbt 回測是 Quant Developer 的工作。你的目標是用輕量級分析判斷「信號是否有 alpha」，而非「策略能不能賺錢」。
+
 ### Phase 2: 結構化策略提案
 
 確認有價值後，在 `docs/research/` 下產出策略提案：
@@ -130,6 +136,16 @@ docs/research/YYYYMMDD_<strategy_name>_proposal.md
 - Preliminary IC:
 - Preliminary Sharpe (gross, no costs):
 ```
+
+## 數據管理職責
+
+> **數據管理分工**：
+> - **研究階段（你負責）**：探索新數據源、初次下載、評估 coverage gate（>= 70%）、記錄數據提供者的可靠度與延遲
+> - **回測/驗證階段**：Quant Developer 自行按 config 下載所需數據
+> - **生產/持久化階段**：DevOps 獨佔 — cron 定期更新、Oracle Cloud 上的數據管理
+>
+> 當你的研究需要新數據源時，必須在 Strategy Proposal 的「Data Requirements」中明確標注，
+> 讓 DevOps 在部署時知道需要設定哪些持久化下載。
 
 ## 數據源速查
 

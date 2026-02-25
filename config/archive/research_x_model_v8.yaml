@@ -1,0 +1,77 @@
+# ═══════════════════════════════════════════════════════════════
+# Research Config: X-Model Weekend v8 — Feasibility Study
+# ═══════════════════════════════════════════════════════════════
+#
+# 策略: ERL→IRL Weekend Liquidity Sweep (ICT/SMC)
+# 假說: 週末形成的流動性區域在週一被掃蕩後反轉
+# 時間框架: 1H (主要) + Daily EMA (HTF bias)
+#
+# 研究目的: 驗證 x_model_weekend v8 的基本可行性
+#   - Baseline: v8 full (BE + trailing + HTF bias)
+#   - 回測 BTC/ETH/SOL 各幣種表現
+#
+# Usage:
+#   PYTHONPATH=src python scripts/run_backtest.py -c config/research_x_model_v8.yaml
+#   PYTHONPATH=src python scripts/run_backtest.py -c config/research_x_model_v8.yaml --symbol BTCUSDT
+
+market:
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+  interval: "1h"
+  start: "2022-06-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "x_model_weekend"
+  params:
+    # ═══ Core ═══
+    confirm_window: 4
+    require_fvg: true
+    require_mss: true
+    require_15m: false         # 不使用 15m 確認（簡化研究）
+    sl_buffer_pct: 0.001
+    tp_mode: "stdv"
+    stdv_mult: 2.0
+    swing_lookback: 12
+    mss_lookback: 10
+    max_hold_bars: 96          # v8: 4 days (capture weekly swing)
+    force_close_window_end: false  # v8: allow holding through week
+    cooldown_bars: 2
+    min_range_pct: 0.002
+
+    # ═══ v5: Weekend Range ═══
+    use_weekend_levels: true    # 使用 Sat+Sun 靜態高低點
+
+    # ═══ v6: Rejection Quality Filter ═══
+    rejection_filter: true
+    min_wick_ratio: 0.5
+    max_body_position: 0.4
+    min_volume_factor: 0.0     # volume filter off
+
+    # ═══ v7: HTF Directional Bias ═══
+    htf_trend_period: 20       # Daily EMA 20
+
+    # ═══ v8: Breakeven + Trailing ═══
+    breakeven_trigger_pct: 0.005  # 0.5% → SL move to entry
+    trailing_stop_pct: 0.015     # 1.5% trailing after BE
+
+  symbol_overrides: {}
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+
+# 成本模型（嚴格模式）
+funding_rate:
+  enabled: true
+
+slippage_model:
+  enabled: true

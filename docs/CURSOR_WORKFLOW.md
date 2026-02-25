@@ -1,6 +1,6 @@
 # Cursor Agent 工作流指南
 
-> **Last updated**: 2026-02-25
+> **Last updated**: 2026-02-25 (職責分工一致性修正)
 
 > 日常開發時的 prompt 參考。5 個 Agent、什麼時候用誰、怎麼下 prompt。
 > Slash commands 可用 `/` 快速觸發常用流程，見下方「Slash Commands」段落。
@@ -22,7 +22,7 @@
 | 看鏈上數據有沒有 alpha | `@alpha-researcher` | `分析 BTCUSDT Open Interest 變化與價格的 IC` |
 | 整理研究成提案 | `@alpha-researcher` | `把上面的研究整理成 Strategy Proposal` |
 | 實作策略程式碼 | `@quant-developer` | `根據 docs/research/xxx_proposal.md 實作策略` |
-| 跑回測 | `@quant-developer` | `用 config/research_xxx.yaml 跑回測 + WFA` |
+| 跑回測 | `@quant-developer` | `用 config/research_xxx.yaml 跑回測 + --quick 驗證` |
 | 審查回測結果 | `@quant-researcher` | `審查 reports/research/xxx/ 的回測結果` |
 | 上線前風控審查 | `@risk-manager` | `對 xxx 策略做 pre-launch audit` |
 | 每週風控檢查 | `@risk-manager` | `跑這週的風控快速檢查` |
@@ -44,7 +44,8 @@
 |---------|-------|------|
 | `/deploy` | `@devops` | 部署最新改動到 Oracle Cloud（git push → pull → 重啟） |
 | `/healthcheck` | `@devops` | 完整健康檢查（runner 狀態、持倉、系統資源） |
-| `/backtest` | `@quant-developer` | 跑回測 + WFA（需填入 config 路徑） |
+| `/backtest` | `@quant-developer` | 跑回測 + `--quick` 驗證（需填入 config 路徑） |
+| `/config-freeze` | `@quant-developer` | 凍結研究配置為生產配置（Risk Manager APPROVED 後） |
 | `/risk-review` | `@risk-manager` | 每週風控快速檢查 |
 | `/risk-action` | `@quant-developer` | 根據 risk-review WARNING 產出改善方案並跑對比回測 |
 | `/research-audit` | `@quant-researcher` | 審查回測結果（需填入報告路徑） |
@@ -78,7 +79,7 @@ Step 2: @alpha-researcher
 
 Step 3: @quant-developer
         「根據 docs/research/xxx_proposal.md 實作策略，
-         建 config/research_xxx.yaml，跑回測 + WFA」
+         建 config/research_xxx.yaml，跑回測 + --quick 驗證」
         → 產出: src/qtrade/strategy/xxx_strategy.py
                 config/research_xxx.yaml
                 reports/research/xxx/
@@ -86,14 +87,19 @@ Step 3: @quant-developer
 Step 4: @quant-researcher
         「審查 reports/research/xxx/ 的回測結果，跑完整驗證 pipeline」
         → 產出: GO_NEXT / NEED_MORE_WORK / FAIL
+        （Researcher 獨立重跑 WFA/CPCV/DSR/Cost Stress/Delay Stress）
 
 Step 5: @risk-manager  (只有 GO_NEXT 才到這步)
         「對 xxx 策略做 pre-launch audit，
          config: config/research_xxx.yaml」
         → 產出: APPROVED / CONDITIONAL / REJECTED
 
-Step 6: @devops  (只有 APPROVED 才到這步)
-        「部署 xxx 策略，配置: config/futures_xxx.yaml」
+Step 6: @quant-developer  (只有 APPROVED 才到這步)
+        「凍結 config/research_xxx.yaml → config/prod_live_xxx.yaml」
+        → 產出: config/prod_live_xxx.yaml（凍結的生產配置）
+
+Step 7: @devops
+        「部署 xxx 策略，配置: config/prod_live_xxx.yaml」
         → 產出: 線上運行
 ```
 
@@ -112,10 +118,13 @@ Step 2: @quant-researcher
 Step 3: @risk-manager  (if GO_NEXT)
         「做 pre-launch audit」
 
-Step 4: @devops  (if APPROVED)
-        「更新生產配置並重啟 runner」
+Step 4: @quant-developer  (if APPROVED)
+        「凍結研究配置為生產配置 config/prod_live_*.yaml」
 
 Step 5: @devops
+        「部署已凍結的 config/prod_live_*.yaml 並重啟 runner」
+
+Step 6: @devops
         「幫我部署最新改動到 Oracle Cloud」
         → Agent 自動：git push → SSH pull → 重啟 runner
 ```
@@ -132,7 +141,8 @@ Step 5: @devops
   Step 1: /risk-review → @risk-manager 產出風控報告
   Step 2: 如果有 WARNING → /risk-action → @quant-developer 跑改善方案 + 對比回測
   Step 3: 把對比結果交給 @risk-manager 做最終判決
-  Step 4: 如果 APPROVED → @devops 部署新 config
+  Step 4: 如果 APPROVED → /config-freeze → @quant-developer 凍結新 config
+  Step 5: @devops 部署凍結後的 config
 
 每月:
   @risk-manager  「跑月度深度風控審查（Monte Carlo + 相關性 + Kelly 校準）」
@@ -267,7 +277,7 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 | Alpha Researcher | A: 交給 Developer 實作 · B: 轉換研究方向 · C: 歸檔停止 |
 | Quant Developer | A: 提交 Researcher 審查 · B: 自我迭代改進 · C: 退回 Researcher |
 | Quant Researcher | GO→ Risk Manager · NMW→ Developer · FAIL→ Researcher 或歸檔 |
-| Risk Manager | APPROVED→ DevOps · CONDITIONAL→ Developer · REJECTED→ Developer |
+| Risk Manager | APPROVED→ Developer (config freeze) → DevOps · CONDITIONAL→ Developer · REJECTED→ Developer |
 | DevOps | A: 跑健康檢查 · B: 排定風控觀察 |
 
 ---
@@ -307,7 +317,7 @@ Agent 讀檔案比猜測快。給路徑 > 給描述。
 # 好 — 分兩個 prompt
 @quant-developer 實作 funding_reversal 策略
 （等完成後）
-@quant-developer 跑回測 + WFA
+@quant-developer 跑回測
 
 # 差 — 太多事混在一起
 @quant-developer 實作策略、跑回測、優化參數、然後幫我部署
@@ -342,7 +352,8 @@ Researcher 判定 NEED_MORE_WORK，原因：
 | 策略程式碼 | Python | `src/qtrade/strategy/*_strategy.py` |
 | 回測報告 | Report | `reports/research/<topic>/<timestamp>/` |
 | 風控報告 | Audit | `reports/risk_audit/<timestamp>/` |
-| 生產配置 | YAML | `config/futures_*.yaml` |
+| 策略模板 | YAML | `config/futures_*.yaml` (可複用的策略定義) |
+| 生產配置 | YAML | `config/prod_live_*.yaml` (由 Developer 凍結) |
 | 實盤日誌 | Log | `logs/websocket.log` |
 
 ---
@@ -351,8 +362,8 @@ Researcher 判定 NEED_MORE_WORK，原因：
 
 - [ ] Quant Researcher 判定 `GO_NEXT`
 - [ ] Risk Manager 判定 `APPROVED`
-- [ ] 生產配置已建立（`config/futures_xxx.yaml`）且不與研究配置混用
-- [ ] 數據已下載（K 線 + Funding Rate）
+- [ ] Quant Developer 已凍結生產配置（`config/prod_live_xxx.yaml`）且不與研究配置混用
+- [ ] 數據已下載（K 線 + Funding Rate + 策略所需額外數據）
 - [ ] `prod_launch_guard.py` 通過
 - [ ] Paper trading 至少跑 1 週（可選但建議）
 - [ ] Telegram 通知已配置
