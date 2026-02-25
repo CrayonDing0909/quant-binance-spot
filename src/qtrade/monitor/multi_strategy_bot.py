@@ -177,6 +177,46 @@ class MultiStrategyBot(TelegramBot):
                 assigned.add(sym)
         return result
 
+    def _paper_pnl_summary(self, name: str) -> str:
+        """
+        讀取 paper 策略的 last_signals.json，
+        根據 _position 資訊計算模擬持倉 & 未實現 PnL。
+        """
+        cfg = self._get_cfg(name)
+        if not cfg:
+            return f"  🧪 {name}: Paper Trading"
+
+        signals, gen_at = self._read_signals(name, cfg)
+        if not signals:
+            return f"  🧪 {name}: Paper Trading（無信號）"
+
+        sim_unrealized = 0.0
+        pos_count = 0
+        for sig in signals:
+            pos_info = sig.get("_position")
+            if not pos_info or abs(pos_info.get("pct", 0)) < 0.01:
+                continue
+            pos_count += 1
+            entry = pos_info.get("entry", 0)
+            qty = pos_info.get("qty", 0)
+            side = pos_info.get("side", "")
+            price = sig.get("price", 0)
+            if entry and price and qty:
+                if side == "LONG":
+                    sim_unrealized += (price - entry) * abs(qty)
+                elif side == "SHORT":
+                    sim_unrealized += (entry - price) * abs(qty)
+
+        age_str = self._signal_age_str(gen_at)
+        if pos_count == 0:
+            return f"  🧪 {name}: FLAT（無模擬持倉）{age_str}"
+
+        e = "📈" if sim_unrealized >= 0 else "📉"
+        return (
+            f"  🧪 {name}: {e} ${sim_unrealized:+,.2f}"
+            f"（模擬 {pos_count} 倉）{age_str}"
+        )
+
     def _read_signals(self, name: str, cfg: AppConfig) -> tuple[list | None, str]:
         """讀取某策略的 last_signals.json"""
         sig_path = cfg.get_report_dir("live") / "last_signals.json"
@@ -587,22 +627,45 @@ class MultiStrategyBot(TelegramBot):
                 f"🔄 資金費率: ${funding:+,.2f}",
             ]
 
-            # 按策略拆分已實現 PnL
+            # 按策略拆分 PnL（realized + commission + funding + unrealized）
             if len(self._configs) > 1:
                 lines.append(f"\n<b>{'─' * 20}</b>")
-                all_symbols_map: dict[str, str] = {}
-                for name, cfg in self._configs:
-                    for sym in cfg.market.symbols:
-                        all_symbols_map[sym] = name
 
-                strat_pnl: dict[str, float] = {n: 0.0 for n in self._strategy_names()}
+                # 使用 _symbol_to_strategy（real 策略優先於 paper）
+                # 收集所有 income 類型到各策略
+                income_types = ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE")
+                strat_total: dict[str, float] = {}
+                for n in self._strategy_names():
+                    strat_total[n] = 0.0
+                strat_total["其他"] = 0.0
+
                 for inc in incomes:
-                    if inc["income_type"] == "REALIZED_PNL":
+                    if inc["income_type"] in income_types:
                         sym = inc.get("symbol", "")
-                        sn = all_symbols_map.get(sym, "其他")
-                        strat_pnl[sn] = strat_pnl.get(sn, 0) + inc["income"]
+                        sn = self._symbol_to_strategy(sym)
+                        if sn == "unknown":
+                            sn = "其他"
+                        strat_total[sn] = strat_total.get(sn, 0) + inc["income"]
 
-                for sn, pnl in strat_pnl.items():
+                # 加入未實現 PnL（按策略歸類持倉）
+                strategy_positions = self._group_positions_by_strategy(positions)
+                for name in self._strategy_names():
+                    if self._is_paper(name):
+                        continue
+                    strat_unrealized = sum(
+                        self._pos_attr(p, "unrealized_pnl", 0)
+                        for p in strategy_positions.get(name, [])
+                    )
+                    strat_total[name] = strat_total.get(name, 0) + strat_unrealized
+
+                for sn, pnl in strat_total.items():
+                    if self._is_paper(sn):
+                        # 讀取 paper 策略的模擬持倉 & 計算未實現 PnL
+                        paper_line = self._paper_pnl_summary(sn)
+                        lines.append(paper_line)
+                        continue
+                    if sn == "其他" and abs(pnl) < 0.005:
+                        continue  # 隱藏無 PnL 的「其他」
                     e = "📈" if pnl >= 0 else "📉"
                     lines.append(f"  {e} {sn}: ${pnl:+,.2f}")
 

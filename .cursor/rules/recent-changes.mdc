@@ -107,3 +107,15 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 - **G6**: 明確指派：Researcher 在 GO_NEXT 前必跑一致性、Risk Manager 每週 replay
 - **G7**: 修改 `.cursor/rules/strategy-dev.mdc` — Lifecycle 新增第 5 步 Overlay Ablation、Anti-Patterns 新增 overlay 相關禁令
 - 修改 `docs/CURSOR_WORKFLOW.md` — 上線前 checklist 新增 Validation Matrix、overlay ablation、一致性檢查 3 項
+
+### Telegram Bot 持倉歸類修正 + /trades UX 重寫
+- 修改 `src/qtrade/monitor/multi_strategy_bot.py` — 排他式持倉歸類（共用幣種只歸 Real 策略，Paper 策略顯示佔位符）
+  - 新增 `_is_paper()`, `_strategy_label()`, `_group_positions_by_strategy()`
+  - Paper 策略顯示 🧪 標籤，不從 Binance API 歸類倉位
+  - `/trades` 完全重寫：合併成交（by order_id）、智慧小數、中文動作標籤（開多/開空/平多/平空）、策略歸類標籤、底部匯總
+  - 所有命令（`/dashboard`, `/status`, `/positions`, `/risk`, `/signals`, `/health`, daily summary）使用排他式歸類
+- 修改 `scripts/run_telegram_bot.py` — 新增 `--paper-strategies` CLI 參數，自動偵測 paper 策略（config 檔名含 `paper` 或策略名含 `oi_liq_bounce`）
+- 更新 `.cursor/agents/devops.md` — Telegram Bot section 新增 paper 偵測與排他式歸類說明、可用命令表新增 `/trades`
+
+### 新增 /eod Cursor 命令
+- 新增 `.cursor/commands/eod.md` — End-of-Day 文件同步檢查（6 步：git diff 掃描 → CLI_REFERENCE 判斷 → Living docs 檢查 → Lint → 更新 recent-changes → 最終摘要）

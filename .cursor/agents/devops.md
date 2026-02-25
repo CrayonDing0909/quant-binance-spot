@@ -362,6 +362,8 @@ cat reports/live_watchdog/R3C_E3/latest_status.json | python3 -m json.tool  # (�
 - **Runner 不再啟動命令 Bot**：只保留 `TelegramNotifier` 做交易推送通知
 - **Bot Token 不再衝突**：只有一個進程做 long-polling
 - **支援多策略**：一個 Bot 看所有策略的狀態
+- **Paper 策略自動偵測**：config 檔名含 `paper` 或 `oi_liq_bounce` 策略名自動標為 🧪 Paper
+- **排他式持倉歸類**：共用幣種（BTC/ETH/SOL 等）只歸類給 Real 策略，Paper 策略不會顯示 Binance 實際倉位
 
 ### 部署指令
 
@@ -405,7 +407,8 @@ TELEGRAM_CHAT_ID=your_chat_id
 |------|------|
 | `/dashboard` | 全局儀表板：帳戶、策略、持倉一覽 |
 | `/status` | 帳戶狀態 + 各策略 Runner 狀態 |
-| `/positions` | 合約持倉詳情（按策略歸類，可展開） |
+| `/positions` | 合約持倉詳情（排他式策略歸類，可展開） |
+| `/trades` | 最近交易（合併成交、智慧小數、策略標籤、匯總） |
 | `/pnl` | 已實現損益（多時段切換） |
 | `/signals` | 各策略最新信號快照 |
 | `/risk` | 風控指標（保證金、資金費率等） |
