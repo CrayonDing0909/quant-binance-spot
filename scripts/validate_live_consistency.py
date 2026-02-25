@@ -29,6 +29,7 @@
     11. date_filter          — start/end 日期正確套用
     12. cooldown             — 冷卻期設定一致
     13. funding_rate_warning — 資金費率未建模提醒
+    14. overlay_consistency  — Overlay 配置在回測/實盤路徑一致
 """
 from __future__ import annotations
 
@@ -668,6 +669,146 @@ class ConsistencyChecker:
                 "建議在 backtest.funding_rate.enabled 設為 true。",
             )
 
+    # ── 14. Overlay Consistency ─────────────────────────────
+
+    def check_overlay_consistency(self):
+        """驗證 overlay 配置在回測和實盤路徑是否一致"""
+        # 從 config 讀取 overlay 設定
+        overlay_cfg = getattr(self.cfg, '_overlay_cfg', None)
+        bt_dict = self.cfg.to_backtest_dict(symbol=self.symbol)
+        bt_overlay = bt_dict.get("overlay")
+
+        # 情境 1：沒有 overlay — 最簡單
+        if not overlay_cfg and not bt_overlay:
+            self._add(
+                "overlay_consistency",
+                True,
+                "PASS",
+                "策略未使用 overlay（回測和實盤皆無）",
+            )
+            return
+
+        # 情境 2：overlay 設定存在但 enabled=False
+        if overlay_cfg and not overlay_cfg.get("enabled", False):
+            if bt_overlay and bt_overlay.get("enabled", False):
+                self._add(
+                    "overlay_consistency",
+                    False,
+                    "FAIL",
+                    "Overlay 不一致：原始 config 未啟用，但 to_backtest_dict 啟用",
+                )
+            else:
+                self._add(
+                    "overlay_consistency",
+                    True,
+                    "PASS",
+                    "Overlay 已定義但 enabled=false（回測和實盤皆不套用）",
+                )
+            return
+
+        # 情境 3：overlay 啟用 — 嚴格檢查
+        issues = []
+        notes = []
+
+        if not bt_overlay or not bt_overlay.get("enabled", False):
+            issues.append(
+                "Overlay config 有 enabled=true，但 to_backtest_dict() 未傳遞 overlay"
+            )
+        else:
+            # 3a. mode 一致性
+            cfg_mode = overlay_cfg.get("mode", "vol_pause")
+            bt_mode = bt_overlay.get("mode", "vol_pause")
+            if cfg_mode != bt_mode:
+                issues.append(
+                    f"Overlay mode 不一致: config={cfg_mode} vs backtest_dict={bt_mode}"
+                )
+            else:
+                notes.append(f"overlay mode={cfg_mode} ✓")
+
+            # 3b. params 一致性
+            cfg_params = overlay_cfg.get("params", {})
+            bt_params = bt_overlay.get("params", {})
+            param_diffs = []
+            all_keys = set(list(cfg_params.keys()) + list(bt_params.keys()))
+            for k in sorted(all_keys):
+                v1 = cfg_params.get(k)
+                v2 = bt_params.get(k)
+                if v1 != v2:
+                    param_diffs.append(f"  {k}: config={v1} vs backtest={v2}")
+            if param_diffs:
+                issues.append("Overlay params 不一致:\n" + "\n".join(param_diffs))
+            else:
+                notes.append(f"overlay params 一致 ({len(cfg_params)} keys) ✓")
+
+        # 3c. OI 數據可用性（oi_vol 和 oi_only mode 需要 OI）
+        overlay_mode = overlay_cfg.get("mode", "vol_pause")
+        if overlay_mode in ("oi_vol", "oi_only"):
+            # 檢查 live signal_generator 路徑是否能載入 OI
+            try:
+                from qtrade.live.signal_generator import generate_signal
+                import inspect
+                sig = inspect.signature(generate_signal)
+                if "oi_series" in sig.parameters:
+                    notes.append(f"Live signal_generator 支援 oi_series 參數 ✓")
+                else:
+                    issues.append(
+                        f"Overlay mode={overlay_mode} 需要 OI 數據，"
+                        f"但 live signal_generator 不接受 oi_series 參數"
+                    )
+            except ImportError:
+                issues.append("無法載入 signal_generator 模組")
+
+            # 檢查 OI 數據檔案是否存在
+            data_dir = self.cfg.data_dir
+            oi_path = data_dir / "binance" / "futures" / "open_interest" / "merged" / f"{self.symbol}.parquet"
+            if oi_path.exists():
+                import os
+                mtime = os.path.getmtime(oi_path)
+                from datetime import datetime, timezone
+                age_hours = (datetime.now(timezone.utc).timestamp() - mtime) / 3600
+                notes.append(f"OI 數據存在: {oi_path.name} (age={age_hours:.1f}h) ✓")
+                if age_hours > 24:
+                    issues.append(
+                        f"OI 數據過舊 ({age_hours:.0f}h > 24h)，overlay 可能使用過時信號"
+                    )
+            else:
+                issues.append(
+                    f"Overlay mode={overlay_mode} 需要 OI 數據，"
+                    f"但 {oi_path} 不存在"
+                )
+
+        # 3d. 檢查 BaseRunner 是否注入 _data_dir（供 live 路徑自動載入 OI）
+        try:
+            from qtrade.live.base_runner import BaseRunner
+            import inspect
+            source = inspect.getsource(BaseRunner._get_strategy_for_symbol)
+            if "_data_dir" in source:
+                notes.append("BaseRunner 注入 _data_dir ✓")
+            else:
+                issues.append(
+                    "BaseRunner._get_strategy_for_symbol 未注入 _data_dir，"
+                    "live 路徑可能無法載入 OI/FR 輔助數據"
+                )
+        except Exception:
+            notes.append("⚠️ 無法檢查 BaseRunner source（非嚴重問題）")
+
+        if issues:
+            self._add(
+                "overlay_consistency",
+                False,
+                "FAIL",
+                f"Overlay 一致性有問題 (mode={overlay_mode})",
+                "\n".join(issues + ["---"] + notes),
+            )
+        else:
+            self._add(
+                "overlay_consistency",
+                True,
+                "PASS",
+                f"Overlay 一致 (mode={overlay_mode}, enabled=true)",
+                "\n".join(notes),
+            )
+
     # ── Run All ────────────────────────────────────────────
 
     def run_all(self, only: set[str] | None = None) -> list[CheckResult]:
@@ -686,6 +827,7 @@ class ConsistencyChecker:
             "date": [self.check_date_filter],
             "cooldown": [self.check_cooldown],
             "funding": [self.check_funding_rate_warning],
+            "overlay": [self.check_overlay_consistency],
         }
 
         for group_name, check_funcs in checks.items():
@@ -773,7 +915,7 @@ def main():
         "--only",
         type=str,
         default=None,
-        help="只檢查指定項目（逗號分隔）: params,strategy,signal,entry,sltp,sizing,fee,date,cooldown,funding",
+        help="只檢查指定項目（逗號分隔）: params,strategy,signal,entry,sltp,sizing,fee,date,cooldown,funding,overlay",
     )
 
     args = parser.parse_args()

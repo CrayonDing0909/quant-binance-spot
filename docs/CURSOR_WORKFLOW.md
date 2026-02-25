@@ -1,6 +1,6 @@
 # Cursor Agent 工作流指南
 
-> **Last updated**: 2026-02-25 (職責分工一致性修正)
+> **Last updated**: 2026-02-25 (新增 overlay ablation + 一致性檢查到上線 checklist)
 
 > 日常開發時的 prompt 參考。5 個 Agent、什麼時候用誰、怎麼下 prompt。
 > Slash commands 可用 `/` 快速觸發常用流程，見下方「Slash Commands」段落。
@@ -360,10 +360,13 @@ Researcher 判定 NEED_MORE_WORK，原因：
 
 ## 檢查清單：上線前必做
 
-- [ ] Quant Researcher 判定 `GO_NEXT`
+- [ ] **Validation Matrix 全部 PASS**（見 Playbook Section 7，V1-V12）
+- [ ] **Overlay ablation 完成**（見 Playbook Stage D.5），報告中明確標註 overlay ON/OFF
+- [ ] **`validate_live_consistency.py` 通過**（含 overlay 一致性檢查）
+- [ ] Quant Researcher 判定 `GO_NEXT`（含一致性 gate）
 - [ ] Risk Manager 判定 `APPROVED`
 - [ ] Quant Developer 已凍結生產配置（`config/prod_live_xxx.yaml`）且不與研究配置混用
-- [ ] 數據已下載（K 線 + Funding Rate + 策略所需額外數據）
+- [ ] 數據已下載（K 線 + Funding Rate + 策略所需額外數據如 OI）
 - [ ] `prod_launch_guard.py` 通過
 - [ ] Paper trading 至少跑 1 週（可選但建議）
 - [ ] Telegram 通知已配置

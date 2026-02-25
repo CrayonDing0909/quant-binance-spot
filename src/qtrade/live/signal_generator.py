@@ -182,10 +182,39 @@ def generate_signal(
         overlay_mode = overlay_cfg.get("mode", "vol_pause")
         overlay_params = overlay_cfg.get("params", {})
 
+        # OI 資料：與 run_symbol_backtest 一致的載入邏輯
+        # 優先使用 params 中已注入的 _oi_series（來自 BaseRunner OI cache），
+        # 否則從 _data_dir 自動載入（僅 oi_only / oi_vol 模式需要）
+        oi_series = params.get("_oi_series")
+        if oi_series is None and overlay_mode in ("oi_only", "oi_vol"):
+            data_dir = params.get("_data_dir")
+            if data_dir:
+                try:
+                    from ..data.open_interest import (
+                        get_oi_path, load_open_interest, align_oi_to_klines,
+                    )
+                    from pathlib import Path
+                    data_dir_path = Path(data_dir)
+                    for _prov in ["merged", "binance_vision", "coinglass", "binance"]:
+                        _oi_path = get_oi_path(data_dir_path, symbol, _prov)
+                        _oi_df = load_open_interest(_oi_path)
+                        if _oi_df is not None and not _oi_df.empty:
+                            oi_series = align_oi_to_klines(
+                                _oi_df, df.index, max_ffill_bars=2,
+                            )
+                            logger.debug(f"  {symbol}: overlay OI 載入成功 (provider={_prov})")
+                            break
+                    else:
+                        logger.warning(
+                            f"  {symbol}: overlay 模式 {overlay_mode} 需要 OI 但無法載入"
+                        )
+                except Exception as e:
+                    logger.warning(f"  {symbol}: overlay OI 載入失敗: {e}")
+
         positions = apply_overlay_by_mode(
             position=positions,
             price_df=df,
-            oi_series=None,  # live 不載入 OI 檔案；vol_pause 模式不需要
+            oi_series=oi_series,
             params=overlay_params,
             mode=overlay_mode,
         )

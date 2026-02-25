@@ -46,6 +46,30 @@ Every backtest report MUST include:
 - Long/Short breakdown (for futures)
 - Cost impact: before vs after funding + slippage
 - Yearly decomposition
+- **Overlay status**: `overlay: ON (mode=<mode>)` or `overlay: OFF` — MUST be explicitly stated
+
+## Overlay Audit Rules
+
+1. **Every backtest report MUST explicitly state** whether overlay is enabled or disabled.
+   Format: `Overlay: ON (mode=vol_pause, vol_spike_z=2.0)` or `Overlay: OFF`.
+
+2. **Strategy comparisons MUST provide both with/without overlay** when the production config
+   has overlay enabled. A "fair comparison" that strips overlay from a strategy that runs overlay
+   in production is MISLEADING — always show at least:
+   - naked vs naked (signal quality comparison)
+   - production-matched vs production-matched (deployment comparison)
+
+3. **Any claim that "X replaces overlay"** (e.g., "carry confirmation replaces vol_pause")
+   MUST be backed by ablation data:
+   - Strategy without overlay
+   - Strategy with overlay
+   - Delta Sharpe, Delta MDD, per-symbol breakdown
+   Without this data, the claim is unsubstantiated and MUST NOT be used for deployment decisions.
+
+4. **Overlay config consistency**: If a strategy's production config has `overlay.enabled: true`,
+   then both the backtest config and the live runner MUST use the same overlay settings.
+   The overlay code path is unified (`apply_overlay_by_mode()`) for backtest and live — the
+   only source of inconsistency is config mismatch.
 
 ## Validation Stack (must pass in order)
 

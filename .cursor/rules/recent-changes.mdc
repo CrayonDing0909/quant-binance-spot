@@ -10,6 +10,13 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-25
 
+### Overlay 一致性審計與修正（4 項）
+- 新增 `scripts/research_overlay_4way.py` — 4-Way 比較腳本（R3C ±overlay × MetaBlend ±overlay，8 幣種），結果寫入 `reports/research/overlay_4way/`
+- 修改 `.cursor/rules/backtest.mdc` — 新增 Overlay Audit Rules（報告必須標註 overlay ON/OFF、比較需提供 with/without、ablation 數據要求）
+- 修改 `config/prod_candidate_meta_blend.yaml` — 根據 ablation 數據啟用 vol_pause overlay（Sharpe +1.105），更新驗證數據（Portfolio SR 2.306, MDD -3.7%, Calmar 5.02）
+- 修改 `src/qtrade/live/signal_generator.py` — 修復 live overlay OI 載入缺失（原本硬編碼 `oi_series=None`，改為與 backtest 一致的自動載入邏輯）
+- 重新生成 `docs/CLI_REFERENCE.md`
+
 ### Rules / Commands / Workflow 一致性修正（8 處）
 - 修改 `.cursor/rules/project-overview.mdc` — 更新 Handoff Rules（Developer 不跑 WFA、新增 config-freeze 步驟）、更新 Workflow 圖（插入 Developer config-freeze 節點）、更新 Agent Scope 欄位
 - 修改 `.cursor/rules/backtest.mdc` — Validation Stack 區塊加入分工 note（Developer 只跑 --quick，完整驗證由 Researcher 執行）
@@ -61,3 +68,14 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 - **P2 新增**: `BaseRunner._oi_cache` — OI 記憶體快取（每 30 分鐘刷新），避免每次信號生成都讀 parquet
 - **P3 新增**: `scripts/download_data.py --oi` — 統一數據管線，`oi_liq_bounce` 策略自動觸發 OI 下載+合併
 - 更新 `devops.md` — 數據管理區塊重寫（統一指令、cron 列表、watchdog 路徑說明）
+
+### 策略開發流程缺口審計與修復（7 個缺口，3 大區域）
+- **G1+G2**: 修改 `docs/STRATEGY_DEV_PLAYBOOK_R2_1.md` — 新增 Stage D.5 Overlay Ablation（2×2 和 3-way ablation 協議）+ Section 7 驗證矩陣（V1-V12，12 項必檢 gate，指定負責人和通過標準）+ 更新 Production Promotion Checklist
+- **G3**: 修改 `.cursor/agents/quant-developer.md` — 回測報告清單新增 overlay 狀態和 ablation 要求、自我檢查清單新增 overlay 一致性 + ablation 確認
+- **G3**: 修改 `.cursor/agents/quant-researcher.md` — 驗證 Pipeline 新增第 8 步（Overlay Consistency Check）和第 9 步（Pre-Deploy Consistency Check via `validate_live_consistency.py`）、判決標準加註一致性 gate 必須通過
+- **G4（最關鍵）**: 修改 `scripts/validate_live_consistency.py` — 新增 `check_overlay_consistency` 檢查項（overlay mode/params 一致性、OI 數據可用性、BaseRunner _data_dir 注入驗證）
+- **G4**: 修改 `src/qtrade/validation/consistency.py` — `ConsistencyValidator` 新增 `overlay_cfg` + `data_dir` 參數，`_run_backtest_signals()` 加入 overlay 後處理（與 backtest 和 live 路徑一致），`run_consistency_check()` 自動傳遞 overlay 配置
+- **G5**: 修改 `.cursor/agents/risk-manager.md` — 每週快速檢查新增「回測↔實盤一致性 replay」步驟（每個在線策略都跑 `validate_live_consistency.py`），週報新增一致性相關警戒指標
+- **G6**: 明確指派：Researcher 在 GO_NEXT 前必跑一致性、Risk Manager 每週 replay
+- **G7**: 修改 `.cursor/rules/strategy-dev.mdc` — Lifecycle 新增第 5 步 Overlay Ablation、Anti-Patterns 新增 overlay 相關禁令
+- 修改 `docs/CURSOR_WORKFLOW.md` — 上線前 checklist 新增 Validation Matrix、overlay ablation、一致性檢查 3 項

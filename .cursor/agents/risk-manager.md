@@ -151,6 +151,13 @@ PYTHONPATH=src python scripts/health_check.py \
 # 3. Alpha Decay 快速掃描
 PYTHONPATH=src python scripts/monitor_alpha_decay.py \
   -c config/prod_live_R3C_E3.yaml
+
+# 4. 回測↔實盤一致性 replay（每個在線策略都要跑）
+PYTHONPATH=src python scripts/validate_live_consistency.py \
+  -c config/prod_live_R3C_E3.yaml -v
+PYTHONPATH=src python scripts/validate_live_consistency.py \
+  -c config/prod_live_oi_liq_bounce.yaml -v
+# ↑ 對每個在線/paper trading 的策略各跑一次
 ```
 
 週報檢查項目：
@@ -160,6 +167,8 @@ PYTHONPATH=src python scripts/monitor_alpha_decay.py \
 | 當前 Drawdown | > 50% of 熔斷線 | 準備降低倉位 |
 | Runner 異常次數 | > 3 次/週 | 通知 DevOps 排查 |
 | 信號翻轉頻率 | 異常高 | 可能信號雜訊增加 |
+| 一致性檢查 FAIL 項 | 任何 FAIL | 通知 Developer 排查；如 overlay 不一致需立即修復 |
+| 一致性 consistency_rate | < 95% | 標記 WARNING，通知 Researcher 做深入 IC 分析 |
 
 ### 每月深度審查
 

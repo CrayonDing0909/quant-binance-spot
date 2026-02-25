@@ -83,36 +83,33 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 ## Oracle Cloud 部署
 
-### 當前架構（2026-02-25 verified）
+### 當前架構（2026-02-25 Meta-Blend 上線）
 
 ```
 Server: Oracle Cloud (1GB RAM, x86_64, Ubuntu 22.04)
 IP: 140.83.57.255
-Mode: WebSocket event-driven (tmux session: r3c_e3_live)
-Config: config/prod_live_R3C_E3.yaml
-Strategy: R3C 10-Symbol Ensemble
-  - BTC: breakout_vol_atr
-  - ETH: tsmom_multi_ema
-  - SOL/BNB/XRP/DOGE/ADA/AVAX/LINK/LTC: tsmom_ema
-Leverage: 3x ISOLATED
-Weight sum: ~3.50
-Circuit breaker: 40% MDD
-Overlays: oi_vol + Microstructure Accel (both enabled)
-Telegram prefix: 🚀 [PROD-R3C-10S-3.5x]
-```
-
-### 候選策略（待上線）
-
-```
+Mode: WebSocket event-driven (tmux session: meta_blend_live)
 Config: config/prod_candidate_meta_blend.yaml
 Strategy: meta_blend 8-Symbol (R3C × tsmom_carry_v2)
   - BTC: breakout_vol_atr(30%) + tsmom_carry_v2/btc_enhanced(70%)
   - ETH: tsmom_carry_v2/eth_enhanced (OI/FR/Basis)
   - SOL/AVAX: tsmom_carry_v2/tsmom_heavy
-  - BNB/DOGE/ADA/LINK: tsmom_carry_v2/default
+  - BNB/DOGE/ADA: tsmom_carry_v2/default
+  - LINK: tsmom_carry_v2/tsmom_only (carry IC unstable)
 Leverage: 3x ISOLATED
+Weight sum: 1.0
 Circuit breaker: 40% MDD
-Note: 使用 meta_blend pattern（信號混合），非獨立 runner
+Overlays: vol_pause (oi_vol mode, vol_spike_z=2.0)
+Telegram prefix: 🔬 [CANDIDATE-MetaBlend-8S]
+```
+
+### 已退役（可 rollback）
+
+```
+Prev Config: config/prod_live_R3C_E3.yaml
+Prev tmux: r3c_e3_live (已停止)
+Prev Strategy: R3C 10-Symbol Ensemble (tsmom_ema + breakout_vol_atr)
+Rollback: 停止 meta_blend_live → 啟動 r3c_e3_live 用 prod_live_R3C_E3.yaml
 ```
 
 ### OI Liquidation Bounce — Paper Trading 中 🟡

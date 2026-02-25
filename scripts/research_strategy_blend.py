@@ -52,7 +52,8 @@ SHARED_SYMBOLS = [
     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
 ]
 
-DATA_DIR = Path("data/binance")
+KLINE_DIR = Path("data/binance")   # exchange-specific kline root
+DATA_ROOT = Path("data")           # project data root (for FR, OI — functions prepend binance/)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -83,7 +84,7 @@ def _run_and_extract(
     if disable_overlay:
         bt_dict.pop("overlay", None)
 
-    data_path = DATA_DIR / "futures" / cfg_obj.market.interval / f"{symbol}.parquet"
+    data_path = KLINE_DIR / "futures" / cfg_obj.market.interval / f"{symbol}.parquet"
     if not data_path.exists():
         logger.warning(f"⚠️  Missing data: {data_path}")
         return None, None
@@ -95,7 +96,7 @@ def _run_and_extract(
             cfg=bt_dict,
             market_type="futures",
             direction="both",
-            data_dir=DATA_DIR,
+            data_dir=DATA_ROOT,
         )
         # Extract equity curve → daily returns
         eq = result.equity()
@@ -159,7 +160,7 @@ def run_all_backtests() -> tuple[dict, dict, dict, dict]:
         r3c_bt_dict["strategy_params"] = strat_params
         r3c_bt_dict.pop("overlay", None)  # disable overlay for fair compare
 
-        data_path = DATA_DIR / "futures" / cfg_r3c.market.interval / f"{sym}.parquet"
+        data_path = KLINE_DIR / "futures" / cfg_r3c.market.interval / f"{sym}.parquet"
         try:
             res_r3c = run_symbol_backtest(
                 symbol=sym,
@@ -167,7 +168,7 @@ def run_all_backtests() -> tuple[dict, dict, dict, dict]:
                 cfg=r3c_bt_dict,
                 market_type="futures",
                 direction="both",
-                data_dir=DATA_DIR,
+                data_dir=DATA_ROOT,
             )
             eq = res_r3c.equity()
             daily_eq = eq.resample("1D").last().dropna()
@@ -188,7 +189,7 @@ def run_all_backtests() -> tuple[dict, dict, dict, dict]:
                 cfg=v2_bt_dict,
                 market_type="futures",
                 direction="both",
-                data_dir=DATA_DIR,
+                data_dir=DATA_ROOT,
             )
             eq = res_v2.equity()
             daily_eq = eq.resample("1D").last().dropna()

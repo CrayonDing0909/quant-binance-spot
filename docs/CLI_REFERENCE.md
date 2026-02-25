@@ -67,6 +67,7 @@
 | `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
 | `research_ic_deep_analysis.py` | IC Deep Analysis — Quant Researcher |
+| `research_overlay_4way.py` | ═══════════════════════════════════════════════════════════════ |
 | `research_overlay_ic_analysis.py` | P0: Overlay-Adjusted IC Analysis |
 | `research_strategy_blend.py` | ═══════════════════════════════════════════════════════════════ |
 

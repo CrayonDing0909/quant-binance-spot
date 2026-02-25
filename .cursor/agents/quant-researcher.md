@@ -81,14 +81,26 @@
    - +1 bar 額外延遲，策略績效下降多少？
    - 下降 > 50% 暗示 timing-sensitive（脆弱）
 
-8. **Alpha Decay Monitoring**
+8. **Overlay Consistency Check**（Stage D.5 驗證）
+   - 確認 Developer 已完成 overlay ablation（裸跑 vs overlay），數據合理
+   - 確認 overlay mode + params 在 config、backtest 路徑、live 路徑三者一致
+   - 如果策略聲稱某組件可取代 overlay，要求 3-way ablation 數據
+
+9. **Pre-Deploy Consistency Check**（必做 gate，不可跳過）
+   ```bash
+   PYTHONPATH=src python scripts/validate_live_consistency.py -c config/research_<name>.yaml
+   ```
+   - 回測/實盤路徑一致性：config passthrough、strategy context、signal consistency、overlay 一致性
+   - **此 gate 在 GO_NEXT 之前必須通過**，否則不得放行
+
+10. **Alpha Decay Monitoring**
    ```bash
    PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/<cfg>.yaml
    ```
    - Rolling IC 是否穩定？
    - 年度 IC 是否持續下降？
 
-9. **混合策略額外驗證（meta_blend 專用）**
+11. **混合策略額外驗證（meta_blend 專用）**
 
    當審查策略為 `meta_blend`（多策略信號混合器），除上述 1-8 外需額外檢查：
 
@@ -108,9 +120,12 @@
 
 ### 判決標準
 
+> **注意**：GO_NEXT 判決前，Pipeline 第 8 步（Overlay Consistency）和第 9 步（Pre-Deploy Consistency）必須全部 PASS。
+> 即使所有統計 gate 都通過，如果一致性檢查失敗，也不得給 GO_NEXT。
+
 | 判決 | 條件 |
 |------|------|
-| `GO_NEXT` | 全部 gate 通過，OOS Sharpe > 0.3，成本壓力下仍盈利 |
+| `GO_NEXT` | 全部 gate 通過（含一致性檢查），OOS Sharpe > 0.3，成本壓力下仍盈利 |
 | `KEEP_BASELINE` | 候選策略未優於基準，維持現狀 |
 | `NEED_MORE_WORK` | 有潛力但某些 gate 未通過，需要改進 |
 | `FAIL` | 發現偽 alpha 或根本性問題，拒絕假說 |

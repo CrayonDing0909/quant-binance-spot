@@ -27,9 +27,10 @@ Follow [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md):
 3. **Implementation** — Add as opt-in (default disabled), backward compatible, use `config/research_*.yaml`
 4. **Validation** — Must pass in order: Causality → Backtest → Generalization → Delay fragility
    > Developer 只跑 `validate.py --quick`（causality + 基本健全檢查）。完整 pipeline（WFA, CPCV, DSR, Cost Stress, Delay Stress）由 Quant Researcher 獨立執行。
-5. **Ablation** — Test components independently (A only, B only, A+B)
-6. **Decision** — Only 4 verdicts: `GO_NEXT`, `KEEP_BASELINE`, `NEED_MORE_WORK`, `FAIL`
-7. **Rollout** — Paper gate >= 7-14 days → Capital ramp 25% → 50% → 100%
+5. **Overlay Ablation**（Stage D.5）— 如果生產 pipeline 有啟用 overlay，**必須**跑 2×2 ablation（裸跑 vs overlay），報告 Delta Sharpe / MDD。見 Playbook Section D.5。
+6. **Ablation** — Test components independently (A only, B only, A+B)
+7. **Decision** — Only 4 verdicts: `GO_NEXT`, `KEEP_BASELINE`, `NEED_MORE_WORK`, `FAIL`
+8. **Rollout** — Paper gate >= 7-14 days → Capital ramp 25% → 50% → 100%
 
 ## Anti-Patterns (DO NOT)
 
@@ -37,6 +38,8 @@ Follow [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md):
 - Do NOT hardcode `direction` in strategy — it comes from `ctx.direction`
 - Do NOT modify production config (`config/prod_live_R3C_E3.yaml`) during research
 - Do NOT skip the ablation step when adding multiple components
+- Do NOT skip overlay ablation when production pipeline uses overlay — 見 Playbook Stage D.5
+- Do NOT claim a new component "replaces overlay" without 3-way ablation data
 
 ## Reference Implementation
 

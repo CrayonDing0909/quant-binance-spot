@@ -10,19 +10,31 @@
 #     BTC:   breakout_vol_atr(30%) + tsmom_carry_v2 btc_enhanced(70%)
 #     ETH:   100% tsmom_carry_v2 eth_enhanced (OI/FR/Basis)
 #     SOL/AVAX: 100% tsmom_carry_v2 tsmom_heavy (70/30)
-#     BNB/DOGE/ADA/LINK: 100% tsmom_carry_v2 default (50/50)
+#     BNB/DOGE/ADA: 100% tsmom_carry_v2 default (50/50)
+#     LINK:  100% tsmom_carry_v2 tsmom_only (carry IC unstable)
 #
 #   Removed symbols:
 #     LTCUSDT — persistent negative OOS IC, no alpha
 #     XRPUSDT — Sharpe 0.046, WFA OOS+ 40%, fails 2x cost
 #
-# VALIDATION RESULTS (2026-02-25):
-#   Portfolio Sharpe:  1.201 (vs pure V2: 1.127, vs R3C: 1.013)
-#   Total Return:      +43.6%
-#   Max Drawdown:      -5.0%
-#   2x Cost Sharpe:    0.660 → PASS
+# VALIDATION RESULTS (2026-02-25, FR-path-corrected re-run):
+#   Portfolio Sharpe:  2.265 (with vol_pause overlay; naked: 1.214)
+#   Total Return:      +118.0%
+#   Max Drawdown:      -4.2%
+#   Calmar:            4.98
+#   2x Cost Sharpe:    +1.648 (portfolio, with overlay) → PASS
+#   1.5x Cost Sharpe:  +1.957 (portfolio, with overlay) → PASS
 #   WFA OOS Positive:  88% (avg OOS Sharpe +0.85)
-#   BTC Blend SR:      1.177 (vs R3C breakout: 1.182, V2: 0.894)
+#   BTC Blend SR:      1.847 (with overlay; naked: 1.145)
+#   Overlay Ablation:  +1.051 Sharpe delta → vol_pause REQUIRED (2026-02-25)
+#   FR path fix:       data_dir double-binance bug fixed, 7/8 symbols FR now loaded
+#   Cost stress re-run: 2026-02-25, corrected FR path
+#     (reports/research/overlay_4way/cost_stress_2x/cost_stress_20260225_155646.json)
+#
+# LINK TIER CHANGE (2026-02-25):
+#   FR fix 後 default tier SR 1.126，回測比較 tsmom_only SR 1.300 (+15.4%)
+#   tsmom_only 在 4/5 年份更好且 2x cost 耐受力更強 (0.912 vs 0.745)
+#   已切換為 tsmom_only tier，移除有害的 carry confirmation
 #
 # KEY DIFFERENCES vs prod_live_R3C_E3.yaml:
 #   - 8 symbols (was 10) — removed LTC (quarantined) and XRP (no alpha)
@@ -30,6 +42,7 @@
 #   - meta_blend handles per-symbol routing (no ensemble block needed)
 #   - tsmom_carry_v2 adds carry confirmation to reduce MDD
 #   - breakout_vol_atr retained for BTC (30% blend weight)
+#   - vol_pause overlay ENABLED (same as R3C) — ablation proves complementary
 #
 # RISK AUDIT (2026-02-25):
 #   Monte Carlo Bootstrap:   5th pct Return > 0 → PASS
@@ -74,7 +87,7 @@ futures:
 strategy:
   name: "meta_blend"
   params:
-    # ── Default sub-strategy combo (BNB, DOGE, ADA, LINK) ──
+    # ── Default sub-strategy combo (BNB, DOGE, ADA) ──
     # 100% tsmom_carry_v2 — carry confirmation reduces MDD
     sub_strategies:
       - name: "tsmom_carry_v2"
@@ -246,9 +259,53 @@ strategy:
             position_step: 0.1
             min_change_threshold: 0.05
 
-  # No overlay needed — carry confirmation replaces oi_vol overlay
+    # ── LINK: 100% tsmom_carry_v2 (tsmom_only — carry IC unstable) ──
+    # Backtest: tsmom_only SR 1.300 vs default SR 1.126 (+15.4%)
+    #           tsmom_only 2x cost SR 0.912 vs default 0.745 (+22.4%)
+    #           tsmom_only better in 4/5 yearly periods
+    # Rationale: LINK FR signal weak; carry confirmation reduces position
+    #            when TSMOM is correct, net-harmful. Pure TSMOM is superior.
+    # Evidence: reports/research/link_tier_compare/link_tier_compare_20260225_161947.json
+    LINKUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            tier: "tsmom_only"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+
+  # ── Overlay: vol_pause enabled (ABLATION-BACKED DECISION 2026-02-25) ──
+  # 4-Way ablation test result:
+#   Meta-Blend naked:       Sharpe 1.214, MDD -4.8%
+#   Meta-Blend + vol_pause: Sharpe 2.265, MDD -4.2%
+#   Overlay Sharpe delta: +1.051
+  # Conclusion: carry confirmation does NOT replace vol_pause.
+  #   vol_pause provides acute black-swan protection (vol z > 2.0 → reduce position)
+  #   carry confirmation provides chronic risk management (slow divergence → scale down)
+  #   These are complementary, not substitutes.
+  # See: reports/research/overlay_4way/ for full ablation data.
   overlay:
-    enabled: false
+    enabled: true
+    mode: "oi_vol"
+    params:
+      oi_extreme_z: 999.0         # OI part effectively disabled
+      oi_reversal_window: 6
+      reduce_pct: 0.5
+      oi_lookback: 24
+      oi_z_window: 168
+      vol_spike_z: 2.0            # Vol spike protection ENABLED
+      overlay_cooldown_bars: 12
+      trend_lookback: 20
+      atr_period: 14
+      vol_z_window: 168
 
 backtest:
   initial_cash: 10000

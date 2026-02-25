@@ -213,6 +213,8 @@ class ConsistencyValidator:
         include_details: bool = True,  # 是否包含詳細比較（可能很大）
         market_type: str = "spot",
         direction: str = "both",
+        overlay_cfg: dict | None = None,
+        data_dir: str | None = None,
     ):
         """
         Args:
@@ -223,6 +225,8 @@ class ConsistencyValidator:
             include_details: 是否在報告中包含每個時間點的詳細比較
             market_type: 市場類型 "spot" 或 "futures"
             direction: 交易方向 "both", "long_only", "short_only"
+            overlay_cfg: Overlay 配置（如有），格式同 YAML strategy.overlay 區塊
+            data_dir: 數據目錄（供 overlay 載入 OI 等輔助數據）
         """
         self.strategy_name = strategy_name
         self.params = params
@@ -231,6 +235,8 @@ class ConsistencyValidator:
         self.include_details = include_details
         self.market_type = market_type
         self.direction = direction
+        self.overlay_cfg = overlay_cfg
+        self.data_dir = data_dir
         
         # 載入策略函數
         self._strategy_func = None
@@ -439,7 +445,9 @@ class ConsistencyValidator:
         """
         執行回測，獲取完整的信號序列
         
-        這是使用完整數據一次性計算所有信號（回測模式）
+        這是使用完整數據一次性計算所有信號（回測模式）。
+        如果提供了 overlay_cfg，會在策略信號後套用 overlay，
+        與 run_symbol_backtest 和 live signal_generator 的行為一致。
         """
         from ..strategy.base import StrategyContext
         
@@ -451,6 +459,51 @@ class ConsistencyValidator:
         )
         strategy_func = self._get_strategy_func()
         positions = strategy_func(df, ctx, self.params)
+        
+        # 套用 overlay（與回測和 live 路徑一致）
+        if self.overlay_cfg and self.overlay_cfg.get("enabled", False):
+            try:
+                from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
+                
+                overlay_mode = self.overlay_cfg.get("mode", "vol_pause")
+                overlay_params = self.overlay_cfg.get("params", {})
+                
+                # 載入 OI 數據（如 overlay mode 需要）
+                oi_series = None
+                if overlay_mode in ("oi_vol", "oi_only") and self.data_dir:
+                    try:
+                        from ..data.open_interest import (
+                            get_oi_path, load_open_interest, align_oi_to_klines
+                        )
+                        from pathlib import Path
+                        data_dir = Path(self.data_dir)
+                        for prov in ["merged", "binance_vision", "coinglass", "binance"]:
+                            oi_path = get_oi_path(data_dir, symbol, prov)
+                            oi_df = load_open_interest(oi_path)
+                            if oi_df is not None and not oi_df.empty:
+                                oi_series = align_oi_to_klines(
+                                    oi_df, df.index, max_ffill_bars=2
+                                )
+                                break
+                    except Exception as e:
+                        logger.warning(
+                            f"Consistency validator: 無法載入 OI for overlay: {e}"
+                        )
+                
+                positions = apply_overlay_by_mode(
+                    position=positions,
+                    price_df=df,
+                    oi_series=oi_series,
+                    params=overlay_params,
+                    mode=overlay_mode,
+                )
+                logger.info(
+                    f"Consistency validator: overlay applied (mode={overlay_mode})"
+                )
+            except ImportError:
+                logger.warning(
+                    "Consistency validator: overlay 模組無法載入，跳過 overlay"
+                )
         
         return positions
     
@@ -677,12 +730,17 @@ def run_consistency_check(
     symbols = symbols or cfg.market.symbols
     params = cfg.strategy.params
     
+    # 讀取 overlay 配置（如有）
+    overlay_cfg = getattr(cfg, '_overlay_cfg', None)
+    
     validator = ConsistencyValidator(
         strategy_name=cfg.strategy.name,
         params=params,
         interval=cfg.market.interval,
         market_type=cfg.market_type_str,
         direction=cfg.direction,
+        overlay_cfg=overlay_cfg,
+        data_dir=str(cfg.data_dir) if cfg.data_dir else None,
     )
     
     results = {}

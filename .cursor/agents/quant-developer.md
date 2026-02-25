@@ -54,6 +54,8 @@
 - Long/Short 分拆統計（futures）
 - 成本模型影響：before vs after funding + slippage
 - Yearly decomposition table
+- **Overlay 狀態**：明確標註 overlay ON/OFF、mode、關鍵參數
+- **Overlay ablation（如適用）**：如果生產 pipeline 有 overlay，必須附上裸跑 vs overlay 的 Delta Sharpe / MDD（見 Playbook Stage D.5）
 
 > **驗證分工**：Developer 只跑 `validate.py --quick`（基本健全檢查）。
 > 完整驗證（WFA、CPCV、DSR、Cost Stress、Delay Stress）由 **Quant Researcher 獨立執行**。
@@ -132,6 +134,8 @@ strategy:
 5. `price=df['open']`（避免 look-ahead bias）
 6. 使用 `cfg.to_backtest_dict()` 而非手動拼裝
 7. 如果實作 meta 策略（呼叫其他策略），必須用 `auto_delay=False` 註冊
+8. **Overlay 一致性**：如果 config 有 `overlay.enabled: true`，確認回測和 live 路徑都套用了相同的 overlay mode + params
+9. **Overlay ablation**：如果目標是生產部署且有 overlay，確認已跑過 Stage D.5 ablation 並在報告中標註
 
 ## 生產配置凍結（Research → Production Config）
 
