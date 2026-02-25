@@ -242,12 +242,12 @@ meta_blend 策略中的 `tsmom_carry_v2` 子策略需要額外數據：
 
 | 用途 | 指令 |
 |------|------|
-| 查看 runner 日誌 | `tmux attach -t r3c_e3_live` 或 `tail -100 logs/websocket.log` |
-| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_live_R3C_E3.yaml --real --notify` |
-| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_live_R3C_E3.yaml` |
-| 查詢交易 DB | `PYTHONPATH=src python scripts/query_db.py -c config/prod_live_R3C_E3.yaml summary` |
-| 匯出交易紀錄 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_live_R3C_E3.yaml export` |
-| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_live_R3C_E3.yaml` |
+| 查看 runner 日誌 | `tmux attach -t meta_blend_live` 或 `tail -100 logs/meta_blend_live.log` |
+| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_meta_blend.yaml --real --notify` |
+| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_meta_blend.yaml` |
+| 查詢交易 DB | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_meta_blend.yaml summary` |
+| 匯出交易紀錄 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_meta_blend.yaml export` |
+| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_meta_blend.yaml` |
 | 查看當前持倉 | 見下方 Python snippet |
 
 ### 查看當前持倉
@@ -302,7 +302,10 @@ data/binance/futures/open_interest/binance/{SYMBOL}.parquet      ← OI（binanc
 ### Cron Jobs（Oracle Cloud，UTC 時區）
 
 ```
-# R3C Kline + FR (every 6h)
+# Meta-Blend Kline + FR (every 6h)
+10 */6 * * * download_data.py -c config/prod_candidate_meta_blend.yaml
+
+# R3C Kline + FR (retained for rollback, every 6h)
 15 */6 * * * download_data.py -c config/prod_live_R3C_E3.yaml
 
 # OI Liq Bounce Kline + FR (every 6h)

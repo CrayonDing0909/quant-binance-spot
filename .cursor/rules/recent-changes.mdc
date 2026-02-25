@@ -10,6 +10,19 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-25
 
+### Meta-Blend 生產部署（替換 R3C）
+- Meta-Blend 8-Symbol 上線替換 R3C 10-Symbol（tmux: `meta_blend_live`）
+- R3C 所有 10 個空頭倉位平倉（+20.34 USDT），tmux `r3c_e3_live` 已停止
+- 配置 `config/prod_candidate_meta_blend.yaml` 用作生產（含 LINK tsmom_only 修正）
+- Oracle Cloud cron 新增 Meta-Blend 數據下載（每 6h），R3C cron 保留供 rollback
+- 更新 `project-overview.mdc`：Meta-Blend 為 Active Production，R3C 為 Retired
+- 更新 `devops.md`：Meta-Blend 架構、Cron、rollback 說明
+
+### FR 數據路徑修復 + LINK tier 調整
+- 修復 `scripts/research_overlay_4way.py` 和 `scripts/research_strategy_blend.py` 的 FR 路徑 bug（`data/binance/binance/` 雙層目錄）
+- LINKUSDT 從 `tsmom_carry_v2/default` 切換為 `tsmom_only`（SR +15.4%，carry IC 不穩定）
+- 2x cost stress test 用修正路徑重跑並存檔
+
 ### Overlay 一致性審計與修正（4 項）
 - 新增 `scripts/research_overlay_4way.py` — 4-Way 比較腳本（R3C ±overlay × MetaBlend ±overlay，8 幣種），結果寫入 `reports/research/overlay_4way/`
 - 修改 `.cursor/rules/backtest.mdc` — 新增 Overlay Audit Rules（報告必須標註 overlay ON/OFF、比較需提供 with/without、ablation 數據要求）
