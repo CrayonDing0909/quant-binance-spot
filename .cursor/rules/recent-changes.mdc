@@ -8,7 +8,107 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ---
 
+## 2026-02-26
+
+### 多時間框架 + 衍生品數據擴展（Phase 0–4 完整實作）
+- **Phase 0a**: 新增 `scripts/fetch_derivatives_data.py` — 衍生品數據（LSR、Taker Vol、CVD）下載腳本
+- **Phase 0b**: 新增 `scripts/fetch_liquidation_data.py` — 爆倉數據下載腳本（Coinglass API）
+- **Phase 0c**: 修改 `scripts/download_data.py` — 支援多 interval 批次下載（逗號分隔，如 `--interval 1h,4h,1d`）
+- **Phase 0d**: 新增 `scripts/fetch_onchain_data.py` — 鏈上數據探索腳本（DeFi Llama TVL、穩定幣市值等）
+- **Phase 0e**: 更新 `.cursor/agents/alpha-researcher.md` — 新增多時間框架數據目錄、衍生品數據源、Microstructure/Multi-TF 原型分析模板
+- **Phase 2A**: 修改 `src/qtrade/config.py` — `MarketConfig` 新增 `auxiliary_intervals` 欄位
+- **Phase 2B**: 新增/更新數據模組：
+  - `src/qtrade/data/long_short_ratio.py`, `taker_volume.py`, `liquidation.py` — 正式衍生品數據模組
+  - `src/qtrade/data/onchain.py` — 鏈上數據模組（DeFi Llama 佔位實作）
+  - `src/qtrade/data/__init__.py` — 匯出新模組
+- **Phase 2C**: 新增 `src/qtrade/data/multi_tf_loader.py` — `MultiTFLoader` 多時間框架數據載入器（因果對齊）
+- **Phase 2D**: 修改 `src/qtrade/strategy/base.py` — `StrategyContext` 新增 `auxiliary_data`, `derivatives_data` 欄位 + 便利方法
+- **Phase 3A**: 新增 `src/qtrade/strategy/multi_tf_resonance_strategy.py` — 多時間框架共振策略
+- **Phase 3B**: 新增 `src/qtrade/strategy/derivatives_enhanced_strategy.py` — 衍生品增強策略（crowding_contrarian、cvd_divergence、liq_cascade_v2）
+- **Phase 3C**: 新增 `src/qtrade/strategy/overlays/derivatives_micro_overlay.py` — 衍生品微觀結構增強 overlay
+- **Phase 4A**: 修改 `src/qtrade/live/websocket_runner.py` — multi-interval WS 訂閱 + auxiliary K 線快取 + 策略注入
+- **Phase 4A**: 修改 `src/qtrade/live/base_runner.py` — 衍生品數據快取（_derivatives_cache，30 分鐘刷新）+ 策略注入
+- 修改 `src/qtrade/strategy/__init__.py` — 註冊新策略
+- 修改 `.cursorignore` — 修正 `data/` 過廣問題，改為 `data/*` 以允許 `src/qtrade/data/` 存取
+- 重新生成 `docs/CLI_REFERENCE.md`
+- 全部 334 測試通過
+
+### 多時間框架 + 衍生品數據擴展（Phase 2E–4C 補完）
+- **Phase 2E**: 修改 `scripts/download_data.py` — 新增 `--derivatives` flag，自動下載 LSR + Taker Vol + CVD 到 `data/binance/futures/derivatives/`
+- **Phase 2F**: 修改 `.cursor/agents/devops.md` — Cron 區塊新增衍生品定期下載（每日 03:00 UTC）、數據存放路徑新增衍生品/liquidation 路徑
+- **Phase 3D**: 新增 `src/qtrade/strategy/low_freq_portfolio_strategy.py` — 低頻組合層策略（risk regime + 動量輪動 + 鏈上 regime）
+- **Phase 4B**: 修改 `src/qtrade/live/base_runner.py` — 新增 `_start_derivatives_bg_refresh()` + `_poll_derivatives_api()` 後台線程，定期從 Binance API 拉取 LSR/Taker Vol 並寫入 parquet
+- **Phase 4B**: 修改 `src/qtrade/live/websocket_runner.py` — `run()` 方法啟動衍生品 API 後台輪詢線程
+- **Phase 4C**: 新增 `src/qtrade/data/order_book.py` — Order Book Depth 數據模組（`OrderBookSnapshot`, `OrderBookCache`, `compute_imbalance`, `compute_depth_profile`, `parse_depth_message`）
+- 修改 `src/qtrade/strategy/__init__.py` — 註冊 `low_freq_portfolio` 策略
+- 修改 `src/qtrade/data/__init__.py` — 匯出 `order_book` 模組
+- 重新生成 `docs/CLI_REFERENCE.md`
+- 全部 341 測試通過
+
+### 文獻參考庫獨立化 + alpha-researcher.md 清理
+- 新增 `docs/RESEARCH_LITERATURE.md` — 學術文獻參考庫獨立為 living doc
+  - 按 7 個策略原型分類（Trend / MR / Carry / Vol / Event / Multi-TF / Microstructure）
+  - 每個原型含：經典文獻、加密貨幣專屬研究、關鍵實踐洞察
+  - 新增跨原型通用文獻（市場總論、量化方法論、組合管理）
+  - 補齊原本缺失的 Event-Driven / Multi-TF / Microstructure 文獻區塊
+  - 新增「如何貢獻新文獻」指引，agent 可在研究過程中自行添加
+- 修改 `.cursor/agents/alpha-researcher.md` — 重大清理
+  - 移除 ~500 個重複的 front matter block（2000+ 行垃圾 → 單一 front matter）
+  - 文獻區塊替換為指向 `docs/RESEARCH_LITERATURE.md` 的引用
+  - 自我檢查清單新增「文獻維護」項目
+  - 關鍵參考文件列表新增 `RESEARCH_LITERATURE.md`
+- 修改 `.cursor/rules/hygiene.mdc` — Living docs 表新增 `RESEARCH_LITERATURE.md`
+
 ## 2026-02-25
+
+### Satellite 策略探索歸檔 + Alpha Researcher 原型框架升級
+- 修改 `.cursor/agents/alpha-researcher.md` — 新增 3 大 section：
+  1. **策略原型分類與評估矩陣**（Step 1 分類、Step 2 專屬分析、Step 3 Kill Criteria）
+  2. **成本敏感度框架**（按原型估算成本侵蝕，MR 鐵律：先模擬 gross PnL）
+  3. **學術文獻參考庫**（Trend/MR/Carry/Vol 各含經典 + 加密專屬文獻）
+  - 更新 Strategy Proposal 模板：新增 Section 0 Archetype Classification、Section 6 結構化風險欄位
+  - 更新自我檢查清單：新增 6 項原型專屬檢查（MR gross PnL、成本侵蝕、正偏態影響）
+- Archetype-Aware 分析結果（5 個方向）：
+  - 🔴 Pure BB MR — Kill Criteria 3 秒觸發（8/8 幣種 gross PnL < 0）
+  - 🟡 Vol Squeeze — 4/8 幣種通過，edge 勉強覆蓋成本，不建議單獨投入
+  - 🔴 FR Carry — Kill Criteria 觸發（SOL/BNB 2yr FR < 0），portfolio SR=-0.63
+  - 🔴 OI Spike — 通過 Kill Criteria 但 hit rate ≈ 50%（無 alpha）
+  - ✅ OI Liq Bounce — 已是最佳 satellite（SR=2.49, corr≈0.01）
+- 歸檔研究檔案：
+  - `config/research_tsmom_mr_composite.yaml` → `config/archive/`
+  - `notebooks/research/20260224_vol_squeeze_exploration.ipynb` → `notebooks/research/archive/`
+- 重新生成 `docs/CLI_REFERENCE.md`
+- 結論：OI Liq Bounce 是當前框架唯一可行 satellite，等 paper trading 畢業（≥ 2026-03-11）
+
+### 任務路由機制簡化
+- 修改 `docs/CURSOR_WORKFLOW.md` — 速查表分為三大類（策略開發/部署維運/維護改進），新增「維護 & 改進」路由（改進腳本、清理配置、流程改善、agent 定義更新），新增「不確定找誰？」預設規則
+- 修改 `.cursor/commands/config-freeze.md` — 新增第 5 步「掃描舊配置引用」（grep 掃描 + 更新過時引用），防止策略替換後殘留過時引用
+
+### 架構審計 + 流程補齊 + 過時引用修正
+- 新增 `.cursor/commands/trade-review.md` — `/trade-review` 快捷指令（Risk Manager 每週交易復盤）
+- 修改 `.cursor/commands/risk-review.md` — 更新為 Meta-Blend 配置引用，新增交易復盤步驟
+- 修改 `.cursor/commands/risk-action.md` — 更新 baseline 配置引用為 Meta-Blend
+- 修改 `docs/CURSOR_WORKFLOW.md` — Mode C 新增 `/trade-review` 步驟、Slash Commands 表新增 `/trade-review` 和 `/eod`、tmux 引用更新為 `meta_blend_live`
+- 修改 `.cursor/agents/risk-manager.md` — 每週檢查新增交易復盤步驟（Step 4）、新增復盤相關警戒指標、配置引用更新為 Meta-Blend
+- 修改 `.cursor/agents/quant-developer.md` — 生產配置引用更新為 Meta-Blend
+- 修改 `.cursor/agents/alpha-researcher.md` — 數據下載配置引用更新為 Meta-Blend
+- 修改 `.cursor/rules/strategy-dev.mdc` — 生產配置引用更新為泛用寫法
+- 修改 `.cursor/rules/live-trading.mdc` — Deployment 區塊更新為 Meta-Blend + OI Liq Bounce 雙策略、新增 `trade_review.py` 指令
+- 重新生成 `docs/CLI_REFERENCE.md`
+
+### 回測數據延伸 + 交易復盤工具
+- 延伸所有 8 幣種 Kline 數據至 2020 年起（binance_vision 來源），覆蓋 COVID crash + 2021 bull run
+  - BTC: 2019-09, ETH: 2019-11, SOL: 2020-09, BNB: 2020-02, DOGE: 2020-07, ADA: 2020-01, AVAX: 2020-09, LINK: 2020-01
+  - 從 ~3 年擴展到 5.4-6.5 年的歷史數據
+- 延伸 Funding Rate 數據至 2020 年起（5 幣種重新下載完整 FR）
+- 延伸數據回測驗證：Portfolio SR 2.57, MDD -4.89%, Calmar 5.10（比 3 年數據更強）
+- 新增 `scripts/trade_review.py` — 交易復盤工具（4 個診斷 section）：
+  1. 交易摘要（勝率、PnL、per-symbol breakdown）
+  2. 信號 vs 執行審計（方向匹配檢查）
+  3. 市場環境分析（ADX/ATR regime 分類：趨勢/盤整/高波動）
+  4. 回測重播比較（同期間重跑回測比對實盤 PnL）
+  - 支援 `--with-replay`, `--symbol`, `--days`, `--output` JSON
+- 重新生成 `docs/CLI_REFERENCE.md`
 
 ### 統一多策略 Telegram Bot（全新模組）
 - 新增 `src/qtrade/monitor/multi_strategy_bot.py` — `MultiStrategyBot` 類別，獨立進程運行，支援多策略

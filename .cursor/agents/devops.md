@@ -292,11 +292,19 @@ PYTHONPATH=src python scripts/download_oi_data.py --provider binance --symbols B
 ### 數據存放路徑
 
 ```
-data/binance/futures/1h/{SYMBOL}.parquet              ← K 線
+data/binance/futures/1h/{SYMBOL}.parquet              ← K 線（主 TF）
+data/binance/futures/4h/{SYMBOL}.parquet              ← K 線（auxiliary TF）
+data/binance/futures/1d/{SYMBOL}.parquet              ← K 線（auxiliary TF）
 data/binance/futures/funding_rate/{SYMBOL}.parquet     ← Funding Rate
 data/binance/futures/open_interest/merged/{SYMBOL}.parquet      ← OI（合併）
 data/binance/futures/open_interest/binance_vision/{SYMBOL}.parquet ← OI（binance_vision）
 data/binance/futures/open_interest/binance/{SYMBOL}.parquet      ← OI（binance API）
+data/binance/futures/derivatives/lsr/{SYMBOL}.parquet             ← Long/Short Ratio
+data/binance/futures/derivatives/top_lsr_account/{SYMBOL}.parquet ← 大戶帳戶 LSR
+data/binance/futures/derivatives/top_lsr_position/{SYMBOL}.parquet ← 大戶持倉 LSR
+data/binance/futures/derivatives/taker_vol_ratio/{SYMBOL}.parquet ← Taker Buy/Sell Ratio
+data/binance/futures/derivatives/cvd/{SYMBOL}.parquet             ← CVD（累積量差）
+data/binance/futures/liquidation/{SYMBOL}.parquet                 ← 爆倉數據
 ```
 
 ### Cron Jobs（Oracle Cloud，UTC 時區）
@@ -316,6 +324,10 @@ data/binance/futures/open_interest/binance/{SYMBOL}.parquet      ← OI（binanc
 
 # OI binance API (every 2h at :45)
 45 */2 * * * download_oi_data.py --provider binance --symbols ...
+
+# Derivatives (LSR + Taker Vol + CVD) — daily at 03:00 UTC
+# binance_vision source, history depth ~30 days (Binance API limit)
+0 3 * * * download_data.py -c config/prod_candidate_meta_blend.yaml --derivatives
 ```
 
 ### 多 Runner Watchdog
@@ -423,13 +435,76 @@ TELEGRAM_CHAT_ID=your_chat_id
 - WebSocketRunner 會自動寫出 `last_signals.json`（v4.4 新增），供 Bot 讀取
 - 如果不提供 `-c` 參數，Bot 仍可啟動（只支援 `/ping`, `/help`）
 
+## Oracle Cloud Resource Limits
+
+> **Last reviewed**: 2026-02-26
+
+### Hardware Spec
+
+| Resource | Value |
+|----------|-------|
+| RAM | 1GB (Free Tier) |
+| Swap | Configured (必備) |
+| Boot Volume | ~46.6GB |
+| OS | Ubuntu 22.04, x86_64 |
+
+### Current Memory Budget (estimated)
+
+| Process | Description | RAM |
+|---------|-------------|-----|
+| `meta_blend_live` | WebSocketRunner, 8 symbols x 1h | ~200-350MB |
+| `oi_liq_paper` | WebSocketRunner, 5 symbols x 1h | ~150-250MB |
+| `tg_bot` | Telegram Bot (MultiStrategyBot) | ~50-80MB |
+| OS + system | Ubuntu 22.04 baseline | ~200MB |
+| Cron (transient) | Data downloads every 2-6h | ~100MB (short-lived) |
+| **Total** | | **~600-880MB / 1024MB** |
+
+The machine is at capacity. Adding any new persistent process or extra WebSocket streams risks OOM.
+
+### Multi-TF Deployment Policy
+
+Research and live deployment have different resource profiles. Follow these rules:
+
+1. **Backtest / research (Multi-TF strategies)**: Run on **local Mac only**, never on Oracle Cloud.
+   Multi-TF backtests using `MultiTFLoader` or full 5m/15m/4h/1d data are local-only workloads.
+
+2. **Live deployment (Multi-TF features)**: **No additional WebSocket streams**.
+   - Use `_resample_ohlcv()` from `src/qtrade/strategy/filters.py` to generate 4h/1d features from the existing 1h WebSocket data. This adds zero extra WS connections.
+   - The existing HTF trend filter (`htf_trend_filter`) already uses this approach successfully.
+
+3. **Derivatives data (LSR/CVD/Taker Vol)**: Use **cron + file-based refresh**, same pattern as the existing OI cache (`BaseRunner._oi_cache`, refreshes every 30min from parquet).
+   Do not keep derivatives data in a persistent in-memory service.
+
+4. **If a strategy truly needs real-time 5m data**: Escalate to an upgrade discussion (2-4GB instance, ~$10-20/month). Do not silently add 5m WebSocket streams to the 1GB machine.
+
+### Disk Budget
+
+| Data | Estimated Size |
+|------|---------------|
+| 1h klines x 8 symbols x 5+ years | ~50MB |
+| 5m klines x 8 symbols x 5 years (research, if downloaded) | ~400MB |
+| Derivatives (LSR/CVD/Liq) | ~50-100MB |
+| On-chain data | ~10-20MB |
+| **Total** | **~460-520MB** |
+
+46.6GB boot volume is more than sufficient. No action needed.
+
+### Guardrail: Pre-Deploy Resource Check
+
+Before deploying any new runner or adding WebSocket streams:
+
+1. SSH in and check current memory: `free -h`
+2. Estimate the incremental RAM of the new process
+3. Verify headroom: **at least 150MB free after swap** (below this, swap thrashing degrades latency)
+4. If headroom is insufficient, consider: removing a runner, merging runners via `meta_blend`, or upgrading the instance
+
 ## 故障排查 SOP
 
 1. **Runner 不動**：`tmux attach -t r3c_e3_live` 查看 log，通常是 API rate limit 或網路問題
 2. **倉位不一致**：`query_db.py summary` 對比 Binance 實際持倉
 3. **SL/TP 掛不上**：檢查 `algo_orders_cache`，可能是價格計算錯誤或 API 變動（如 algo order 404）
 4. **熔斷觸發**：檢查 `max_drawdown_pct` 設定（目前 40%），確認是真實虧損還是 API 數據延遲
-5. **OOM (Out of Memory)**：確認 Swap 已設定（`free -h`），1GB RAM 機器必備
+5. **OOM (Out of Memory)**：確認 Swap 已設定（`free -h`），1GB RAM 機器必備。參見上方「Oracle Cloud Resource Limits」確認 RAM 預算
 6. **Algo Order 404**：Binance 可能調整 API，最新修復已使用 STOP_MARKET first, fallback STOP+price
 
 ## Next Steps 輸出規範

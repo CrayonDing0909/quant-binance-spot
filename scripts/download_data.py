@@ -346,7 +346,7 @@ def main() -> None:
         "--interval",
         type=str,
         default=None,
-        help="覆蓋配置檔案中的 K 線週期"
+        help="覆蓋配置檔案中的 K 線週期（支援逗號分隔批量下載: 5m,15m,1h,4h,1d）"
     )
     
     # Funding rate 下載
@@ -361,6 +361,13 @@ def main() -> None:
         "--oi",
         action="store_true",
         help="同時下載 Open Interest 數據（oi_liq_bounce 等策略自動啟用）"
+    )
+    
+    # 衍生品數據下載（LSR, Taker Vol, CVD, Liquidation）
+    parser.add_argument(
+        "--derivatives",
+        action="store_true",
+        help="同時下載衍生品數據（LSR、Taker Vol、CVD）到 data/binance/futures/derivatives/"
     )
     
     # 資訊查詢選項
@@ -390,7 +397,10 @@ def main() -> None:
     # 使用命令行參數覆蓋配置
     start_date = args.start or m.start
     end_date = args.end or m.end
-    interval = args.interval or m.interval
+
+    # 支援逗號分隔的多時間框架下載 (e.g. "5m,15m,1h,4h,1d")
+    interval_arg = args.interval or m.interval
+    intervals = [iv.strip() for iv in interval_arg.split(",")]
     
     # 如果指定了 symbol，只處理該交易對
     symbols = [args.symbol] if args.symbol else m.symbols
@@ -414,62 +424,67 @@ def main() -> None:
     if args.status:
         print(f"\n📊 本地數據狀態 {market_emoji} [{market_label}]:")
         print("-" * 60)
-        for sym in symbols:
-            data_path = cfg.data_dir / "binance" / market_type / interval / f"{sym}.parquet"
-            local_start, local_end = get_local_data_range(data_path)
-            if local_start:
-                print(f"  {sym}: {local_start.strftime('%Y-%m-%d')} → {local_end.strftime('%Y-%m-%d %H:%M')}")
-            else:
-                print(f"  {sym}: ❌ 無本地數據")
+        for interval in intervals:
+            for sym in symbols:
+                data_path = cfg.data_dir / "binance" / market_type / interval / f"{sym}.parquet"
+                local_start, local_end = get_local_data_range(data_path)
+                if local_start:
+                    print(f"  {sym} @ {interval}: {local_start.strftime('%Y-%m-%d')} → {local_end.strftime('%Y-%m-%d %H:%M')}")
+                else:
+                    print(f"  {sym} @ {interval}: ❌ 無本地數據")
         print("-" * 60)
         return
     
-    # 下載模式
-    print(f"\n🚀 開始下載 K 線數據 {market_emoji} [{market_label}] 📡 [{source_label}]")
-    print("-" * 60)
-    print(f"   時間範圍: {start_date} → {end_date or '現在'}")
-    print(f"   K 線週期: {interval}")
-    print(f"   交易對: {', '.join(symbols)}")
-    print("-" * 60)
-    
+    # 下載模式 — 遍歷所有 interval
     total_new = 0
-    for sym in symbols:
-        # 根據 market_type 決定存儲路徑
-        data_path = cfg.data_dir / "binance" / market_type / interval / f"{sym}.parquet"
+    for interval in intervals:
+        print(f"\n🚀 開始下載 K 線數據 {market_emoji} [{market_label}] 📡 [{source_label}] ⏱ {interval}")
+        print("-" * 60)
+        print(f"   時間範圍: {start_date} → {end_date or '現在'}")
+        print(f"   K 線週期: {interval}")
+        print(f"   交易對: {', '.join(symbols)}")
+        print("-" * 60)
         
-        # 先顯示本地狀態
-        local_start, local_end = get_local_data_range(data_path)
-        if local_start and not args.full:
-            print(f"\n📁 {sym} 本地: {local_start.strftime('%Y-%m-%d')} → {local_end.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            print(f"\n📁 {sym} 本地: 無數據")
-        
-        # 下載
-        try:
-            new_rows, total_rows = download_incremental(
-                symbol=sym,
-                interval=interval,
-                start_date=start_date,
-                end_date=end_date,
-                data_path=data_path,
-                force_full=args.full,
-                market_type=market_type,
-                source=args.source,
-                exchange=args.exchange,
-            )
+        for sym in symbols:
+            # 根據 market_type 決定存儲路徑
+            data_path = cfg.data_dir / "binance" / market_type / interval / f"{sym}.parquet"
             
-            total_new += new_rows
-            
-            if new_rows > 0:
-                print(f"  ✅ 新增 {new_rows} 筆，共 {total_rows} 筆 → {data_path}")
+            # 先顯示本地狀態
+            local_start, local_end = get_local_data_range(data_path)
+            if local_start and not args.full:
+                print(f"\n📁 {sym} @ {interval} 本地: {local_start.strftime('%Y-%m-%d')} → {local_end.strftime('%Y-%m-%d %H:%M')}")
             else:
-                print(f"  ✅ 數據已是最新，共 {total_rows} 筆")
+                print(f"\n📁 {sym} @ {interval} 本地: 無數據")
+            
+            # 下載
+            try:
+                new_rows, total_rows = download_incremental(
+                    symbol=sym,
+                    interval=interval,
+                    start_date=start_date,
+                    end_date=end_date,
+                    data_path=data_path,
+                    force_full=args.full,
+                    market_type=market_type,
+                    source=args.source,
+                    exchange=args.exchange,
+                )
                 
-        except Exception as e:
-            print(f"  ❌ 下載失敗: {e}")
+                total_new += new_rows
+                
+                if new_rows > 0:
+                    print(f"  ✅ 新增 {new_rows} 筆，共 {total_rows} 筆 → {data_path}")
+                else:
+                    print(f"  ✅ 數據已是最新，共 {total_rows} 筆")
+                    
+            except Exception as e:
+                print(f"  ❌ 下載失敗: {e}")
     
     print("-" * 60)
     print(f"🎉 完成！共新增 {total_new} 筆數據")
+
+    # 使用主要 interval（第一個）作為 FR / OI 的 interval
+    primary_interval = intervals[0]
 
     # ── Funding Rate 下載 ──────────────────────────
     # 合約模式下 --funding-rate 或 config 啟用時自動下載
@@ -553,7 +568,7 @@ def main() -> None:
                     symbol=sym,
                     start=start_date,
                     end=end_date,
-                    interval=interval,
+                    interval=primary_interval,
                     provider="binance_vision",
                 )
                 if not df_vision.empty:
@@ -573,7 +588,7 @@ def main() -> None:
                     symbol=sym,
                     start=start_date,
                     end=end_date,
-                    interval=interval,
+                    interval=primary_interval,
                     provider="binance",
                 )
                 if not df_api.empty:
@@ -605,6 +620,58 @@ def main() -> None:
             except Exception as e:
                 print(f"  ❌ {sym} OI 合併失敗: {e}")
         print("-" * 60)
+
+    # ── 衍生品數據下載 (LSR, Taker Vol, CVD) ──────────
+    should_download_derivatives = args.derivatives and market_type == "futures"
+    if should_download_derivatives:
+        from qtrade.data.long_short_ratio import download_lsr, save_lsr, LSR_TYPES
+        from qtrade.data.taker_volume import (
+            download_taker_volume, save_taker_volume,
+            compute_cvd, save_cvd,
+        )
+
+        derivatives_dir = cfg.data_dir / "binance" / "futures" / "derivatives"
+
+        print(f"\n📥 下載衍生品數據 (LSR + Taker Vol + CVD)...")
+        print("-" * 60)
+
+        for sym in symbols:
+            # 1) Long/Short Ratio（全帳戶 + 大戶帳戶 + 大戶持倉）
+            for lsr_type in LSR_TYPES:
+                try:
+                    series = download_lsr(
+                        sym, lsr_type=lsr_type, start=start_date, end=end_date,
+                        interval=primary_interval, provider="vision",
+                    )
+                    if not series.empty:
+                        save_lsr(series, sym, lsr_type=lsr_type, data_dir=derivatives_dir)
+                        print(f"  ✅ {sym} {lsr_type}: {len(series)} 筆")
+                    else:
+                        print(f"  ⚠️  {sym} {lsr_type}: 無數據")
+                except Exception as e:
+                    print(f"  ❌ {sym} {lsr_type}: {e}")
+
+            # 2) Taker Buy/Sell Volume Ratio
+            try:
+                taker = download_taker_volume(
+                    sym, start=start_date, end=end_date,
+                    interval=primary_interval, provider="vision",
+                )
+                if not taker.empty:
+                    save_taker_volume(taker, sym, data_dir=derivatives_dir)
+                    print(f"  ✅ {sym} taker_vol_ratio: {len(taker)} 筆")
+
+                    # 3) CVD 衍生計算
+                    cvd = compute_cvd(taker)
+                    save_cvd(cvd, sym, data_dir=derivatives_dir)
+                    print(f"  ✅ {sym} cvd: {len(cvd)} 筆")
+                else:
+                    print(f"  ⚠️  {sym} taker_vol: 無數據")
+            except Exception as e:
+                print(f"  ❌ {sym} taker_vol/cvd: {e}")
+
+        print("-" * 60)
+        print(f"🎉 衍生品數據下載完成！存放位置: {derivatives_dir}")
 
 
 if __name__ == "__main__":

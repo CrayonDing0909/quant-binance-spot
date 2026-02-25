@@ -165,11 +165,17 @@ def generate_signal(
         )
 
     # 運行策略（傳入正確的 market_type 和 direction）
+    # 如果 params 中有注入的衍生品/輔助數據，傳入 StrategyContext
+    derivatives_data = params.pop("_derivatives_data", None)
+    auxiliary_data = params.pop("_auxiliary_data", None)
+
     ctx = StrategyContext(
         symbol=symbol,
         interval=interval,
         market_type=market_type,
         direction=direction,
+        auxiliary_data=auxiliary_data,
+        derivatives_data=derivatives_data,
     )
     strategy_func = get_strategy(strategy_name)
     positions = strategy_func(df, ctx, params)

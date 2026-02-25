@@ -115,6 +115,12 @@ class BaseRunner(ABC):
         self._oi_refresh_interval_s: float = 1800.0  # 每 30 分鐘刷新一次
         self._init_oi_cache()
 
+        # 衍生品記憶體快取（LSR, Taker Vol, CVD — Phase 4A）
+        self._derivatives_cache: dict[str, dict[str, pd.Series]] = {}  # {symbol: {metric: Series}}
+        self._derivatives_cache_ts: float = 0.0
+        self._derivatives_refresh_interval_s: float = 3600.0  # 每 60 分鐘刷新一次
+        self._init_derivatives_cache()
+
         # Rebalance Band 計數器（監控用）
         self._band_skip_count: int = 0
         self._band_skip_notional_est: float = 0.0
@@ -234,6 +240,12 @@ class BaseRunner(ABC):
             if symbol in self._oi_cache:
                 params["_oi_series"] = self._oi_cache[symbol]
 
+        # 注入衍生品數據快取（LSR, CVD, taker vol, liquidation）
+        if symbol in self._derivatives_cache and "_derivatives_data" not in params:
+            self._maybe_refresh_derivatives_cache()
+            if symbol in self._derivatives_cache:
+                params["_derivatives_data"] = self._derivatives_cache[symbol]
+
         return name, params
 
     # ══════════════════════════════════════════════════════════
@@ -296,6 +308,172 @@ class BaseRunner(ABC):
         if now - self._oi_cache_ts >= self._oi_refresh_interval_s:
             self._log.debug("🔄 OI 記憶體快取刷新中...")
             self._load_oi_from_disk()
+
+    # ══════════════════════════════════════════════════════════
+    #  衍生品記憶體快取 (LSR, Taker Vol, CVD — Phase 4A)
+    # ══════════════════════════════════════════════════════════
+
+    def _needs_derivatives(self) -> bool:
+        """判斷當前策略是否需要衍生品數據。"""
+        deriv_strategies = {
+            "crowding_contrarian", "cvd_divergence", "liq_cascade_v2",
+        }
+        if self.strategy_name in deriv_strategies:
+            return True
+        for sym_cfg in self._ensemble_strategies.values():
+            if sym_cfg.get("name") in deriv_strategies:
+                return True
+        # 檢查是否有 derivatives_enhanced overlay 配置
+        overlay_cfg = getattr(self.cfg, '_overlay_cfg', None)
+        if overlay_cfg and overlay_cfg.get("mode") == "derivatives_micro":
+            return True
+        return False
+
+    def _init_derivatives_cache(self) -> None:
+        """啟動時載入衍生品數據到記憶體，並啟動後台 API 輪詢線程。"""
+        if not self._needs_derivatives():
+            return
+        self._load_derivatives_from_disk()
+        # Phase 4B: 後台線程定期從 API 更新磁碟數據
+        # （注意：is_running 需在 run() 開始後才為 True，
+        #   所以 bg thread 的啟動延遲到子類呼叫 _start_derivatives_bg_refresh）
+
+    def _load_derivatives_from_disk(self) -> None:
+        """從 parquet 載入所有 symbol 的衍生品數據到記憶體快取。"""
+        data_dir = self.cfg.data_dir
+        loaded = 0
+
+        for sym in self.symbols:
+            sym_deriv: dict[str, pd.Series] = {}
+
+            # LSR
+            try:
+                from ..data.long_short_ratio import load_lsr
+                for lsr_type in ["lsr", "top_lsr_account"]:
+                    series = load_lsr(sym, lsr_type, data_dir=data_dir / "binance" / "futures" / "derivatives" / lsr_type)
+                    if series is not None and not series.empty:
+                        sym_deriv[lsr_type] = series
+            except Exception as e:
+                self._log.debug(f"  {sym}: LSR 載入失敗: {e}")
+
+            # Taker Vol
+            try:
+                from ..data.taker_volume import load_taker_volume
+                tv = load_taker_volume(sym, data_dir=data_dir / "binance" / "futures" / "derivatives" / "taker_vol_ratio")
+                if tv is not None and not tv.empty:
+                    sym_deriv["taker_vol_ratio"] = tv
+            except Exception as e:
+                self._log.debug(f"  {sym}: Taker Vol 載入失敗: {e}")
+
+            # CVD
+            try:
+                from ..data.taker_volume import load_cvd
+                cvd = load_cvd(sym, data_dir=data_dir / "binance" / "futures" / "derivatives" / "cvd")
+                if cvd is not None and not cvd.empty:
+                    sym_deriv["cvd"] = cvd
+            except Exception as e:
+                self._log.debug(f"  {sym}: CVD 載入失敗: {e}")
+
+            # Liquidation
+            try:
+                from ..data.liquidation import load_liquidation
+                liq_df = load_liquidation(sym, data_dir=data_dir / "binance" / "futures" / "liquidation")
+                if liq_df is not None and not liq_df.empty:
+                    for col in ["liq_cascade_z", "liq_imbalance", "liq_total"]:
+                        if col in liq_df.columns:
+                            sym_deriv[col] = liq_df[col]
+            except Exception as e:
+                self._log.debug(f"  {sym}: Liquidation 載入失敗: {e}")
+
+            if sym_deriv:
+                self._derivatives_cache[sym] = sym_deriv
+                loaded += 1
+
+        self._derivatives_cache_ts = time.time()
+        if loaded > 0:
+            total_metrics = sum(len(v) for v in self._derivatives_cache.values())
+            self._log.info(
+                f"📊 衍生品記憶體快取已載入: {loaded}/{len(self.symbols)} symbols, "
+                f"{total_metrics} metrics total"
+            )
+        else:
+            self._log.info("ℹ️  衍生品記憶體快取: 無數據可載入（可能尚未下載）")
+
+    def _maybe_refresh_derivatives_cache(self) -> None:
+        """若快取過期，從磁碟重新載入衍生品數據。"""
+        if not self._needs_derivatives():
+            return
+        now = time.time()
+        if now - self._derivatives_cache_ts >= self._derivatives_refresh_interval_s:
+            self._log.debug("🔄 衍生品記憶體快取刷新中...")
+            self._load_derivatives_from_disk()
+
+    # ── Phase 4B: 衍生品 API 後台輪詢線程 ──
+
+    def _start_derivatives_bg_refresh(self) -> None:
+        """
+        啟動後台線程，定期從 Binance API 拉取衍生品數據並寫入 parquet。
+
+        磁碟快取（_load_derivatives_from_disk）會在下次信號生成時刷新到記憶體。
+        此線程只負責「磁碟 ← API」的部分。
+        """
+        import threading
+
+        if not self._needs_derivatives():
+            return
+
+        interval_sec = self._derivatives_refresh_interval_s  # 預設 1800s = 30min
+
+        def _poll_loop():
+            while self.is_running:
+                try:
+                    self._poll_derivatives_api()
+                except Exception as e:
+                    self._log.warning(f"⚠️ 衍生品 API 輪詢失敗: {e}")
+                # 等待下一輪（每 10 秒檢查一次 is_running）
+                waited = 0.0
+                while waited < interval_sec and self.is_running:
+                    import time as _time
+                    _time.sleep(10)
+                    waited += 10
+
+        t = threading.Thread(target=_poll_loop, daemon=True, name="derivatives_bg")
+        t.start()
+        self._log.info(f"🔄 衍生品 API 後台輪詢已啟動（每 {interval_sec:.0f}s）")
+
+    def _poll_derivatives_api(self) -> None:
+        """
+        從 Binance API 輪詢最新 LSR + Taker Vol 並寫入 parquet。
+
+        使用 data modules 的 download + save 函數。
+        liquidation 和 CVD 依賴非 API 數據源，這裡不輪詢。
+        """
+        data_dir = self.cfg.data_dir
+        deriv_dir = data_dir / "binance" / "futures" / "derivatives"
+
+        for sym in self.symbols:
+            # LSR — api provider (最近 ~30 天)
+            try:
+                from ..data.long_short_ratio import download_lsr, save_lsr
+                for lsr_type in ["lsr", "top_lsr_account"]:
+                    series = download_lsr(sym, lsr_type=lsr_type, provider="api")
+                    if series is not None and not series.empty:
+                        save_lsr(series, sym, lsr_type=lsr_type, data_dir=deriv_dir)
+            except Exception:
+                pass  # debug-level, don't spam logs
+
+            # Taker Vol — api provider
+            try:
+                from ..data.taker_volume import download_taker_volume, save_taker_volume, compute_cvd, save_cvd
+                tv = download_taker_volume(sym, provider="api")
+                if tv is not None and not tv.empty:
+                    save_taker_volume(tv, sym, data_dir=deriv_dir)
+                    cvd = compute_cvd(tv)
+                    save_cvd(cvd, sym, data_dir=deriv_dir)
+            except Exception:
+                pass
+
+        self._log.debug(f"📡 衍生品 API 輪詢完成 ({len(self.symbols)} symbols)")
 
     # ══════════════════════════════════════════════════════════
     #  倉位計算器

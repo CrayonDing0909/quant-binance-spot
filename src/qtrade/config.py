@@ -16,10 +16,11 @@ class MarketType(str, Enum):
 @dataclass(frozen=True)
 class MarketConfig:
     symbols: list[str]
-    interval: str
+    interval: str                               # 主要執行 interval
     start: str
     end: str | None
-    market_type: MarketType = MarketType.SPOT  # 新增：預設現貨
+    market_type: MarketType = MarketType.SPOT   # 預設現貨
+    auxiliary_intervals: list[str] = field(default_factory=list)  # 輔助 TF（信號生成用）
 
 
 @dataclass(frozen=True)
@@ -468,9 +469,11 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     market_raw = dict(raw["market"])
     market_type_str = market_raw.pop("market_type", "spot")
     market_type = MarketType(market_type_str)
+    aux_intervals = market_raw.pop("auxiliary_intervals", [])
     market = MarketConfig(
         **market_raw,
         market_type=market_type,
+        auxiliary_intervals=aux_intervals if aux_intervals else [],
     )
 
     # portfolio 可選

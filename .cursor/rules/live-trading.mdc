@@ -40,9 +40,11 @@ All signals use `SignalResult` dataclass ([signal_generator.py](mdc:src/qtrade/l
 
 ## Deployment (Oracle Cloud)
 
-- WebSocket mode via tmux (`r3c_e3_live`): `run_websocket.py -c config/prod_live_R3C_E3.yaml --real`
-- Health check: `scripts/health_check.py -c config/prod_live_R3C_E3.yaml --real --notify`
-- DB query: `scripts/query_db.py -c config/prod_live_R3C_E3.yaml summary`
+- **Meta-Blend (Active)**: tmux `meta_blend_live`, `run_websocket.py -c config/prod_candidate_meta_blend.yaml --real`
+- **OI Liq Bounce (Paper)**: tmux `oi_liq_paper`, `run_websocket.py -c config/prod_live_oi_liq_bounce.yaml --paper`
+- Health check: `scripts/health_check.py -c config/prod_candidate_meta_blend.yaml --real --notify`
+- DB query: `scripts/query_db.py -c config/prod_candidate_meta_blend.yaml summary`
+- Trade review: `scripts/trade_review.py -c config/prod_candidate_meta_blend.yaml --days 7`
 - Logs: `~/quant-binance-spot/logs/websocket.log`
 
 ## Anti-Patterns (DO NOT)

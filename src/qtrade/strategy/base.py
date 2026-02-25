@@ -15,16 +15,20 @@ class StrategyContext:
     
     Attributes:
         symbol: 交易對
-        interval: K 線週期
+        interval: K 線週期（主要執行 TF）
         market_type: 市場類型 "spot" 或 "futures"
         direction: 交易方向 "both", "long_only", "short_only"
         signal_delay: 信號延遲 bar 數（trade_on=next_open → 1）
+        auxiliary_data: 輔助 TF 數據 {interval: DataFrame}（Phase 2 Multi-TF）
+        derivatives_data: 衍生品數據 {metric: Series}（LSR, CVD, 清算等）
     """
     symbol: str
     interval: str = "1h"
     market_type: str = "spot"
     direction: str = "both"  # "both", "long_only", "short_only"
     signal_delay: int = 0    # 0=同bar執行, 1=next_open（消除 look-ahead）
+    auxiliary_data: dict | None = None    # Multi-TF klines {interval: DataFrame}
+    derivatives_data: dict | None = None  # 衍生品 {metric: Series} (LSR, CVD, liq, etc.)
 
     @property
     def supports_short(self) -> bool:
@@ -45,6 +49,28 @@ class StrategyContext:
     def is_futures(self) -> bool:
         """是否為合約模式"""
         return self.market_type == "futures"
+
+    def get_auxiliary_df(self, interval: str) -> pd.DataFrame | None:
+        """取得輔助 TF 的 DataFrame（已對齊到 primary index）"""
+        if self.auxiliary_data is None:
+            return None
+        return self.auxiliary_data.get(interval)
+
+    def get_derivative(self, metric: str) -> pd.Series | None:
+        """取得衍生品數據 Series（已對齊到 K 線 index）"""
+        if self.derivatives_data is None:
+            return None
+        return self.derivatives_data.get(metric)
+
+    @property
+    def has_auxiliary(self) -> bool:
+        """是否有輔助 TF 數據"""
+        return bool(self.auxiliary_data)
+
+    @property
+    def has_derivatives(self) -> bool:
+        """是否有衍生品數據"""
+        return bool(self.derivatives_data)
 
 
 @dataclass

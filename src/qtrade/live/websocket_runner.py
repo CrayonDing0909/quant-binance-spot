@@ -114,6 +114,21 @@ class WebSocketRunner(BaseRunner):
             market_type=self.market_type,
         )
 
+        # ── Multi-TF 輔助 K 線快取 (Phase 4A) ──
+        # auxiliary_intervals 來自 MarketConfig（例如 ["4h", "1d"]）
+        self._auxiliary_intervals: list[str] = getattr(cfg.market, "auxiliary_intervals", [])
+        self._aux_kline_caches: Dict[str, IncrementalKlineCache] = {}
+        self._aux_last_kline_ts: Dict[str, int] = {}  # key: f"{symbol}_{interval}"
+        for aux_iv in self._auxiliary_intervals:
+            if aux_iv != self.interval:
+                aux_cache_dir = cache_dir / f"aux_{aux_iv}"
+                self._aux_kline_caches[aux_iv] = IncrementalKlineCache(
+                    cache_dir=aux_cache_dir,
+                    interval=aux_iv,
+                    seed_bars=100,  # 輔助 TF 只需較少 bars
+                    market_type=self.market_type,
+                )
+
         # 預熱 K 線快取
         self._init_kline_buffer()
 
@@ -126,7 +141,7 @@ class WebSocketRunner(BaseRunner):
     # ══════════════════════════════════════════════════════════
 
     def _init_kline_buffer(self):
-        """使用 IncrementalKlineCache 預熱 K 線"""
+        """使用 IncrementalKlineCache 預熱 K 線（含 auxiliary TFs）"""
         self._log.info("📥 正在預熱 K 線緩衝區...")
         for symbol in self.symbols:
             try:
@@ -143,8 +158,18 @@ class WebSocketRunner(BaseRunner):
                 self._log.error(f"  ❌ {symbol}: K 線載入失敗: {e}")
                 self._log.error(traceback.format_exc())
 
+        # 預熱 auxiliary TF caches
+        for aux_iv, aux_cache in self._aux_kline_caches.items():
+            for symbol in self.symbols:
+                try:
+                    df = aux_cache.get_klines(symbol)
+                    n = len(df) if df is not None else 0
+                    self._log.info(f"  📊 {symbol}@{aux_iv}: {n} bars (auxiliary)")
+                except Exception as e:
+                    self._log.debug(f"  {symbol}@{aux_iv}: aux cache failed: {e}")
+
     def _on_kline_event(self, msg: Dict[str, Any]):
-        """WebSocket K 線事件回調"""
+        """WebSocket K 線事件回調（支援主 TF 和 auxiliary TF）"""
         try:
             if "k" not in msg:
                 return
@@ -153,9 +178,24 @@ class WebSocketRunner(BaseRunner):
             symbol = k["s"]
             is_closed = k["x"]
             close_price = float(k["c"])
+            event_interval = k.get("i", self.interval)
 
             if is_closed:
                 ts = k["t"]
+
+                # ── Auxiliary TF：只更新快取，不觸發策略 ──
+                if event_interval != self.interval and event_interval in self._aux_kline_caches:
+                    dedup_key = f"{symbol}_{event_interval}"
+                    if self._aux_last_kline_ts.get(dedup_key) == ts:
+                        return
+                    self._aux_last_kline_ts[dedup_key] = ts
+                    self._append_aux_kline(symbol, event_interval, k)
+                    self._log.debug(
+                        f"📊 {symbol}@{event_interval} aux K 線收盤: ${close_price:,.2f}"
+                    )
+                    return
+
+                # ── 主 TF：正常處理 ──
                 if self._last_kline_ts.get(symbol) == ts:
                     return
                 self._last_kline_ts[symbol] = ts
@@ -213,12 +253,33 @@ class WebSocketRunner(BaseRunner):
             self._log.error(f"❌ {symbol} K 線追加失敗: {e}")
             self._log.error(traceback.format_exc())
 
+    def _append_aux_kline(self, symbol: str, interval: str, k: Dict[str, Any]):
+        """追加 auxiliary TF K 線到對應快取"""
+        try:
+            aux_cache = self._aux_kline_caches.get(interval)
+            if aux_cache is None:
+                return
+
+            new_time = pd.to_datetime(k["t"], unit="ms", utc=True)
+            new_row = pd.DataFrame([{
+                "open": float(k["o"]),
+                "high": float(k["h"]),
+                "low": float(k["l"]),
+                "close": float(k["c"]),
+                "volume": float(k["v"]),
+                "close_time": pd.to_datetime(k["T"], unit="ms", utc=True),
+            }], index=pd.DatetimeIndex([new_time], name="open_time"))
+
+            aux_cache.append_bar(symbol, new_row)
+        except Exception as e:
+            self._log.debug(f"  {symbol}@{interval} aux kline append failed: {e}")
+
     # ══════════════════════════════════════════════════════════
     #  策略執行
     # ══════════════════════════════════════════════════════════
 
     def _run_strategy_for_symbol(self, symbol: str):
-        """針對單一幣種執行策略"""
+        """針對單一幣種執行策略（含 multi-TF + derivatives 注入）"""
         if self._check_circuit_breaker():
             self._log.warning("⛔ 熔斷已觸發，跳過交易")
             return
@@ -235,6 +296,23 @@ class WebSocketRunner(BaseRunner):
         # Ensemble 路由：取得 symbol 專屬策略名與參數
         sym_strategy, params = self._get_strategy_for_symbol(symbol)
         direction = self.cfg.direction
+
+        # ── Phase 4A: 組裝 auxiliary_data (multi-TF) ──
+        auxiliary_data: Dict[str, "pd.DataFrame"] = {}
+        for aux_iv, aux_cache in self._aux_kline_caches.items():
+            aux_df = aux_cache.get_cached(symbol)
+            if aux_df is not None and len(aux_df) > 0:
+                auxiliary_data[aux_iv] = aux_df
+
+        # ── Phase 4A: 刷新 derivatives 快取（BaseRunner） ──
+        self._maybe_refresh_derivatives_cache()
+        derivatives_data = getattr(self, "_derivatives_cache", None) or {}
+
+        # 將 auxiliary / derivatives 塞入 params，供 generate_signal → StrategyContext 使用
+        if auxiliary_data:
+            params = {**params, "_auxiliary_data": auxiliary_data}
+        if derivatives_data:
+            params = {**params, "_derivatives_data": derivatives_data}
 
         try:
             sig = generate_signal(
@@ -315,6 +393,11 @@ class WebSocketRunner(BaseRunner):
         streams = [
             f"{sym.lower()}@kline_{self.interval}" for sym in self.symbols
         ]
+        # ★ Phase 4A: 加入 auxiliary TF 串流（僅訂閱，不觸發策略）
+        for aux_iv in self._auxiliary_intervals:
+            if aux_iv != self.interval:
+                for sym in self.symbols:
+                    streams.append(f"{sym.lower()}@kline_{aux_iv}")
         client.subscribe(streams, id=1)
         for s in streams:
             self._log.info(f"📡 訂閱串流: {s}")
@@ -534,6 +617,9 @@ class WebSocketRunner(BaseRunner):
         self.is_running = True
         self._last_ws_message_time = time.time()
         self._log.info("✅ WebSocket 已連線，等待 K 線事件...")
+
+        # Phase 4B: 啟動衍生品 API 後台輪詢線程
+        self._start_derivatives_bg_refresh()
 
         try:
             while self.is_running:

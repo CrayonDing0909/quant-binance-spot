@@ -20,6 +20,7 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
   - **Deployment**: Oracle Cloud (x86_64, 1GB RAM), WebSocket mode via tmux (`meta_blend_live`)
   - **Routing**: BTC=breakout_vol_atr+tsmom_carry_v2/btc_enhanced, ETH=tsmom_carry_v2/eth_enhanced, SOL/AVAX=tsmom_heavy, BNB/DOGE/ADA=default, LINK=tsmom_only
   - **Key metrics**: Portfolio SR=2.265, MDD=-4.2%, Calmar=4.98, 2x Cost SR=1.648
+  - **Extended data validation**: 5.4-yr backtest (2020-09→2026-02) SR=2.57, MDD=-4.89%, Calmar=5.10
   - **Launched**: 2026-02-25 (replaced R3C)
 
 - **Retired (rollback available)**: R3C 10-Symbol Ensemble

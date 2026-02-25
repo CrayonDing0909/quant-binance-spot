@@ -1,6 +1,6 @@
 # 大型資料檔（可重新下載）
-data/
-reports/
+/data/
+/reports/
 
 # Archive（已完成/棄用的舊檔案）
 config/archive/

@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-02-25 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-02-26 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
@@ -65,11 +65,15 @@
 | Script | Description |
 |--------|-------------|
 | `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
+| `fetch_derivatives_data.py` | Binance 衍生品數據下載工具（LSR, Taker Vol, CVD） |
+| `fetch_liquidation_data.py` | 清算/爆倉數據下載工具 |
+| `fetch_onchain_data.py` | 鏈上數據探索工具（DeFi Llama / CryptoQuant / Glassnode） |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
 | `research_ic_deep_analysis.py` | IC Deep Analysis — Quant Researcher |
 | `research_overlay_4way.py` | ═══════════════════════════════════════════════════════════════ |
 | `research_overlay_ic_analysis.py` | P0: Overlay-Adjusted IC Analysis |
 | `research_strategy_blend.py` | ═══════════════════════════════════════════════════════════════ |
+| `trade_review.py` | 交易復盤工具 — 診斷信號與執行差異 |
 
 > **Archive**: 28 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
 
@@ -207,6 +211,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
 | [`R3C_SYMBOL_GOVERNANCE_SPEC.md`](docs/R3C_SYMBOL_GOVERNANCE_SPEC.md) | R3C Symbol Governance Spec |
+| [`RESEARCH_LITERATURE.md`](docs/RESEARCH_LITERATURE.md) | > **Last updated**: 2026-02-26 |
 | [`STRATEGY_DEV_PLAYBOOK_R2_1.md`](docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) | Strategy Development Playbook (R2.1) |
 | [`STRATEGY_PORTFOLIO_GOVERNANCE.md`](docs/STRATEGY_PORTFOLIO_GOVERNANCE.md) | 策略組合治理規範 (Strategy Portfolio Governance) |
 

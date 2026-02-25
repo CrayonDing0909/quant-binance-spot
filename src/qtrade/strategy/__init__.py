@@ -112,3 +112,6 @@ from . import oi_liq_bounce_strategy  # noqa: E402
 from . import tsmom_mr_composite_strategy  # noqa: E402
 from . import tsmom_carry_v2_strategy  # noqa: E402
 from . import meta_blend_strategy  # noqa: E402
+from . import multi_tf_resonance_strategy  # noqa: E402
+from . import derivatives_enhanced_strategy  # noqa: E402
+from . import low_freq_portfolio_strategy  # noqa: E402

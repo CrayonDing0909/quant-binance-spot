@@ -36,7 +36,7 @@ Follow [STRATEGY_DEV_PLAYBOOK_R2_1.md](mdc:docs/STRATEGY_DEV_PLAYBOOK_R2_1.md):
 
 - Do NOT use `close[i]` to generate signals that execute at `open[i]` — this is look-ahead bias
 - Do NOT hardcode `direction` in strategy — it comes from `ctx.direction`
-- Do NOT modify production config (`config/prod_live_R3C_E3.yaml`) during research
+- Do NOT modify production config (`config/prod_candidate_meta_blend.yaml` or any `config/prod_*`) during research
 - Do NOT skip the ablation step when adding multiple components
 - Do NOT skip overlay ablation when production pipeline uses overlay — 見 Playbook Stage D.5
 - Do NOT claim a new component "replaces overlay" without 3-way ablation data

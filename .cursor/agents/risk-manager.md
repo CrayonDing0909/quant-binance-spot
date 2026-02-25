@@ -146,15 +146,21 @@ PYTHONPATH=src python scripts/risk_guard.py \
 
 # 2. 健康檢查
 PYTHONPATH=src python scripts/health_check.py \
-  -c config/prod_live_R3C_E3.yaml --real --notify
+  -c config/prod_candidate_meta_blend.yaml --real --notify
 
 # 3. Alpha Decay 快速掃描
 PYTHONPATH=src python scripts/monitor_alpha_decay.py \
-  -c config/prod_live_R3C_E3.yaml
+  -c config/prod_candidate_meta_blend.yaml
 
-# 4. 回測↔實盤一致性 replay（每個在線策略都要跑）
+# 4. 交易復盤（每個在線策略都跑）
+PYTHONPATH=src python scripts/trade_review.py \
+  -c config/prod_candidate_meta_blend.yaml --days 7 --with-replay
+PYTHONPATH=src python scripts/trade_review.py \
+  -c config/prod_live_oi_liq_bounce.yaml --days 7
+
+# 5. 回測↔實盤一致性 replay（每個在線策略都要跑）
 PYTHONPATH=src python scripts/validate_live_consistency.py \
-  -c config/prod_live_R3C_E3.yaml -v
+  -c config/prod_candidate_meta_blend.yaml -v
 PYTHONPATH=src python scripts/validate_live_consistency.py \
   -c config/prod_live_oi_liq_bounce.yaml -v
 # ↑ 對每個在線/paper trading 的策略各跑一次
@@ -169,6 +175,8 @@ PYTHONPATH=src python scripts/validate_live_consistency.py \
 | 信號翻轉頻率 | 異常高 | 可能信號雜訊增加 |
 | 一致性檢查 FAIL 項 | 任何 FAIL | 通知 Developer 排查；如 overlay 不一致需立即修復 |
 | 一致性 consistency_rate | < 95% | 標記 WARNING，通知 Researcher 做深入 IC 分析 |
+| 交易復盤 live/backtest 偏離 | live SR / backtest SR < 0.30 | 啟動策略審查（見 STRATEGY_PORTFOLIO_GOVERNANCE.md R2） |
+| 交易復盤連續虧損 | > 5 筆且非盤整環境 | 標記 WARNING，啟動 alpha decay 掃描 |
 
 ### 每月深度審查
 
@@ -192,7 +200,7 @@ print(corr)
 
 # 3. Kelly Fraction 重新校準
 # 使用最近 6 個月的實盤交易數據重新計算
-PYTHONPATH=src python scripts/query_db.py -c config/prod_live_R3C_E3.yaml trades
+PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_meta_blend.yaml trades
 
 # 4. 生產報告
 PYTHONPATH=src python scripts/prod_report.py

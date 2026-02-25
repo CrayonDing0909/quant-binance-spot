@@ -1,6 +1,6 @@
 # Cursor Agent 工作流指南
 
-> **Last updated**: 2026-02-25 (新增 overlay ablation + 一致性檢查到上線 checklist)
+> **Last updated**: 2026-02-25 (速查表分類重構 + 維護/改進路由 + 預設規則)
 
 > 日常開發時的 prompt 參考。5 個 Agent、什麼時候用誰、怎麼下 prompt。
 > Slash commands 可用 `/` 快速觸發常用流程，見下方「Slash Commands」段落。
@@ -16,6 +16,8 @@
 
 ## 速查：我想做什麼 → 叫誰？
 
+**策略開發 & 審查**
+
 | 我想... | Agent | Prompt 範例 |
 |---------|-------|-------------|
 | 探索新策略想法 | `@alpha-researcher` | `幫我研究 Funding Rate 反向策略的可行性` |
@@ -26,12 +28,30 @@
 | 審查回測結果 | `@quant-researcher` | `審查 reports/research/xxx/ 的回測結果` |
 | 上線前風控審查 | `@risk-manager` | `對 xxx 策略做 pre-launch audit` |
 | 每週風控檢查 | `@risk-manager` | `跑這週的風控快速檢查` |
+| 每週交易復盤 | `@risk-manager` | `跑本週的交易復盤` |
+
+**部署 & 維運**
+
+| 我想... | Agent | Prompt 範例 |
+|---------|-------|-------------|
 | 部署最新改動到線上 | `@devops` | `幫我部署最新改動到 Oracle Cloud` |
 | 部署到 Oracle Cloud | `@devops` | `部署 xxx 策略到生產環境` |
 | 排查線上問題 | `@devops` | `Runner 好像掛了，幫我排查` |
 | 加新幣 / 下載數據 | `@devops` | `幫 config 加入 AAVEUSDT 並下載數據` |
+| 設定 cron / 自動化排程 | `@devops` | `在 Oracle Cloud 加一個每週一跑 trade_review 的 cron` |
+
+**維護 & 改進**
+
+| 我想... | Agent | Prompt 範例 |
+|---------|-------|-------------|
+| 改進腳本/工具 | `@quant-developer` | `幫 trade_review.py 加一個 --output json 選項` |
+| 清理過時的配置引用 | `@quant-developer` | `掃描所有 .cursor/ 和 docs/ 裡的舊配置引用並更新` |
+| 改善流程 / 加新 gate | `@quant-developer` | `在 config-freeze 流程加入舊引用掃描步驟` |
+| 更新 agent / rule 定義 | `@quant-developer` | `更新 risk-manager.md 的週檢查步驟` |
 | 修 bug / 重構程式碼 | `@quant-developer` | `重構 xxx 模組，把 print 改成 logger` |
 | 跑測試 | 任何 Agent | `跑一下 pytest 確認沒壞東西` |
+
+> **不確定找誰？** 直接在新 Chat 描述任務，不需要 `@` 任何 agent。預設助手會幫你分流，或直接處理。簡單規則：動到**程式碼或 `.cursor/` 檔案** → `@quant-developer`；動到 **Oracle Cloud / cron / tmux** → `@devops`；需要**風險判斷** → `@risk-manager`。
 
 ---
 
@@ -46,9 +66,11 @@
 | `/healthcheck` | `@devops` | 完整健康檢查（runner 狀態、持倉、系統資源） |
 | `/backtest` | `@quant-developer` | 跑回測 + `--quick` 驗證（需填入 config 路徑） |
 | `/config-freeze` | `@quant-developer` | 凍結研究配置為生產配置（Risk Manager APPROVED 後） |
-| `/risk-review` | `@risk-manager` | 每週風控快速檢查 |
+| `/trade-review` | `@risk-manager` | 每週交易復盤（勝率/PnL 偏離/信號一致性/市場環境） |
+| `/risk-review` | `@risk-manager` | 每週風控快速檢查（alpha decay + 一致性 + 倉位） |
 | `/risk-action` | `@quant-developer` | 根據 risk-review WARNING 產出改善方案並跑對比回測 |
 | `/research-audit` | `@quant-researcher` | 審查回測結果（需填入報告路徑） |
+| `/eod` | 任何 Agent | End-of-Day 文件同步檢查 |
 
 > **帶有 `<填入...>` 的指令**：選擇 command 後，把 placeholder 替換成實際路徑再送出。
 
@@ -138,11 +160,12 @@ Step 6: @devops
   @devops  「跑健康檢查和每日報表」
 
 每週:
-  Step 1: /risk-review → @risk-manager 產出風控報告
-  Step 2: 如果有 WARNING → /risk-action → @quant-developer 跑改善方案 + 對比回測
-  Step 3: 把對比結果交給 @risk-manager 做最終判決
-  Step 4: 如果 APPROVED → /config-freeze → @quant-developer 凍結新 config
-  Step 5: @devops 部署凍結後的 config
+  Step 1: /trade-review → @risk-manager 跑交易復盤（勝率/PnL 偏離/信號一致性）
+  Step 2: /risk-review → @risk-manager 產出風控報告（含 alpha decay + 一致性檢查）
+  Step 3: 如果有 WARNING → /risk-action → @quant-developer 跑改善方案 + 對比回測
+  Step 4: 把對比結果交給 @risk-manager 做最終判決
+  Step 5: 如果 APPROVED → /config-freeze → @quant-developer 凍結新 config
+  Step 6: @devops 部署凍結後的 config
 
 每月:
   @risk-manager  「跑月度深度風控審查（Monte Carlo + 相關性 + Kelly 校準）」
@@ -197,14 +220,14 @@ git pull
 ### 需要重啟 Runner 時
 
 ```bash
-# 停舊的
-tmux attach -t r3c_e3_live   # 進入 tmux
+# 重啟主策略
+tmux attach -t meta_blend_live   # 進入 tmux
 # Ctrl+C 停止 runner
 # Ctrl+B, d 離開 tmux
 
 # runner 會自動重啟（tmux 裡的 while true 循環）
 # 等 10 秒後確認
-sleep 10 && tmux capture-pane -t r3c_e3_live -p | tail -20
+sleep 10 && tmux capture-pane -t meta_blend_live -p | tail -20
 ```
 
 ### 什麼改動需要重啟？
@@ -231,7 +254,7 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 # Oracle Cloud 一行搞定（強制重啟 runner）
 ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
-  "cd ~/quant-binance-spot && git pull && tmux send-keys -t r3c_e3_live C-c"
+  "cd ~/quant-binance-spot && git pull && tmux send-keys -t meta_blend_live C-c"
 ```
 
 > **注意**：tmux 裡的 `while true; do git pull && run_websocket.py; done` 循環會在 runner 停止後自動 pull 最新 code 並重啟。所以 `Ctrl+C` 停止 runner 就等於「重啟」。

@@ -14,7 +14,7 @@
    - 積極方案：多項調整（例如降 BTC 權重 + deweight 衰退幣種 + 降 multiplier）
 3. **建立研究配置**：`config/research_risk_mitigation_<date>.yaml`（不要動 prod config）
 4. **跑對比回測**：
-   - Baseline: 現有 config/prod_live_R3C_E3.yaml
+   - Baseline: 現有 config/prod_candidate_meta_blend.yaml
    - Option A: 保守方案
    - Option B: 積極方案
 5. **產出比較表**：Total Return, Sharpe, Max DD, 7D/30D Return, HHI, Avg Corr

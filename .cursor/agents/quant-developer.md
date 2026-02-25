@@ -18,7 +18,7 @@
 
 - 不做最終的 alpha 判斷（交給 Quant Researcher）
 - 不操作生產部署（交給 DevOps）
-- 不修改生產配置（`config/prod_live_R3C_E3.yaml`）
+- 不修改生產配置（`config/prod_candidate_meta_blend.yaml` 等 `prod_*` 配置）
 
 ## 工作流程
 
@@ -27,7 +27,7 @@
 1. **確認假說**：確認並 refine Alpha Researcher 的 Strategy Proposal（hypothesis, mechanism, failure mode, scope）。
    - **Mode A（全流程）**：假說來自 Alpha Researcher 的 Proposal，你負責確認可行性和數據可用性
    - **Mode B（快速迭代）**：可跳過 Alpha Researcher，自行定義改進假說，但限於**現有策略的參數調整、filter 新增、exit rule 改進**等範圍。全新策略方向仍需 Alpha Researcher
-2. **建立研究配置**：在 `config/research_<name>.yaml` 中建立，複製自 `config/prod_live_R3C_E3.yaml` 並修改
+2. **建立研究配置**：在 `config/research_<name>.yaml` 中建立，複製自 `config/prod_candidate_meta_blend.yaml` 並修改
 3. **實作策略**：在 `src/qtrade/strategy/<name>_strategy.py` 中實作
    - 函數簽名：`generate_signal(df, ctx: StrategyContext, params: dict) -> pd.Series`
    - 在 `src/qtrade/strategy/__init__.py` 中註冊策略
