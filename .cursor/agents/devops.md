@@ -97,7 +97,7 @@ Strategy: meta_blend 8-Symbol (R3C × tsmom_carry_v2)
   - BNB/DOGE/ADA: tsmom_carry_v2/default
   - LINK: tsmom_carry_v2/tsmom_only (carry IC unstable)
 Leverage: 3x ISOLATED
-Weight sum: 1.0
+Weight sum: 3.0 (3× allocation leverage)
 Circuit breaker: 40% MDD
 Overlays: vol_pause (oi_vol mode, vol_spike_z=2.0)
 Telegram prefix: 🔬 [CANDIDATE-MetaBlend-8S]

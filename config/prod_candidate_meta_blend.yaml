@@ -38,7 +38,7 @@
 #
 # KEY DIFFERENCES vs prod_live_R3C_E3.yaml:
 #   - 8 symbols (was 10) — removed LTC (quarantined) and XRP (no alpha)
-#   - Allocation sum = 1.0 (was 3.13) — conservative, no allocation leverage
+#   - Allocation sum = 3.0 (was 1.0) — 3× allocation leverage, scaled MDD ~14%
 #   - meta_blend handles per-symbol routing (no ensemble block needed)
 #   - tsmom_carry_v2 adds carry confirmation to reduce MDD
 #   - breakout_vol_atr retained for BTC (30% blend weight)
@@ -328,21 +328,23 @@ position_sizing:
   method: "fixed"
   position_pct: 1.0
 
-# ── Portfolio allocation: 8-symbol (LTC + XRP removed) ──
-# BTC/ETH overweight (15%) — strongest carry alpha + BTC breakout
-# Others equal-weight (~11.67%)
-# Sum = 1.0 (no allocation leverage; futures leverage = 3x handles sizing)
+# ── Portfolio allocation: 8-symbol, 3× allocation leverage ──
+# BTC/ETH overweight (45%) — strongest carry alpha + BTC breakout
+# Others equal-weight (35%)
+# Sum = 3.0 (3× allocation leverage on top of 3× futures leverage)
+# Risk budget: backtest MDD -4.2% → scaled MDD ~-13.9%, circuit breaker 40% → 2.9× buffer
+# Extreme margin (all signals=1.0): 100% — practical peak ~50%
 portfolio:
   cash_reserve: 0
   allocation:
-    BTCUSDT: 0.1500
-    ETHUSDT: 0.1500
-    SOLUSDT: 0.1167
-    BNBUSDT: 0.1167
-    DOGEUSDT: 0.1167
-    ADAUSDT: 0.1167
-    AVAXUSDT: 0.1166
-    LINKUSDT: 0.1166
+    BTCUSDT: 0.45
+    ETHUSDT: 0.45
+    SOLUSDT: 0.35
+    BNBUSDT: 0.35
+    DOGEUSDT: 0.35
+    ADAUSDT: 0.35
+    AVAXUSDT: 0.35
+    LINKUSDT: 0.35
 
 live:
   kline_cache: true
