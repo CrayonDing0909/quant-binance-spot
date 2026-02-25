@@ -62,6 +62,11 @@ def main():
         "--dry-run", action="store_true", dest="dry_run",
         help="Broker 為 dry-run 模式（不下單，僅查詢）",
     )
+    parser.add_argument(
+        "--paper-strategies", type=str, nargs="*", default=None,
+        help="指定 Paper Trading 策略名稱（不從 Binance 歸類倉位）。"
+             "若不指定，自動從 config 的 notification.prefix 偵測。",
+    )
     args = parser.parse_args()
 
     config_paths = args.config or []
@@ -93,17 +98,34 @@ def main():
 
     configs: list[tuple[str, object]] = []
     all_symbols: list[str] = []
+    auto_paper: set[str] = set()
 
     for cp in config_paths:
         cfg = load_config(cp)
         strategy_name = cfg.strategy.name
         configs.append((strategy_name, cfg))
         all_symbols.extend(cfg.market.symbols)
+
+        # 自動偵測 paper trading（從 notification prefix 或 config 名稱推斷）
+        prefix = getattr(cfg.notification, "prefix", "") or ""
+        if "PAPER" in prefix.upper() or "paper" in str(cp).lower():
+            auto_paper.add(strategy_name)
+
+        mode_tag = "🧪 Paper" if strategy_name in auto_paper else "🔴 Real"
         print(f"   📄 {cp}")
-        print(f"      策略: {strategy_name}")
+        print(f"      策略: {strategy_name}  ({mode_tag})")
         print(f"      交易對: {', '.join(cfg.market.symbols)}")
 
-    print(f"\n   📊 共 {len(configs)} 個策略, {len(set(all_symbols))} 個交易對")
+    # 合併：CLI 指定 > 自動偵測
+    paper_strategies: set[str] = set()
+    if args.paper_strategies is not None:
+        paper_strategies = set(args.paper_strategies)
+    else:
+        paper_strategies = auto_paper
+
+    if paper_strategies:
+        print(f"\n   🧪 Paper 策略: {', '.join(sorted(paper_strategies))}")
+    print(f"   📊 共 {len(configs)} 個策略, {len(set(all_symbols))} 個交易對")
 
     # ── 建立 Broker（唯一，dry_run=True 只查詢）──
     broker = None
@@ -162,6 +184,7 @@ def main():
         configs=configs,
         broker=broker,
         alert_config=alert_config,
+        paper_strategies=paper_strategies,
     )
 
     try:

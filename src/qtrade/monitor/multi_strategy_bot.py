@@ -50,6 +50,7 @@ class MultiStrategyBot(TelegramBot):
         configs: list[tuple[str, AppConfig]],
         broker: Any = None,
         alert_config: dict | None = None,
+        paper_strategies: set[str] | None = None,
         **kwargs,
     ):
         """
@@ -57,10 +58,12 @@ class MultiStrategyBot(TelegramBot):
             configs: [(strategy_name, AppConfig), ...] 多策略配置
             broker: BinanceFuturesBroker(dry_run=True)
             alert_config: 告警配置 dict
+            paper_strategies: 紙交易策略名稱集合（不從 Binance 歸類倉位）
         """
         super().__init__(broker=broker, **kwargs)
         self._configs = configs
         self._alert_cfg = alert_config or {}
+        self._paper_strategies: set[str] = paper_strategies or set()
 
         # 背景任務
         self._daily_last_date: str | None = None
@@ -133,12 +136,46 @@ class MultiStrategyBot(TelegramBot):
                 return c
         return None
 
+    def _is_paper(self, name: str) -> bool:
+        """判斷策略是否為 Paper Trading"""
+        return name in self._paper_strategies
+
+    def _strategy_label(self, name: str) -> str:
+        """策略名稱 + Paper 標籤"""
+        return f"{name} 🧪" if self._is_paper(name) else name
+
     def _symbol_to_strategy(self, symbol: str) -> str:
-        """根據 symbol 找到所屬策略名稱"""
+        """根據 symbol 找到所屬策略名稱（real 策略優先）"""
+        # 先找 real 策略
         for name, cfg in self._configs:
-            if symbol in cfg.market.symbols:
+            if not self._is_paper(name) and symbol in cfg.market.symbols:
+                return name
+        # 再找 paper 策略
+        for name, cfg in self._configs:
+            if self._is_paper(name) and symbol in cfg.market.symbols:
                 return name
         return "unknown"
+
+    def _group_positions_by_strategy(
+        self, positions: list,
+    ) -> dict[str, list]:
+        """
+        排他式持倉歸類：每個倉位只歸屬一個策略。
+
+        - Paper 策略不從 Binance API 歸類倉位（因為它們沒有真實持倉）
+        - 共用幣種時 real 策略優先
+        """
+        result: dict[str, list] = {n: [] for n in self._strategy_names()}
+        assigned: set[str] = set()
+        for pos in positions:
+            sym = self._pos_attr(pos, "symbol", "?")
+            if sym in assigned:
+                continue
+            strategy = self._symbol_to_strategy(sym)
+            if strategy in result and not self._is_paper(strategy):
+                result[strategy].append(pos)
+                assigned.add(sym)
+        return result
 
     def _read_signals(self, name: str, cfg: AppConfig) -> tuple[list | None, str]:
         """讀取某策略的 last_signals.json"""
@@ -267,25 +304,21 @@ class MultiStrategyBot(TelegramBot):
 
             # ── 各策略持倉摘要 ──
             positions = self._get_positions()
-            strategy_positions: dict[str, list] = {n: [] for n in self._strategy_names()}
-            for pos in positions:
-                sym = self._pos_attr(pos, "symbol", "?")
-                strategy = self._symbol_to_strategy(sym)
-                if strategy in strategy_positions:
-                    strategy_positions[strategy].append(pos)
-                else:
-                    strategy_positions.setdefault("其他", []).append(pos)
+            strategy_positions = self._group_positions_by_strategy(positions)
 
             for strat_name in self._strategy_names():
+                label = self._strategy_label(strat_name)
                 strat_pos = strategy_positions.get(strat_name, [])
                 strat_pnl = sum(self._pos_attr(p, "unrealized_pnl", 0) for p in strat_pos)
                 strat_emoji = "📈" if strat_pnl >= 0 else "📉"
                 count = len(strat_pos)
                 lines.append(
                     f"\n<b>{'─' * 20}</b>"
-                    f"\n🏷 <b>{strat_name}</b>  ({count} 倉) {strat_emoji} ${strat_pnl:+,.2f}"
+                    f"\n🏷 <b>{label}</b>  ({count} 倉) {strat_emoji} ${strat_pnl:+,.2f}"
                 )
-                if strat_pos:
+                if self._is_paper(strat_name):
+                    lines.append("  🧪 Paper Trading（查看 /signals）")
+                elif strat_pos:
                     for p in strat_pos:
                         sym = self._pos_attr(p, "symbol", "?")
                         qty = self._pos_attr(p, "qty", 0)
@@ -368,28 +401,31 @@ class MultiStrategyBot(TelegramBot):
             if margin_ratio >= 80:
                 lines.append("⚠️ <b>保證金偏高！</b>")
 
-            # ── 按策略分組持倉 ──
+            # ── 按策略分組持倉（排他分配）──
             positions = self._get_positions()
-            if positions:
-                for name, cfg in self._configs:
-                    strat_pos = [
-                        p for p in positions
-                        if self._pos_attr(p, "symbol", "") in cfg.market.symbols
-                    ]
-                    if not strat_pos:
-                        continue
-                    strat_pnl = sum(self._pos_attr(p, "unrealized_pnl", 0) for p in strat_pos)
-                    e = "📈" if strat_pnl >= 0 else "📉"
-                    lines.append(f"\n🏷 <b>{name}</b> {e} ${strat_pnl:+,.2f}")
-                    for p in strat_pos:
-                        sym = self._pos_attr(p, "symbol", "?")
-                        qty = self._pos_attr(p, "qty", 0)
-                        pnl = self._pos_attr(p, "unrealized_pnl", 0)
-                        entry = self._pos_attr(p, "entry_price", 0)
-                        side = "LONG" if qty > 0 else "SHORT"
-                        pe = "🟢" if pnl >= 0 else "🔴"
-                        lines.append(f"  {pe} {sym} [{side}] ${pnl:+,.2f}")
-            else:
+            strategy_positions = self._group_positions_by_strategy(positions)
+            any_pos = False
+            for name in self._strategy_names():
+                label = self._strategy_label(name)
+                strat_pos = strategy_positions.get(name, [])
+                if self._is_paper(name):
+                    lines.append(f"\n🏷 <b>{label}</b>")
+                    lines.append("  🧪 Paper Trading（查看 /signals）")
+                    continue
+                if not strat_pos:
+                    continue
+                any_pos = True
+                strat_pnl = sum(self._pos_attr(p, "unrealized_pnl", 0) for p in strat_pos)
+                e = "📈" if strat_pnl >= 0 else "📉"
+                lines.append(f"\n🏷 <b>{label}</b> {e} ${strat_pnl:+,.2f}")
+                for p in strat_pos:
+                    sym = self._pos_attr(p, "symbol", "?")
+                    qty = self._pos_attr(p, "qty", 0)
+                    pnl = self._pos_attr(p, "unrealized_pnl", 0)
+                    side = "LONG" if qty > 0 else "SHORT"
+                    pe = "🟢" if pnl >= 0 else "🔴"
+                    lines.append(f"  {pe} {sym} [{side}] ${pnl:+,.2f}")
+            if not any_pos and not any(self._is_paper(n) for n in self._strategy_names()):
                 lines.append("\n📭 無持倉")
 
             buttons = {
@@ -425,12 +461,14 @@ class MultiStrategyBot(TelegramBot):
                 signals, gen_at = self._read_signals(name, cfg)
                 age_str = self._signal_age_str(gen_at)
 
+                label = self._strategy_label(name)
+
                 if signals is None:
-                    all_lines.append(f"\n🏷 <b>{name}</b>  ⚠️ 無信號快照")
+                    all_lines.append(f"\n🏷 <b>{label}</b>  ⚠️ 無信號快照")
                     continue
 
                 has_any = True
-                all_lines.append(f"\n🏷 <b>{name}</b>  {age_str}")
+                all_lines.append(f"\n🏷 <b>{label}</b>  {age_str}")
 
                 for sig in signals:
                     signal_val = sig.get("signal", 0)
@@ -608,16 +646,20 @@ class MultiStrategyBot(TelegramBot):
             lines = ["📋 <b>持倉列表</b>\n"]
             detail_buttons = []
 
-            for name, cfg in self._configs:
-                strat_pos = [
-                    p for p in positions
-                    if self._pos_attr(p, "symbol", "") in cfg.market.symbols
-                ]
+            strategy_positions = self._group_positions_by_strategy(positions)
+            for name in self._strategy_names():
+                label = self._strategy_label(name)
+                if self._is_paper(name):
+                    lines.append(f"🏷 <b>{label}</b>")
+                    lines.append("  🧪 Paper Trading（查看 /signals）")
+                    lines.append("")
+                    continue
+                strat_pos = strategy_positions.get(name, [])
                 if not strat_pos:
                     continue
                 strat_pnl = sum(self._pos_attr(p, "unrealized_pnl", 0) for p in strat_pos)
                 e = "📈" if strat_pnl >= 0 else "📉"
-                lines.append(f"🏷 <b>{name}</b> {e} ${strat_pnl:+,.2f}")
+                lines.append(f"🏷 <b>{label}</b> {e} ${strat_pnl:+,.2f}")
 
                 for p in strat_pos:
                     sym = self._pos_attr(p, "symbol", "?")
@@ -835,7 +877,8 @@ class MultiStrategyBot(TelegramBot):
         ]
 
         for name, s, details in strategy_health:
-            lines.append(f"{status_emoji[s]} <b>{name}</b>")
+            label = self._strategy_label(name)
+            lines.append(f"{status_emoji[s]} <b>{label}</b>")
             if show_detail:
                 for d in details:
                     lines.append(f"  {d}")
@@ -922,43 +965,47 @@ class MultiStrategyBot(TelegramBot):
                 if margin_ratio >= 80:
                     lines.append("⚠️ <b>保證金使用率偏高！</b>")
 
-            # 按策略分組曝險
+            # 按策略分組曝險（排他分配）
             positions = self._get_positions()
-            if positions:
-                total_notional = 0.0
-                for name, cfg in self._configs:
-                    strat_pos = [
-                        p for p in positions
-                        if self._pos_attr(p, "symbol", "") in cfg.market.symbols
-                    ]
-                    if not strat_pos:
-                        continue
+            strategy_positions = self._group_positions_by_strategy(positions)
+            total_notional = 0.0
+            any_real_pos = False
+            for name in self._strategy_names():
+                label = self._strategy_label(name)
+                if self._is_paper(name):
+                    lines.append(f"\n🏷 <b>{label}</b>")
+                    lines.append("  🧪 Paper Trading（無真實曝險）")
+                    continue
+                strat_pos = strategy_positions.get(name, [])
+                if not strat_pos:
+                    continue
+                any_real_pos = True
+                strat_notional = 0.0
+                lines.append(f"\n🏷 <b>{label}</b>")
+                for p in strat_pos:
+                    sym = self._pos_attr(p, "symbol", "?")
+                    qty = self._pos_attr(p, "qty", 0)
+                    mark = self._pos_attr(p, "mark_price", 0)
+                    entry = self._pos_attr(p, "entry_price", 0)
+                    liq = self._pos_attr(p, "liquidation_price", 0)
+                    lev = self._pos_attr(p, "leverage", 0)
+                    pnl = self._pos_attr(p, "unrealized_pnl", 0)
+                    notional = abs(qty * mark) if mark > 0 else abs(qty * entry)
+                    strat_notional += notional
+                    total_notional += notional
+                    side = "L" if qty > 0 else "S"
+                    pe = "📈" if pnl >= 0 else "📉"
 
-                    strat_notional = 0.0
-                    lines.append(f"\n🏷 <b>{name}</b>")
-                    for p in strat_pos:
-                        sym = self._pos_attr(p, "symbol", "?")
-                        qty = self._pos_attr(p, "qty", 0)
-                        mark = self._pos_attr(p, "mark_price", 0)
-                        entry = self._pos_attr(p, "entry_price", 0)
-                        liq = self._pos_attr(p, "liquidation_price", 0)
-                        lev = self._pos_attr(p, "leverage", 0)
-                        pnl = self._pos_attr(p, "unrealized_pnl", 0)
-                        notional = abs(qty * mark) if mark > 0 else abs(qty * entry)
-                        strat_notional += notional
-                        total_notional += notional
-                        side = "L" if qty > 0 else "S"
-                        pe = "📈" if pnl >= 0 else "📉"
+                    pos_line = f"  {pe} {sym} [{side}] {lev}x ${notional:,.0f}"
+                    if liq and liq > 0 and mark > 0:
+                        dist = abs(mark - liq) / mark * 100
+                        pos_line += f" (強平距 {dist:.1f}%)"
+                    lines.append(pos_line)
+                lines.append(f"  💎 小計: ${strat_notional:,.0f}")
 
-                        pos_line = f"  {pe} {sym} [{side}] {lev}x ${notional:,.0f}"
-                        if liq and liq > 0 and mark > 0:
-                            dist = abs(mark - liq) / mark * 100
-                            pos_line += f" (強平距 {dist:.1f}%)"
-                        lines.append(pos_line)
-                    lines.append(f"  💎 小計: ${strat_notional:,.0f}")
-
+            if any_real_pos:
                 lines.append(f"\n💎 <b>總名義曝險: ${total_notional:,.0f}</b>")
-            else:
+            elif not any(self._is_paper(n) for n in self._strategy_names()):
                 lines.append("\n📭 無持倉")
 
             buttons = {
@@ -973,10 +1020,198 @@ class MultiStrategyBot(TelegramBot):
             return f"❌ 風險查詢失敗: {e}"
 
     # ══════════════════════════════════════════════════════════════
-    # /balance, /trades — 複用 TelegramBot 基底
+    # /trades — 交易記錄（合併同訂單 + 策略標籤 + 匯總）
     # ══════════════════════════════════════════════════════════════
 
-    # _cmd_balance 和 _cmd_trades 直接繼承自 TelegramBot
+    def _cmd_trades(self, args: list[str], chat_id: str) -> str:
+        """
+        /trades       → 最近 10 筆（合併後）
+        /trades 20    → 最近 20 筆
+        /trades 50    → 最近 50 筆
+        """
+        if not self.broker:
+            return "⚠️ Broker 未連接"
+
+        try:
+            n = int(args[0]) if args else 10
+            n = min(n, 50)
+
+            if not hasattr(self.broker, "get_trade_history"):
+                return "⚠️ 無交易記錄查詢功能"
+
+            # 取多一些原始成交以便合併後仍有足夠筆數
+            raw_trades = self.broker.get_trade_history(limit=min(n * 5, 200))
+            if not raw_trades:
+                return "📭 沒有交易記錄"
+
+            # ── 按 order_id 合併同一筆訂單的成交 ──
+            merged = self._merge_trades_by_order(raw_trades)[:n]
+
+            if not merged:
+                return "📭 沒有交易記錄"
+
+            lines = ["📜 <b>最近交易</b>\n"]
+            total_pnl = 0.0
+            total_fee = 0.0
+
+            for t in merged:
+                symbol = t["symbol"]
+                side = t["side"]
+                pos_side = t["position_side"]
+                qty = t["qty"]
+                avg_price = t["avg_price"]
+                pnl = t["realized_pnl"]
+                fee = t["commission"]
+                time_str = t["time_str"]
+                fill_count = t["fill_count"]
+
+                total_pnl += pnl
+                total_fee += fee
+
+                # 策略歸類
+                strategy = self._symbol_to_strategy(symbol)
+                strat_tag = f"[{strategy}]" if strategy != "unknown" else ""
+
+                # 方向 emoji + 標籤
+                if side == "BUY":
+                    if pos_side == "SHORT":
+                        emoji, action = "🟡", "平空"
+                    else:
+                        emoji, action = "🟢", "開多"
+                else:
+                    if pos_side == "LONG":
+                        emoji, action = "🟡", "平多"
+                    else:
+                        emoji, action = "🔴", "開空"
+
+                # 智能小數格式
+                qty_str = self._smart_number(qty)
+                price_str = f"${avg_price:,.2f}"
+                fee_str = f"${fee:.4f}"
+
+                # PnL 顯示（只有平倉時才有意義）
+                pnl_str = ""
+                if abs(pnl) > 0.001:
+                    pnl_emoji = "📈" if pnl > 0 else "📉"
+                    pnl_str = f"  {pnl_emoji} ${pnl:+,.2f}"
+
+                # 合併提示
+                fill_tag = f" ({fill_count}fills)" if fill_count > 1 else ""
+
+                lines.append(
+                    f"{emoji} {time_str} <b>{symbol}</b> {action}{fill_tag}\n"
+                    f"   {qty_str} @ {price_str}{pnl_str}  fee {fee_str}"
+                    f" {strat_tag}"
+                )
+
+            # ── 底部匯總 ──
+            lines.append(f"\n<b>{'─' * 20}</b>")
+            pnl_e = "📈" if total_pnl >= 0 else "📉"
+            lines.append(
+                f"📊 共 {len(merged)} 筆 | "
+                f"{pnl_e} PnL ${total_pnl:+,.2f} | "
+                f"💸 Fee ${total_fee:,.4f}"
+            )
+
+            # Inline 按鈕切換筆數
+            buttons = {
+                "inline_keyboard": [[
+                    {"text": "📜 10筆", "callback_data": "/trades 10"},
+                    {"text": "📜 20筆", "callback_data": "/trades 20"},
+                    {"text": "📜 50筆", "callback_data": "/trades 50"},
+                ]]
+            }
+            self._send_message(chat_id, "\n".join(lines), reply_markup=buttons)
+            return ""
+        except Exception as e:
+            return f"❌ 交易記錄查詢失敗: {e}"
+
+    @staticmethod
+    def _merge_trades_by_order(trades: list[dict]) -> list[dict]:
+        """
+        按 order_id 合併同一訂單的多次成交。
+
+        同一 order_id 的多筆成交合併為 1 筆：
+        - qty = sum(qty)
+        - avg_price = sum(qty_i * price_i) / sum(qty_i)
+        - commission = sum(commission)
+        - realized_pnl = sum(realized_pnl)
+        - time = 最早的成交時間
+        """
+        from collections import OrderedDict
+
+        orders: OrderedDict[str, dict] = OrderedDict()
+        for t in trades:
+            oid = str(t.get("order_id", ""))
+            if not oid:
+                # 無 order_id 的視為獨立交易
+                oid = f"_no_oid_{id(t)}"
+            if oid not in orders:
+                ts = t.get("time", 0)
+                if isinstance(ts, (int, float)) and ts > 1e12:
+                    dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                    time_str = dt.strftime("%m-%d %H:%M")
+                else:
+                    time_str = str(ts)[:16] if ts else "?"
+
+                orders[oid] = {
+                    "symbol": t["symbol"],
+                    "side": t["side"],
+                    "position_side": t.get("position_side", "BOTH"),
+                    "qty": 0.0,
+                    "total_value": 0.0,  # qty * price 累加
+                    "commission": 0.0,
+                    "realized_pnl": 0.0,
+                    "time": ts,
+                    "time_str": time_str,
+                    "fill_count": 0,
+                }
+            o = orders[oid]
+            qty = float(t.get("qty", 0))
+            price = float(t.get("price", 0))
+            o["qty"] += qty
+            o["total_value"] += qty * price
+            o["commission"] += float(t.get("commission", 0))
+            o["realized_pnl"] += float(t.get("realized_pnl", 0))
+            o["fill_count"] += 1
+            # 使用最早時間
+            if t.get("time", 0) < o["time"]:
+                o["time"] = t["time"]
+
+        result = []
+        for o in orders.values():
+            avg_price = o["total_value"] / o["qty"] if o["qty"] > 0 else 0
+            result.append({
+                "symbol": o["symbol"],
+                "side": o["side"],
+                "position_side": o["position_side"],
+                "qty": o["qty"],
+                "avg_price": avg_price,
+                "commission": o["commission"],
+                "realized_pnl": o["realized_pnl"],
+                "time_str": o["time_str"],
+                "fill_count": o["fill_count"],
+            })
+        return result
+
+    @staticmethod
+    def _smart_number(value: float) -> str:
+        """智能小數格式：去除多餘零"""
+        if value == 0:
+            return "0"
+        # 先用合理精度格式化
+        if abs(value) >= 1000:
+            s = f"{value:,.2f}"
+        elif abs(value) >= 1:
+            s = f"{value:.4f}"
+        else:
+            s = f"{value:.8f}"
+        # 去除尾部零
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+        return s
+
+    # _cmd_balance 直接繼承自 TelegramBot
 
     # ══════════════════════════════════════════════════════════════
     # 每日自動摘要（UTC 00:05）
