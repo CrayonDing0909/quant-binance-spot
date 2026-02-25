@@ -93,6 +93,24 @@ class MultiStrategyBot(TelegramBot):
         if self.enabled:
             self._start_background_tasks()
 
+    def run_polling(self):
+        """阻塞式輪詢（用於獨立運行模式）"""
+        if not self.enabled:
+            raise ValueError(
+                "Telegram Bot 未啟用（缺少 BOT_TOKEN 或 CHAT_ID）"
+            )
+        self._set_bot_commands()
+        self._start_background_tasks()
+        self._running = True
+        logger.info("🤖 MultiStrategyBot 已啟動（阻塞模式），等待命令...")
+        try:
+            self._poll_loop()
+        except KeyboardInterrupt:
+            logger.info("🛑 收到停止信號")
+        finally:
+            self._running = False
+            logger.info("🛑 MultiStrategyBot 已停止")
+
     def _start_background_tasks(self):
         """啟動每日摘要 & 告警檢查"""
         t1 = threading.Thread(target=self._daily_summary_loop, daemon=True)
