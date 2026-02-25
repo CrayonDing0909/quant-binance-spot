@@ -333,6 +333,93 @@ cat reports/live_watchdog/oi_liq_bounce/latest_status.json | python3 -m json.too
 cat reports/live_watchdog/R3C_E3/latest_status.json | python3 -m json.tool  # (名稱取決於 config strategy.name)
 ```
 
+## 統一 Telegram Bot 部署
+
+### 架構
+
+統一 Telegram Bot 是一個**獨立進程**，直連 Binance API 查詢帳戶狀態，
+讀取各策略 Runner 寫出的信號快照 (`last_signals.json`)。
+
+```
+┌─────────────────────────┐     ┌─────────────────────────┐
+│  meta_blend_live (tmux) │     │  oi_liq_paper (tmux)    │
+│  WebSocketRunner        │     │  WebSocketRunner        │
+│  → writes last_signals  │     │  → writes last_signals  │
+│    .json to reports/    │     │    .json to reports/    │
+└─────────────────────────┘     └─────────────────────────┘
+            │                               │
+            └──────────┐   ┌────────────────┘
+                       ▼   ▼
+              ┌────────────────────┐
+              │  tg_bot (tmux)     │
+              │  run_telegram_bot  │
+              │  MultiStrategyBot  │
+              │  ← reads signals   │
+              │  ← queries Binance │
+              └────────────────────┘
+```
+
+- **Runner 不再啟動命令 Bot**：只保留 `TelegramNotifier` 做交易推送通知
+- **Bot Token 不再衝突**：只有一個進程做 long-polling
+- **支援多策略**：一個 Bot 看所有策略的狀態
+
+### 部署指令
+
+```bash
+ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255
+cd ~/quant-binance-spot && source .venv/bin/activate && git pull
+
+# 啟動統一 Telegram Bot（tmux session: tg_bot）
+tmux new -d -s tg_bot 'while true; do
+  cd ~/quant-binance-spot && source .venv/bin/activate &&
+  PYTHONPATH=src python scripts/run_telegram_bot.py \
+    -c config/prod_candidate_meta_blend.yaml \
+    -c config/prod_live_oi_liq_bounce.yaml \
+    --real;
+  echo "TG Bot exited, restarting in 10s..."; sleep 10;
+done'
+
+# 確認啟動
+sleep 5 && tmux capture-pane -t tg_bot -p | tail -10
+```
+
+### 環境變數
+
+`.env` 中需要以下變數（與 Runner 通知共用同一個 Token）：
+
+```
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+
+### 新增策略時
+
+當新策略上線（如 `oi_liq_bounce` 畢業轉 production），只需：
+
+1. 在 `tg_bot` tmux 命令中加入 `-c config/new_strategy.yaml`
+2. 重啟 tg_bot session
+
+### 可用命令
+
+| 命令 | 功能 |
+|------|------|
+| `/dashboard` | 全局儀表板：帳戶、策略、持倉一覽 |
+| `/status` | 帳戶狀態 + 各策略 Runner 狀態 |
+| `/positions` | 合約持倉詳情（按策略歸類，可展開） |
+| `/pnl` | 已實現損益（多時段切換） |
+| `/signals` | 各策略最新信號快照 |
+| `/risk` | 風控指標（保證金、資金費率等） |
+| `/health` | 策略健康度（信號新鮮度、heartbeat） |
+| `/help` | 指令選單（inline buttons） |
+
+每日 UTC 00:05 自動發送每日摘要。
+
+### 注意事項
+
+- `--telegram-commands` flag 在 `run_live.py` 已棄用，會印出提示指向 `run_telegram_bot.py`
+- WebSocketRunner 會自動寫出 `last_signals.json`（v4.4 新增），供 Bot 讀取
+- 如果不提供 `-c` 參數，Bot 仍可啟動（只支援 `/ping`, `/help`）
+
 ## 故障排查 SOP
 
 1. **Runner 不動**：`tmux attach -t r3c_e3_live` 查看 log，通常是 API rate limit 或網路問題

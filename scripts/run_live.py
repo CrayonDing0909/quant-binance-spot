@@ -90,29 +90,14 @@ def _maybe_send_heartbeat(notifier: TelegramNotifier, mode: str) -> None:
 
 
 def _start_telegram_command_bot(runner, broker):
-    """啟動 Telegram 命令 Bot（背景執行）"""
-    try:
-        from qtrade.monitor.telegram_bot import TelegramCommandBot
-        
-        telegram_bot = TelegramCommandBot(
-            live_runner=runner,
-            broker=broker,
-            state_manager=runner.state_manager,
-        )
-        telegram_bot.start_background()
-        
-        print("🤖 Telegram 命令 Bot 已在背景啟動")
-        print("   在 Telegram 中發送 /help 查看可用命令")
-        print()
-        
-        return telegram_bot
-    except ImportError as e:
-        print(f"⚠️  無法啟動 Telegram 命令 Bot: {e}")
-        print("   安裝: pip install python-telegram-bot")
-        return None
-    except Exception as e:
-        print(f"⚠️  Telegram 命令 Bot 啟動失敗: {e}")
-        return None
+    """[已棄用] 請改用獨立統一 Bot：scripts/run_telegram_bot.py"""
+    print("⚠️  --telegram-commands 已棄用。")
+    print("   請改用獨立統一 Telegram Bot（支援多策略）：")
+    print("   PYTHONPATH=src python scripts/run_telegram_bot.py \\")
+    print("       -c config/prod_candidate_meta_blend.yaml \\")
+    print("       -c config/prod_live_oi_liq_bounce.yaml --real")
+    print()
+    return None
 
 
 def cmd_run(args, cfg) -> None:

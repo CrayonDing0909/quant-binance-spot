@@ -10,6 +10,21 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-25
 
+### 統一多策略 Telegram Bot（全新模組）
+- 新增 `src/qtrade/monitor/multi_strategy_bot.py` — `MultiStrategyBot` 類別，獨立進程運行，支援多策略
+  - 直連 Binance API 查詢帳戶狀態（無需 Runner 橋接）
+  - 讀取各策略 `last_signals.json` 顯示信號
+  - 命令重設計：`/dashboard`, `/status`, `/positions`, `/pnl`, `/signals`, `/risk`, `/health`, `/help`
+  - 所有命令支援 inline buttons（時段切換、展開/收起、策略篩選）
+  - 每日自動摘要（UTC 00:05）
+  - 可配置告警系統（drawdown、circuit breaker、大額交易）
+- 重構 `scripts/run_telegram_bot.py` — 支援多個 `-c config.yaml` 參數
+- 修改 `src/qtrade/live/websocket_runner.py` — 新增 `_save_last_signals()` 方法，每次信號更新後寫 `last_signals.json`
+- 修改 `scripts/run_live.py` — `--telegram-commands` 已棄用（印提示指向 `run_telegram_bot.py`）
+- `scripts/run_websocket.py` 中 TelegramCommandBot 啟動早已移除（僅保留 TelegramNotifier）
+- 更新 `devops.md` — 新增「統一 Telegram Bot 部署」section（架構圖、tmux 指令、環境變數）
+- 重新生成 `docs/CLI_REFERENCE.md`
+
 ### Meta-Blend 生產部署（替換 R3C）
 - Meta-Blend 8-Symbol 上線替換 R3C 10-Symbol（tmux: `meta_blend_live`）
 - R3C 所有 10 個空頭倉位平倉（+20.34 USDT），tmux `r3c_e3_live` 已停止

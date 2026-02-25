@@ -32,11 +32,12 @@ import logging
 import traceback
 import threading
 import pandas as pd
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from ..config import AppConfig
 from ..utils.log import get_logger
-from .signal_generator import generate_signal
+from .signal_generator import generate_signal, SignalResult
 from .kline_cache import IncrementalKlineCache
 from .base_runner import BaseRunner
 
@@ -100,6 +101,9 @@ class WebSocketRunner(BaseRunner):
         self._reconnect_lock = threading.Lock()
         self._reconnect_grace_until: float = 0.0  # 重連成功後的寬限期（忽略舊 callback 殘留）
         self._fast_heartbeat_until: float = 0.0   # 快速心跳偵測窗口結束時間
+
+        # 最新信號快取（per-symbol），供 _save_last_signals 寫 JSON
+        self._latest_signals: Dict[str, SignalResult] = {}
 
         # K 線快取（BaseRunner 的 _kline_cache 由子類設定）
         cache_dir = cfg.get_report_dir("live") / "kline_cache"
@@ -251,6 +255,10 @@ class WebSocketRunner(BaseRunner):
         # 使用 BaseRunner 的共享信號處理
         trade = self._process_signal(symbol, sig)
 
+        # 更新信號快取並寫 JSON（供統一 TG Bot 讀取）
+        self._latest_signals[symbol] = sig
+        self._save_last_signals()
+
         # 發送信號摘要
         if trade:
             try:
@@ -259,6 +267,27 @@ class WebSocketRunner(BaseRunner):
                 )
             except Exception:
                 pass
+
+    def _save_last_signals(self) -> None:
+        """保存最新信號快照到 JSON，供統一 Telegram Bot (/signals) 讀取"""
+        try:
+            sig_path = self.cfg.get_report_dir("live") / "last_signals.json"
+            sig_path.parent.mkdir(parents=True, exist_ok=True)
+
+            serializable = [
+                sig.to_dict() for sig in self._latest_signals.values()
+            ]
+
+            payload = {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "mode": self.mode,
+                "signals": serializable,
+            }
+
+            with open(sig_path, "w") as f:
+                json.dump(payload, f, indent=2, default=str)
+        except Exception as e:
+            self._log.debug(f"  保存信號快照失敗: {e}")
 
     # ══════════════════════════════════════════════════════════
     #  WebSocket 管理 + 心跳監控 + 自動重連

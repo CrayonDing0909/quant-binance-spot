@@ -44,7 +44,7 @@
 
 | Script | Description |
 |--------|-------------|
-| `run_telegram_bot.py` | Telegram Bot 常駐服務 |
+| `run_telegram_bot.py` | Telegram Bot 統一常駐服務（支援多策略） |
 | `query_db.py` | 交易資料庫查詢工具 |
 | `health_check.py` | 系統健康檢查 |
 | `daily_report.py` | Paper Trading 每日績效報表 |

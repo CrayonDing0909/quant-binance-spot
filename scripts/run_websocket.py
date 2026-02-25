@@ -121,19 +121,11 @@ def main():
     except Exception as e:
         logger.warning(f"⚠️  Live Watchdog 啟動失敗（不影響交易）: {e}")
 
-    # 啟動 Telegram 命令 Bot（背景執行，接收 /help /risk /health 等指令）
-    try:
-        from qtrade.monitor.telegram_bot import TelegramCommandBot
-        telegram_bot = TelegramCommandBot(
-            live_runner=runner,
-            broker=broker,
-            state_manager=getattr(runner, "state_manager", None),
-            watchdog=watchdog,
-        )
-        telegram_bot.start_background()
-        logger.info("🤖 Telegram 命令 Bot 已在背景啟動")
-    except Exception as e:
-        logger.warning(f"⚠️  Telegram 命令 Bot 啟動失敗（不影響交易）: {e}")
+    # ── Telegram 命令 Bot 已移至獨立進程（scripts/run_telegram_bot.py）──
+    # Runner 只保留 TelegramNotifier 做交易推送通知，不再啟動命令輪詢。
+    # 這解決了多 Runner 共用同一 Bot Token 導致訊息互搶的問題。
+    # 請用 scripts/run_telegram_bot.py -c config/a.yaml -c config/b.yaml --real 啟動統一 Bot。
+    logger.info("ℹ️  Telegram 命令 Bot 已移至獨立進程（run_telegram_bot.py）")
 
     logger.info("🚀 啟動中...")
     try:
