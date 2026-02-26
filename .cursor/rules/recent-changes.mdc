@@ -10,6 +10,61 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-27
 
+### LSR Alpha 全維度探索（Alpha Researcher）
+- **Alpha Research**: 新增 `notebooks/research/20260227_lsr_full_alpha_exploration.ipynb` — LSR 信號系統性探索
+  - 從 6 個數據源（LSR, Top LSR, OI, CVD, TVR, FR）衍生 21 種信號變體
+  - 全面 IC 比較：`retail_vs_top` IC=-0.041 最強（lsr_pctrank 的 1.6x）
+  - 8 種 TSMOM + LSR overlay 配置回測：`D_oi_fr_confirm` 最佳（+0.524 SR, 8/8 wins）
+  - `retail_vs_top` standalone 發現正交 alpha（corr=0.083 vs TSMOM）但 2026 IC 翻轉 + 換手率 7.8x
+  - Cross-symbol crowding filter 因果修正後無效（Δ SR=+0.01）
+  - **TIER 1 推薦**: 升級 overlay A→D（加入 OI+FR 確認層），+0.09 avg SR, 風險低
+  - **TIER 2 研究**: retail_vs_top standalone 需解決換手率 + 2026 翻轉問題
+  - Handoff → Quant Developer: 修改 `lsr_confirmatory_overlay.py` 加入 OI+FR 確認層
+
+### HTF Filter v2 + LSR Overlay Config Freeze（Quant Developer）
+- **Config Freeze**: 新增 `config/prod_candidate_htf_lsr.yaml` — 從 `research_htf_lsr_overlay.yaml` 凍結
+  - 加入完整 `live` section（governance, watchdog, rebalance band）從 `prod_candidate_htf_filter.yaml` 繼承
+  - 啟用 notification，prefix `🚀 [CANDIDATE-HTF-LSR]`
+  - 策略展示名 `display_name: "HTF Filter v2 + LSR"`
+  - 回測驗證：SR=2.87, MDD=-4.75%, Calmar=6.09（與 research 完全一致）
+  - 唯一變更 vs baseline：overlay `oi_vol` → `oi_vol+lsr_confirmatory` + 7 LSR params
+  - Observation: 2026-02-27 ~ 2026-03-13, rollback → `prod_candidate_htf_filter.yaml`
+  - Handoff → DevOps: 替換 `meta_blend_live` tmux config
+- **DevOps**: 部署方案 — 直接替換 `meta_blend_live` config
+  - `prod_candidate_htf_filter.yaml` → `prod_candidate_htf_lsr.yaml`
+  - 不新增 runner（1GB RAM 限制），同一 tmux session
+  - LSR 數據：8/8 symbols parquet 已存在，cron 每日 03:00 UTC 自動更新
+  - Observation period: 2026-02-27 ~ 2026-03-13
+  - Rollback Level 1: 切回 `prod_candidate_htf_filter.yaml` 重啟
+  - 更新 `devops.md`（架構、cron、monitoring refs 全部指向新 config）
+  - 更新 `project-overview.mdc`（Active Strategy → HTF Filter v2 + LSR）
+- 重新生成 `docs/CLI_REFERENCE.md`、`docs/DATA_STRATEGY_CATALOG.md`
+
+### LSR Overlay on HTF Filter v2 初步回測 + 完整驗證 GO_NEXT + 風控 APPROVED
+- **Quant Dev**: 新增 `config/research_htf_lsr_overlay.yaml` — HTF Filter v2 + LSR Confirmatory Overlay 研究配置
+  - 基於 `prod_candidate_htf_filter.yaml`，唯一變更：overlay `oi_vol` → `oi_vol+lsr_confirmatory`
+  - LSR params: boost=1.3, reduce=0.3, pctile=0.85（沿用前次優化結果）
+- **回測結果** (HTF Filter v2 + LSR vs HTF Filter v2 baseline):
+  - Portfolio SR: **2.87** (+0.13 vs HTF baseline 2.74)
+  - Total Return: **+187.5%** (+31.7pp vs baseline +155.7%)
+  - MDD: **-4.75%** (vs baseline -4.45%, Δ=+0.30pp)
+  - Calmar: **6.09** (vs baseline 5.69)
+  - Sortino: **4.03** (vs baseline 3.80)
+  - 7/8 symbols improved（BNB -0.16 唯一下降）
+- **Quant Researcher**: HTF v2 + LSR 完整驗證 — **GO_NEXT**
+  - WFA 8/8 OOS+（max decay 26.4% LINK）, CPCV PBO 0.07 all 8 symbols
+  - DSR 1.87 (p<0.001), 2x Cost SR=2.11, Delay drop 2.0%
+  - Pre-Deploy Consistency: 11 PASS / 3 WARN / 0 FAIL
+- **Risk Manager**: HTF v2 + LSR pre-launch risk audit — **APPROVED**
+  - MC1 Return Bootstrap: 5th pct CAGR +158.6% (>0%) ✅
+  - MC2 Trade-Order Shuffle: 95th-worst MDD -17.4% (1.87x baseline, <2x) ✅
+  - MC3 Cost Perturbation: Median SR=4.91 (>0.3) ✅
+  - MC4 Execution Jitter: avg delay drop 0.5% (<30%) ✅
+  - Portfolio Risk: VaR(95%)=1.25%, HHI=0.1267, Top-2=30.0%, max corr=0.537 — 全 PASS
+  - meta_blend auto_delay=False 確認 ✅
+  - Observation: 2x Cost SR=2.11 vs baseline 2.22 (LSR 略增成本敏感度，但仍遠超門檻)
+- 重新生成 `docs/CLI_REFERENCE.md`、`docs/DATA_STRATEGY_CATALOG.md`
+
 ### LSR Overlay 參數優化 (reduce × pctile 4-way sweep)
 - **Quant Dev**: 4-way 參數 sweep（reduce={0.3, 0.5} × pctile={0.85, 0.90}）
   - **最佳組合**: reduce=0.3, pctile=0.85 → avg per-symbol SR=2.43 (vs reduce=0.5: 2.27)

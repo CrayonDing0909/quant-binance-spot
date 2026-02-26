@@ -89,6 +89,7 @@
 |--------|------|
 | `prod_candidate_R3C_universe.yaml` | `config/prod_candidate_R3C_universe.yaml` |
 | `prod_candidate_htf_filter.yaml` | `config/prod_candidate_htf_filter.yaml` |
+| `prod_candidate_htf_lsr.yaml` | `config/prod_candidate_htf_lsr.yaml` |
 | `prod_candidate_meta_blend.yaml` | `config/prod_candidate_meta_blend.yaml` |
 | `prod_live_R3C_E3.yaml` | `config/prod_live_R3C_E3.yaml` |
 | `prod_live_oi_liq_bounce.yaml` | `config/prod_live_oi_liq_bounce.yaml` |
@@ -113,6 +114,7 @@
 | Config | File |
 |--------|------|
 | `research_htf_filter.yaml` | `config/research_htf_filter.yaml` |
+| `research_htf_lsr_overlay.yaml` | `config/research_htf_lsr_overlay.yaml` |
 | `research_lsr_contrarian.yaml` | `config/research_lsr_contrarian.yaml` |
 | `research_lsr_overlay_meta_blend.yaml` | `config/research_lsr_overlay_meta_blend.yaml` |
 | `research_meta_blend.yaml` | `config/research_meta_blend.yaml` |

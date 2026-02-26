@@ -510,6 +510,56 @@ class ConsistencyValidator:
                                 f"Consistency validator: 無法載入 LSR for overlay: {e}"
                             )
 
+                # OI 確認層數據（lsr_confirmatory + oi_confirm_enabled）
+                if ("lsr_confirmatory" in overlay_mode
+                        and overlay_params.get("oi_confirm_enabled", False)
+                        and "_oi_series" not in overlay_params):
+                    if self.data_dir:
+                        try:
+                            from ..data.open_interest import (
+                                get_oi_path, load_open_interest, align_oi_to_klines,
+                            )
+                            data_dir = Path(self.data_dir)
+                            for prov in ["merged", "binance_vision", "coinglass", "binance"]:
+                                oi_path = get_oi_path(data_dir, symbol, prov)
+                                oi_df = load_open_interest(oi_path)
+                                if oi_df is not None and not oi_df.empty:
+                                    overlay_params["_oi_series"] = align_oi_to_klines(
+                                        oi_df, df.index, max_ffill_bars=2,
+                                    )
+                                    break
+                        except Exception as e:
+                            logger.warning(
+                                f"Consistency validator: 無法載入 OI for LSR confirm: {e}"
+                            )
+
+                # FR 確認層數據（lsr_confirmatory + fr_confirm_enabled）
+                if ("lsr_confirmatory" in overlay_mode
+                        and overlay_params.get("fr_confirm_enabled", False)
+                        and "_fr_series" not in overlay_params):
+                    if self.data_dir:
+                        try:
+                            from ..data.funding_rate import (
+                                load_funding_rates, get_funding_rate_path,
+                            )
+                            data_dir = Path(self.data_dir)
+                            fr_path = get_funding_rate_path(data_dir, symbol)
+                            funding_df = load_funding_rates(fr_path)
+                            if funding_df is not None and not funding_df.empty:
+                                fr_col = (
+                                    "fundingRate"
+                                    if "fundingRate" in funding_df.columns
+                                    else funding_df.columns[0]
+                                )
+                                fr_series = funding_df[fr_col]
+                                overlay_params["_fr_series"] = fr_series.reindex(
+                                    df.index, method="ffill"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Consistency validator: 無法載入 FR for LSR confirm: {e}"
+                            )
+
                 positions = apply_overlay_by_mode(
                     position=positions,
                     price_df=df,

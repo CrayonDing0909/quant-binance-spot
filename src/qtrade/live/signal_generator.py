@@ -238,6 +238,53 @@ def generate_signal(
                 except Exception as e:
                     logger.warning(f"  {symbol}: overlay LSR 載入失敗: {e}")
 
+        # OI 確認層數據：lsr_confirmatory + oi_confirm_enabled 時載入
+        if ("lsr_confirmatory" in overlay_mode
+                and overlay_params.get("oi_confirm_enabled", False)
+                and "_oi_series" not in overlay_params):
+            data_dir = params.get("_data_dir")
+            if data_dir:
+                try:
+                    from ..data.open_interest import (
+                        get_oi_path, load_open_interest, align_oi_to_klines,
+                    )
+                    from pathlib import Path
+                    data_dir_path = Path(data_dir)
+                    for _prov in ["merged", "binance_vision", "coinglass", "binance"]:
+                        _oi_path = get_oi_path(data_dir_path, symbol, _prov)
+                        _oi_df = load_open_interest(_oi_path)
+                        if _oi_df is not None and not _oi_df.empty:
+                            overlay_params["_oi_series"] = align_oi_to_klines(
+                                _oi_df, df.index, max_ffill_bars=2,
+                            )
+                            logger.debug(f"  {symbol}: overlay OI (for LSR confirm) 載入成功")
+                            break
+                except Exception as e:
+                    logger.warning(f"  {symbol}: overlay OI (for LSR confirm) 載入失敗: {e}")
+
+        # FR 確認層數據：lsr_confirmatory + fr_confirm_enabled 時載入
+        if ("lsr_confirmatory" in overlay_mode
+                and overlay_params.get("fr_confirm_enabled", False)
+                and "_fr_series" not in overlay_params):
+            data_dir = params.get("_data_dir")
+            if data_dir:
+                try:
+                    from ..data.funding_rate import load_funding_rates, get_funding_rate_path
+                    from pathlib import Path
+                    data_dir_path = Path(data_dir)
+                    fr_path = get_funding_rate_path(data_dir_path, symbol)
+                    funding_df = load_funding_rates(fr_path)
+                    if funding_df is not None and not funding_df.empty:
+                        fr_col = "fundingRate" if "fundingRate" in funding_df.columns else funding_df.columns[0]
+                        fr_series = funding_df[fr_col]
+                        fr_aligned = fr_series.reindex(df.index, method="ffill")
+                        overlay_params["_fr_series"] = fr_aligned
+                        logger.debug(f"  {symbol}: overlay FR (for LSR confirm) 載入成功")
+                    else:
+                        logger.warning(f"  {symbol}: overlay FR 數據不存在")
+                except Exception as e:
+                    logger.warning(f"  {symbol}: overlay FR (for LSR confirm) 載入失敗: {e}")
+
         positions = apply_overlay_by_mode(
             position=positions,
             price_df=df,

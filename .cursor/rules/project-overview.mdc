@@ -14,20 +14,22 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
 
 ## Production Strategy
 
-- **Active**: HTF Filter v2 — Meta-Blend 8-Symbol + Multi-TF Resonance, 3x leverage
-  - **Config**: [prod_candidate_htf_filter.yaml](mdc:config/prod_candidate_htf_filter.yaml)
-  - **Strategy code**: [meta_blend_strategy.py](mdc:src/qtrade/strategy/meta_blend_strategy.py) + [tsmom_carry_v2_strategy.py](mdc:src/qtrade/strategy/tsmom_carry_v2_strategy.py)
+- **Active**: HTF Filter v2 + LSR — Meta-Blend 8-Symbol + HTF Filter + LSR Confirmatory Overlay, 3x leverage
+  - **Config**: [prod_candidate_htf_lsr.yaml](mdc:config/prod_candidate_htf_lsr.yaml)
+  - **Strategy code**: [meta_blend_strategy.py](mdc:src/qtrade/strategy/meta_blend_strategy.py) + [tsmom_carry_v2_strategy.py](mdc:src/qtrade/strategy/tsmom_carry_v2_strategy.py) + [lsr_confirmatory_overlay.py](mdc:src/qtrade/strategy/overlays/lsr_confirmatory_overlay.py)
   - **Deployment**: Oracle Cloud (x86_64, 1GB RAM), WebSocket mode via tmux (`meta_blend_live`)
   - **Routing**: BTC=breakout_vol_atr+tsmom_carry_v2/btc_enhanced+HTF_daily_dominant, ETH/SOL/AVAX/BNB/DOGE/ADA/LINK=tsmom_carry_v2+HTF_C_hard
   - **HTF Filter**: 4h EMA trend + daily ADX regime（從 1h 因果重採樣）
-  - **Key metrics**: Portfolio SR=2.75, MDD=-4.45%, Calmar=5.72, 2x Cost SR=2.24
-  - **Risk Audit**: 12/12 PASS (2026-02-27), WFA 8/8 OOS+, CPCV PBO max 0.13
-  - **Launched**: 2026-02-27 (replaced Meta-Blend baseline)
+  - **LSR Overlay**: oi_vol+lsr_confirmatory（boost=1.3, reduce=0.3, pctile=0.85）
+  - **Key metrics**: Portfolio SR=2.87, MDD=-4.75%, Calmar=6.09, 2x Cost SR=2.11
+  - **Risk Audit**: APPROVED (2026-02-27), WFA 8/8 OOS+, CPCV PBO 0.07, MC 4/4 PASS
+  - **Launched**: 2026-02-27 (replaced HTF Filter v2)
   - **Observation period**: → 2026-03-13, rollback if MDD > -10% or SR < 0 for 3 consecutive days
 
 - **Retired (rollback available)**:
-  - **Level 1 — Meta-Blend baseline**: [prod_candidate_meta_blend.yaml](mdc:config/prod_candidate_meta_blend.yaml) (SR=2.265, instant rollback)
-  - **Level 2 — R3C Ensemble**: [prod_live_R3C_E3.yaml](mdc:config/prod_live_R3C_E3.yaml) (legacy rollback)
+  - **Level 1 — HTF Filter v2**: [prod_candidate_htf_filter.yaml](mdc:config/prod_candidate_htf_filter.yaml) (SR=2.75, instant rollback)
+  - **Level 2 — Meta-Blend baseline**: [prod_candidate_meta_blend.yaml](mdc:config/prod_candidate_meta_blend.yaml) (SR=2.265)
+  - **Level 3 — R3C Ensemble**: [prod_live_R3C_E3.yaml](mdc:config/prod_live_R3C_E3.yaml) (legacy rollback)
 
 ## Approved Candidates (pending paper trading)
 

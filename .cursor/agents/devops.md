@@ -83,14 +83,14 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 ## Oracle Cloud 部署
 
-### 當前架構（2026-02-27 HTF Filter v2 上線）
+### 當前架構（2026-02-27 HTF Filter v2 + LSR 上線）
 
 ```
 Server: Oracle Cloud (1GB RAM, x86_64, Ubuntu 22.04)
 IP: 140.83.57.255
 Mode: WebSocket event-driven (tmux session: meta_blend_live)
-Config: config/prod_candidate_htf_filter.yaml
-Strategy: meta_blend 8-Symbol + HTF Filter v2
+Config: config/prod_candidate_htf_lsr.yaml
+Strategy: meta_blend 8-Symbol + HTF Filter v2 + LSR Confirmatory Overlay
   - BTC: breakout_vol_atr(30%) + tsmom_carry_v2/btc_enhanced(70%) + HTF daily-dominant
          (htf_no_confirm=0.7, htf_4h_only_confirm=0.3, htf_4h_ema 30/100)
   - ETH: tsmom_carry_v2/eth_enhanced (OI/FR/Basis) + HTF C_hard
@@ -100,13 +100,16 @@ Strategy: meta_blend 8-Symbol + HTF Filter v2
 Leverage: 3x ISOLATED
 Weight sum: 3.0 (3× allocation leverage)
 Circuit breaker: 40% MDD
-Overlays: vol_pause (oi_vol mode, vol_spike_z=2.0)
-Telegram prefix: 🚀 [CANDIDATE-HTF-Filter-v2]
-HTF Filter: 4h EMA trend + daily ADX regime（從 1h K 線因果重採樣，無額外數據需求）
-Risk Audit: 12/12 PASS (2026-02-27)
-  - Portfolio SR: 2.75, MDD: -4.45%, Calmar: 5.72
-  - 2x Cost SR: 2.24, WFA 8/8 OOS+, CPCV PBO max 0.13
-  - 8/8 symbols SR improved (avg Δ+0.39)
+Overlays: oi_vol+lsr_confirmatory (vol_spike_z=2.0, LSR boost=1.3/reduce=0.3)
+Telegram prefix: 🚀 [CANDIDATE-HTF-LSR]
+HTF Filter: 4h EMA trend + daily ADX regime（從 1h K 線因果重採樣）
+LSR Overlay: 散戶 LSR percentile rank，boost=1.3 / reduce=0.3 / pctile=0.85
+  - 需要衍生品 LSR 數據（data/binance/futures/derivatives/lsr/）
+  - Cron 每日 03:00 UTC 下載（見 Cron Jobs 區塊）
+Risk Audit: APPROVED (2026-02-27)
+  - Portfolio SR: 2.87, MDD: -4.75%, Calmar: 6.09
+  - 2x Cost SR: 2.11, WFA 8/8 OOS+, CPCV PBO 0.07
+  - MC 4/4 PASS, Portfolio Risk 3/3 PASS
 Observation Period: 2026-02-27 ~ 2026-03-13 (≥ 2 weeks)
   - 每日比較信號 + weekly /risk-review 監控
   - 異常指標: 連續 3 天 SR < 0 或 MDD > -10% → rollback
@@ -116,6 +119,12 @@ Observation Period: 2026-02-27 ~ 2026-03-13 (≥ 2 weeks)
 
 ```
 Rollback Level 1 (immediate):
+  Config: config/prod_candidate_htf_filter.yaml
+  Action: 修改 tmux 啟動指令 config → 重啟 meta_blend_live
+  Strategy: HTF Filter v2（無 LSR overlay）
+  SR: 2.75, MDD: -4.45%
+
+Rollback Level 2:
   Config: config/prod_candidate_meta_blend.yaml
   Action: 修改 tmux 啟動指令 config → 重啟 meta_blend_live
   Strategy: meta_blend baseline（無 HTF filter）
@@ -206,8 +215,9 @@ PYTHONPATH=src python scripts/run_websocket.py -c config/prod_live_R3C_E3.yaml -
 ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255
 cd ~/quant-binance-spot && source .venv/bin/activate && git pull
 
-# 確認數據（HTF Filter 從 1h 重採樣，無額外數據需求）
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_htf_filter.yaml
+# 確認數據（HTF Filter 從 1h 重採樣 + LSR 需要衍生品數據）
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_htf_lsr.yaml
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_htf_lsr.yaml --derivatives
 
 # 重啟 runner（tmux while-true 循環會自動 git pull + 使用新 config）
 tmux send-keys -t meta_blend_live C-c
@@ -221,22 +231,24 @@ sleep 15 && tmux capture-pane -t meta_blend_live -p | tail -20
 tmux kill-session -t meta_blend_live 2>/dev/null
 tmux new -d -s meta_blend_live 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
-  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_htf_filter.yaml --real;
+  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_htf_lsr.yaml --real;
   echo "Runner exited, restarting in 10s..."; sleep 10;
 done'
 sleep 10 && tmux capture-pane -t meta_blend_live -p | tail -20
 ```
 
 #### 額外數據需求
-meta_blend / HTF Filter v2 策略需要的數據：
+meta_blend / HTF Filter v2 + LSR 策略需要的數據：
 
 | 數據 | 用途 | 下載指令 |
 |------|------|----------|
 | 1h Klines | 主數據 + HTF 重採樣 (4h/1d) | `download_data.py -c <cfg>` |
 | Funding Rate | FR carry signal | `download_data.py -c <cfg> --funding-rate` |
 | Open Interest | OI overlay (vol_pause) | `download_data.py --oi` |
+| **LSR (Long/Short Ratio)** | **LSR confirmatory overlay** | `download_data.py -c <cfg> --derivatives` |
 
 HTF Filter 的 4h/1d 數據由 `_resample_ohlcv()` 從 1h 因果重採樣，**不需要**額外 4h/1d K 線下載。
+LSR 數據由 cron 每日 03:00 UTC 下載（見 Cron Jobs）。
 
 ### 緊急回滾
 
@@ -252,11 +264,11 @@ HTF Filter 的 4h/1d 數據由 `_resample_ohlcv()` 從 1h 因果重採樣，**�
 | 用途 | 指令 |
 |------|------|
 | 查看 runner 日誌 | `tmux attach -t meta_blend_live` 或 `tail -100 logs/meta_blend_live.log` |
-| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_htf_filter.yaml --real --notify` |
-| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_htf_filter.yaml` |
-| 查詢交易 DB | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_filter.yaml summary` |
-| 匯出交易紀錄 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_filter.yaml export` |
-| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_htf_filter.yaml` |
+| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_htf_lsr.yaml --real --notify` |
+| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_htf_lsr.yaml` |
+| 查詢交易 DB | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_lsr.yaml summary` |
+| 匯出交易紀錄 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_lsr.yaml export` |
+| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_htf_lsr.yaml` |
 | 查看當前持倉 | 見下方 Python snippet |
 
 ### 查看當前持倉
@@ -319,8 +331,8 @@ data/binance/futures/liquidation/{SYMBOL}.parquet                 ← 爆倉數�
 ### Cron Jobs（Oracle Cloud，UTC 時區）
 
 ```
-# HTF Filter v2 / Meta-Blend Kline + FR (every 6h)
-10 */6 * * * download_data.py -c config/prod_candidate_htf_filter.yaml
+# HTF Filter v2 + LSR Kline + FR (every 6h)
+10 */6 * * * download_data.py -c config/prod_candidate_htf_lsr.yaml
 
 # R3C Kline + FR (retained for rollback, every 6h)
 15 */6 * * * download_data.py -c config/prod_live_R3C_E3.yaml
@@ -336,7 +348,8 @@ data/binance/futures/liquidation/{SYMBOL}.parquet                 ← 爆倉數�
 
 # Derivatives (LSR + Taker Vol + CVD) — daily at 03:00 UTC
 # binance_vision source, history depth ~30 days (Binance API limit)
-0 3 * * * download_data.py -c config/prod_candidate_meta_blend.yaml --derivatives
+# ⚠️ LSR data is REQUIRED for prod_candidate_htf_lsr.yaml overlay
+0 3 * * * download_data.py -c config/prod_candidate_htf_lsr.yaml --derivatives
 ```
 
 ### 多 Runner Watchdog
@@ -396,7 +409,7 @@ cd ~/quant-binance-spot && source .venv/bin/activate && git pull
 tmux new -d -s tg_bot 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate &&
   PYTHONPATH=src python scripts/run_telegram_bot.py \
-    -c config/prod_candidate_htf_filter.yaml \
+    -c config/prod_candidate_htf_lsr.yaml \
     -c config/prod_live_oi_liq_bounce.yaml \
     --real;
   echo "TG Bot exited, restarting in 10s..."; sleep 10;

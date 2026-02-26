@@ -467,6 +467,45 @@ def run_symbol_backtest(
                 except Exception as e:
                     logger.warning(f"  {symbol}: overlay LSR 載入失敗: {e}")
 
+        # OI 確認層數據：lsr_confirmatory + oi_confirm_enabled 時載入 OI 到 overlay_params
+        if ("lsr_confirmatory" in overlay_mode
+                and overlay_params.get("oi_confirm_enabled", False)
+                and "_oi_series" not in overlay_params):
+            if data_dir:
+                try:
+                    from ..data.open_interest import get_oi_path, load_open_interest, align_oi_to_klines
+                    for _prov in ["merged", "coinglass", "binance"]:
+                        _oi_path = get_oi_path(data_dir, symbol, _prov)
+                        _oi_df = load_open_interest(_oi_path)
+                        if _oi_df is not None and not _oi_df.empty:
+                            overlay_params["_oi_series"] = align_oi_to_klines(
+                                _oi_df, df.index, max_ffill_bars=2
+                            )
+                            logger.debug(f"  {symbol}: overlay OI (for LSR confirm) 載入成功")
+                            break
+                except Exception as e:
+                    logger.warning(f"  {symbol}: overlay OI (for LSR confirm) 載入失敗: {e}")
+
+        # FR 確認層數據：lsr_confirmatory + fr_confirm_enabled 時載入 FR 到 overlay_params
+        if ("lsr_confirmatory" in overlay_mode
+                and overlay_params.get("fr_confirm_enabled", False)
+                and "_fr_series" not in overlay_params):
+            if data_dir:
+                try:
+                    fr_path = get_funding_rate_path(data_dir, symbol)
+                    funding_df = load_funding_rates(fr_path)
+                    if funding_df is not None and not funding_df.empty:
+                        # 使用原始 funding rate 值（非對齊到結算時刻），用於 pctrank 計算
+                        fr_col = "fundingRate" if "fundingRate" in funding_df.columns else funding_df.columns[0]
+                        fr_series = funding_df[fr_col]
+                        fr_aligned = fr_series.reindex(df.index, method="ffill")
+                        overlay_params["_fr_series"] = fr_aligned
+                        logger.debug(f"  {symbol}: overlay FR (for LSR confirm) 載入成功 ({len(funding_df)} rows)")
+                    else:
+                        logger.warning(f"  {symbol}: overlay FR 數據不存在")
+                except Exception as e:
+                    logger.warning(f"  {symbol}: overlay FR (for LSR confirm) 載入失敗: {e}")
+
         pos = apply_overlay_by_mode(
             position=pos,
             price_df=df,
