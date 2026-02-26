@@ -1,0 +1,311 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — HTF Filter for tsmom_carry_v2
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-26
+# Origin: config/prod_candidate_meta_blend.yaml (production baseline)
+# Hypothesis: Multi-TF Resonance filter (C_4h+daily_hard) improves
+#   tsmom_carry_v2 signal quality by filtering against 4h trend + 1d regime
+#
+# Alpha Researcher P1 Analysis (2026-02-26):
+#   - 24h IC: +212% (0.016 → 0.048), 8/8 symbols improved
+#   - Turnover: -40% (17/yr → 10/yr), cost savings ~0.80%/yr
+#   - Trending & choppy regimes both improved
+#   - Kill criteria NOT triggered
+#
+# CHANGE vs BASELINE:
+#   - htf_filter_enabled: true added to ALL tsmom_carry_v2 sub-strategies
+#   - BTC: daily-dominant variant E (htf_no_confirm=0.7, htf_4h_only_confirm=0.3,
+#          htf_4h_ema 30/100) — BTC 720h TSMOM cycle too long for default 4h EMA veto
+#          Pure V2 ablation: SR 2.434 vs 1.725 baseline (+0.709)
+#   - Other 7 symbols: default C_4h+daily_hard (htf_no_confirm=0.0)
+#   - All other params identical to production config
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "meta_blend"
+  params:
+    # ── Default sub-strategy combo (BNB, DOGE, ADA) ──
+    sub_strategies:
+      - name: "tsmom_carry_v2"
+        weight: 1.0
+        params:
+          combination_mode: "confirmatory"
+          tier: "default"
+          tsmom_lookback: 168
+          tsmom_vol_target: 0.15
+          tsmom_ema_fast: 20
+          tsmom_ema_slow: 50
+          tsmom_agree_weight: 1.0
+          tsmom_disagree_weight: 0.3
+          basis_ema_fast: 24
+          basis_ema_slow: 168
+          basis_tanh_scale: 50.0
+          fr_rolling_window: 72
+          oi_z_window: 168
+          basis_carry_fr_weight: 0.7
+          basis_carry_basis_weight: 0.3
+          w_tsmom: 0.50
+          w_basis_carry: 0.50
+          carry_agree_scale: 1.0
+          carry_disagree_scale: 0.7
+          carry_neutral_scale: 0.85
+          carry_confirm_smoothing: 24
+          composite_ema: 12
+          position_step: 0.1
+          min_change_threshold: 0.05
+          # ── HTF Filter (NEW) ──
+          htf_filter_enabled: true
+
+  symbol_overrides:
+    # ── BTC: breakout_vol_atr(30%) + tsmom_carry_v2(70%) ──
+    BTCUSDT:
+      sub_strategies:
+        - name: "breakout_vol_atr"
+          weight: 0.30
+          params:
+            channel_period: 336
+            channel_multiplier: 2.5
+            atr_period: 14
+            vol_fast_period: 14
+            vol_slow_period: 72
+            expansion_ratio: 1.1
+            fake_breakout_bars: 6
+            min_hold_bars: 24
+            trail_exit_mid: true
+            stop_loss_atr: 3.5
+            max_holding_bars: 72
+            cooldown_bars: 24
+            vol_scale_enabled: true
+            vol_scale_target: 99.0
+            vol_scale_lookback: 168
+            vol_scale_floor: 0.7
+            vol_scale_cap: 0.7
+            volume_confirm_enabled: true
+            volume_confirm_period: 20
+            volume_confirm_ratio: 1.5
+        - name: "tsmom_carry_v2"
+          weight: 0.70
+          params:
+            combination_mode: "confirmatory"
+            tier: "btc_enhanced"
+            tsmom_lookback: 720
+            tsmom_ema_fast: 30
+            tsmom_ema_slow: 100
+            tsmom_vol_target: 0.15
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.6
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            # ── HTF Filter (BTC daily-dominant variant E) ──
+            # BTC 720h TSMOM 週期太長，default 4h EMA 20/50 veto 反而增加雜訊
+            # daily-dominant: 放鬆 4h veto (0.7), 懲罰 4h-only (0.3)
+            # longer 4h EMA (30/100) 匹配 BTC 內建 EMA 週期
+            # Phase 2 結果: SR 2.434 (+0.709 vs baseline), Calmar 2.473
+            htf_filter_enabled: true
+            htf_4h_ema_fast: 30
+            htf_4h_ema_slow: 100
+            htf_no_confirm: 0.7
+            htf_4h_only_confirm: 0.3
+
+    # ── ETH: 100% tsmom_carry_v2 (eth_enhanced with OI/FR/Basis) ──
+    ETHUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "eth_enhanced"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            w_tsmom: 0.40
+            w_oi: 0.25
+            w_fr: 0.15
+            w_basis: 0.20
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            oi_z_window: 168
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            # ── HTF Filter (NEW) ──
+            htf_filter_enabled: true
+
+    # ── SOL: 100% tsmom_carry_v2 (tsmom_heavy) ──
+    SOLUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "tsmom_heavy"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            w_tsmom: 0.70
+            w_basis_carry: 0.30
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            basis_carry_fr_weight: 0.7
+            basis_carry_basis_weight: 0.3
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            # ── HTF Filter (NEW) ──
+            htf_filter_enabled: true
+
+    # ── AVAX: 100% tsmom_carry_v2 (tsmom_heavy) ──
+    AVAXUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "tsmom_heavy"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            w_tsmom: 0.70
+            w_basis_carry: 0.30
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            basis_carry_fr_weight: 0.7
+            basis_carry_basis_weight: 0.3
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            # ── HTF Filter (NEW) ──
+            htf_filter_enabled: true
+
+    # ── LINK: 100% tsmom_carry_v2 (tsmom_only) ──
+    LINKUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            tier: "tsmom_only"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            # ── HTF Filter (NEW) ──
+            htf_filter_enabled: true
+
+  # ── Overlay: vol_pause enabled (same as production) ──
+  overlay:
+    enabled: true
+    mode: "oi_vol"
+    params:
+      oi_extreme_z: 999.0
+      oi_reversal_window: 6
+      reduce_pct: 0.5
+      oi_lookback: 24
+      oi_z_window: 168
+      vol_spike_z: 2.0
+      overlay_cooldown_bars: 12
+      trend_lookback: 20
+      atr_period: 14
+      vol_z_window: 168
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.45
+    ETHUSDT: 0.45
+    SOLUSDT: 0.35
+    BNBUSDT: 0.35
+    DOGEUSDT: 0.35
+    ADAUSDT: 0.35
+    AVAXUSDT: 0.35
+    LINKUSDT: 0.35
+
+notification:
+  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
+  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
+  prefix: "🔬 [RESEARCH-HTF-Filter]"
+  enabled: false
+
+output:
+  report_dir: "./reports/research/htf_filter"

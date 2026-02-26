@@ -14,18 +14,20 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
 
 ## Production Strategy
 
-- **Active**: Meta-Blend 8-Symbol (R3C × tsmom_carry_v2), 3x leverage
-  - **Config**: [prod_candidate_meta_blend.yaml](mdc:config/prod_candidate_meta_blend.yaml)
-  - **Strategy code**: [meta_blend_strategy.py](mdc:src/qtrade/strategy/meta_blend_strategy.py)
+- **Active**: HTF Filter v2 — Meta-Blend 8-Symbol + Multi-TF Resonance, 3x leverage
+  - **Config**: [prod_candidate_htf_filter.yaml](mdc:config/prod_candidate_htf_filter.yaml)
+  - **Strategy code**: [meta_blend_strategy.py](mdc:src/qtrade/strategy/meta_blend_strategy.py) + [tsmom_carry_v2_strategy.py](mdc:src/qtrade/strategy/tsmom_carry_v2_strategy.py)
   - **Deployment**: Oracle Cloud (x86_64, 1GB RAM), WebSocket mode via tmux (`meta_blend_live`)
-  - **Routing**: BTC=breakout_vol_atr+tsmom_carry_v2/btc_enhanced, ETH=tsmom_carry_v2/eth_enhanced, SOL/AVAX=tsmom_heavy, BNB/DOGE/ADA=default, LINK=tsmom_only
-  - **Key metrics**: Portfolio SR=2.265, MDD=-4.2%, Calmar=4.98, 2x Cost SR=1.648
-  - **Extended data validation**: 5.4-yr backtest (2020-09→2026-02) SR=2.57, MDD=-4.89%, Calmar=5.10
-  - **Launched**: 2026-02-25 (replaced R3C)
+  - **Routing**: BTC=breakout_vol_atr+tsmom_carry_v2/btc_enhanced+HTF_daily_dominant, ETH/SOL/AVAX/BNB/DOGE/ADA/LINK=tsmom_carry_v2+HTF_C_hard
+  - **HTF Filter**: 4h EMA trend + daily ADX regime（從 1h 因果重採樣）
+  - **Key metrics**: Portfolio SR=2.75, MDD=-4.45%, Calmar=5.72, 2x Cost SR=2.24
+  - **Risk Audit**: 12/12 PASS (2026-02-27), WFA 8/8 OOS+, CPCV PBO max 0.13
+  - **Launched**: 2026-02-27 (replaced Meta-Blend baseline)
+  - **Observation period**: → 2026-03-13, rollback if MDD > -10% or SR < 0 for 3 consecutive days
 
-- **Retired (rollback available)**: R3C 10-Symbol Ensemble
-  - **Config**: [prod_live_R3C_E3.yaml](mdc:config/prod_live_R3C_E3.yaml) (kept, not deleted)
-  - **Rollback**: Stop `meta_blend_live` → start `r3c_e3_live` with `prod_live_R3C_E3.yaml`
+- **Retired (rollback available)**:
+  - **Level 1 — Meta-Blend baseline**: [prod_candidate_meta_blend.yaml](mdc:config/prod_candidate_meta_blend.yaml) (SR=2.265, instant rollback)
+  - **Level 2 — R3C Ensemble**: [prod_live_R3C_E3.yaml](mdc:config/prod_live_R3C_E3.yaml) (legacy rollback)
 
 ## Approved Candidates (pending paper trading)
 

@@ -468,9 +468,10 @@ class ConsistencyValidator:
                 overlay_mode = self.overlay_cfg.get("mode", "vol_pause")
                 overlay_params = self.overlay_cfg.get("params", {})
                 
-                # 載入 OI 數據（如 overlay mode 需要）
+                # 載入 OI 數據（如 overlay mode 需要，支援複合模式）
                 oi_series = None
-                if overlay_mode in ("oi_vol", "oi_only") and self.data_dir:
+                _needs_oi = any(m in overlay_mode for m in ("oi_vol", "oi_only"))
+                if _needs_oi and self.data_dir:
                     try:
                         from ..data.open_interest import (
                             get_oi_path, load_open_interest, align_oi_to_klines
@@ -490,6 +491,25 @@ class ConsistencyValidator:
                             f"Consistency validator: 無法載入 OI for overlay: {e}"
                         )
                 
+                # 載入 LSR 數據（如 overlay mode 需要）
+                if "lsr_confirmatory" in overlay_mode and "_lsr_series" not in overlay_params:
+                    if self.data_dir:
+                        try:
+                            from ..data.long_short_ratio import load_lsr, align_lsr_to_klines
+                            data_dir = Path(self.data_dir)
+                            deriv_dir = data_dir / "binance" / "futures" / "derivatives"
+                            lsr_type = overlay_params.get("lsr_type", "lsr")
+                            lsr_raw = load_lsr(symbol, lsr_type, data_dir=deriv_dir)
+                            if lsr_raw is not None and not lsr_raw.empty:
+                                lsr_aligned = align_lsr_to_klines(
+                                    lsr_raw, df.index, max_ffill_bars=2
+                                )
+                                overlay_params["_lsr_series"] = lsr_aligned
+                        except Exception as e:
+                            logger.warning(
+                                f"Consistency validator: 無法載入 LSR for overlay: {e}"
+                            )
+
                 positions = apply_overlay_by_mode(
                     position=positions,
                     price_df=df,

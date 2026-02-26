@@ -29,6 +29,13 @@ Per-Symbol 配置分層：
     additive: 傳統加權平均（已證實效果不佳——carry 的反趨勢性質
         會在趨勢期嚴重稀釋 TSMOM alpha）
 
+HTF (Higher-TimeFrame) 過濾器（opt-in, 預設 disabled）：
+    根據 Alpha Researcher P1 分析 (2026-02-26)：
+    - C_4h+daily_hard 方案：24h IC +212%，8/8 幣種改善
+    - 4h 趨勢 + 1d regime 共振過濾，過濾假信號
+    - htf_filter_enabled: true 啟用
+    - 4h/1d 由 1h resample（causal, closed='left', label='left'）
+
 Turnover 控制機制：
     1. 信號 EMA 平滑（composite_ema）— 降低高頻雜訊
     2. 持倉量化（position_step）— 離散化持倉到步長
@@ -407,6 +414,16 @@ def generate_tsmom_carry_v2(
           agree → agree_scale (1.0x), disagree → disagree_scale (0.5x)
       - "additive": 傳統加權平均（不推薦——carry 反趨勢性稀釋 TSMOM alpha）
 
+    HTF Filter（opt-in, 預設 disabled）：
+      - htf_filter_enabled: True 啟用多時間框架共振過濾
+      - C_4h+daily_hard 方案（Alpha Researcher P1, 2026-02-26）
+      - 4h agree + daily agree + trending → 1.0x
+      - 4h agree + daily agree + ranging  → 0.85x
+      - 4h agree + daily disagree         → 0.7x
+      - 4h disagree                       → 0.0x（不交易）
+      - 參數：htf_4h_ema_fast/slow, htf_adx_period/threshold, htf_regime_ema
+      - 權重：htf_full_confirm, htf_partial_confirm, htf_4h_only_confirm, htf_no_confirm
+
     Turnover 控制（三層）：
       - composite_ema: 最終信號 EMA 平滑（預設 12h）
       - position_step: 持倉量化步長（預設 0.1）
@@ -496,6 +513,27 @@ def generate_tsmom_carry_v2(
         )
 
     # ══════════════════════════════════════════════════
+    # HTF Filter (opt-in, default disabled)
+    # Source: Alpha Researcher P1 分析 (2026-02-26)
+    # Result: C_4h+daily_hard, 24h IC +212%, 8/8 幣種改善
+    # ══════════════════════════════════════════════════
+    htf_filter_enabled = params.get("htf_filter_enabled", False)
+    if htf_filter_enabled:
+        raw_pos = _apply_htf_filter(
+            raw_pos, df,
+            ctx_symbol=ctx.symbol,
+            htf_4h_ema_fast=int(params.get("htf_4h_ema_fast", 20)),
+            htf_4h_ema_slow=int(params.get("htf_4h_ema_slow", 50)),
+            htf_adx_period=int(params.get("htf_adx_period", 14)),
+            htf_adx_threshold=float(params.get("htf_adx_threshold", 25.0)),
+            htf_regime_ema=int(params.get("htf_regime_ema", 20)),
+            htf_full_confirm=float(params.get("htf_full_confirm", 1.0)),
+            htf_partial_confirm=float(params.get("htf_partial_confirm", 0.85)),
+            htf_4h_only_confirm=float(params.get("htf_4h_only_confirm", 0.7)),
+            htf_no_confirm=float(params.get("htf_no_confirm", 0.0)),
+        )
+
+    # ══════════════════════════════════════════════════
     # Turnover 控制
     # ══════════════════════════════════════════════════
     pos = _apply_turnover_control(
@@ -507,6 +545,120 @@ def generate_tsmom_carry_v2(
 
     # 最終裁剪 — direction clip 由 @register_strategy 框架處理
     return pos.clip(-1.0, 1.0).fillna(0.0)
+
+
+# ══════════════════════════════════════════════════════════════
+#  HTF (Higher-TimeFrame) Filter — 多時間框架共振過濾
+#  Source: Alpha Researcher P1 分析 (2026-02-26)
+#  Result: C_4h+daily_hard 方案, 24h IC +212%, 8/8 幣種改善
+# ══════════════════════════════════════════════════════════════
+
+def _apply_htf_filter(
+    raw_pos: pd.Series,
+    df: pd.DataFrame,
+    ctx_symbol: str = "",
+    htf_4h_ema_fast: int = 20,
+    htf_4h_ema_slow: int = 50,
+    htf_adx_period: int = 14,
+    htf_adx_threshold: float = 25.0,
+    htf_regime_ema: int = 20,
+    htf_full_confirm: float = 1.0,
+    htf_partial_confirm: float = 0.85,
+    htf_4h_only_confirm: float = 0.7,
+    htf_no_confirm: float = 0.0,
+) -> pd.Series:
+    """
+    多時間框架共振過濾器 (C_4h+daily_hard 方案)
+
+    根據 Alpha Researcher P1 分析 (2026-02-26)：
+      - 24h IC: +212% (0.016 → 0.048), 8/8 幣種改善
+      - Turnover 降低 40%, 年節省 ~0.80% 交易成本
+      - 在趨勢和盤整 regime 皆改善（盤整期改善更大）
+
+    Confirmation weights (C_4h+daily_hard):
+        4h agree + daily agree + trending → htf_full_confirm  (1.0)
+        4h agree + daily agree + ranging  → htf_partial_confirm (0.85)
+        4h agree + daily disagree         → htf_4h_only_confirm (0.7)
+        4h disagree                       → htf_no_confirm (0.0)
+
+    因果性保證：
+        - 4h/1d 由 1h resample（closed='left', label='left'）
+        - forward-fill 對齊到 1h index
+        - 無 look-ahead bias（Alpha Researcher P1 已驗證等效）
+
+    Args:
+        raw_pos: carry confirmation 後的持倉信號 [-1, 1]
+        df: 1h OHLCV DataFrame
+        ctx_symbol: 幣種名（用於 log）
+        htf_*: HTF 過濾參數
+
+    Returns:
+        HTF 過濾後的持倉信號
+    """
+    from .multi_tf_resonance_strategy import (
+        _resample_ohlcv,
+        _htf_trend,
+        _daily_regime,
+    )
+
+    # ── 1. Resample 1h → 4h, 1d (causal) ──
+    df_4h = _resample_ohlcv(df, "4h")
+    df_1d = _resample_ohlcv(df, "1D")
+
+    if len(df_4h) < htf_4h_ema_slow or len(df_1d) < htf_adx_period:
+        logger.warning(
+            f"tsmom_carry_v2 [{ctx_symbol}]: HTF filter 數據不足 "
+            f"(4h={len(df_4h)}, 1d={len(df_1d)})，跳過 HTF 過濾"
+        )
+        return raw_pos
+
+    # ── 2. Compute 4h trend → align to 1h ──
+    htf_4h_trend = _htf_trend(df_4h, htf_4h_ema_fast, htf_4h_ema_slow)
+    htf_4h_aligned = htf_4h_trend.reindex(df.index, method="ffill").fillna(0)
+
+    # ── 3. Compute daily regime → align to 1h ──
+    regime = _daily_regime(df_1d, htf_adx_period, htf_adx_threshold, htf_regime_ema)
+    daily_dir = regime["regime_direction"].reindex(df.index, method="ffill").fillna(0)
+    daily_trending = (
+        regime["regime_trend"].reindex(df.index, method="ffill").fillna(0) > 0.5
+    )
+
+    # ── 4. Determine alignment ──
+    pos_dir = np.sign(raw_pos)
+    htf_4h_dir = np.sign(htf_4h_aligned)
+
+    htf_agree = (pos_dir == htf_4h_dir) & (pos_dir != 0) & (htf_4h_dir != 0)
+    daily_agree = (pos_dir == daily_dir) & (pos_dir != 0) & (daily_dir != 0)
+
+    # ── 5. Apply C_4h+daily_hard confirmation ──
+    confirmation = pd.Series(htf_no_confirm, index=df.index)
+
+    # 4h agree + daily disagree → htf_4h_only_confirm
+    confirmation[htf_agree & ~daily_agree] = htf_4h_only_confirm
+    # 4h agree + daily agree + ranging → htf_partial_confirm
+    confirmation[htf_agree & daily_agree & ~daily_trending] = htf_partial_confirm
+    # 4h agree + daily agree + trending → htf_full_confirm
+    confirmation[htf_agree & daily_agree & daily_trending] = htf_full_confirm
+
+    filtered = raw_pos * confirmation
+
+    # ── 6. Diagnostic logging ──
+    has_signal = pos_dir != 0
+    n_signal = has_signal.sum()
+    if n_signal > 0:
+        n_full = (confirmation[has_signal] == htf_full_confirm).sum()
+        n_partial = (confirmation[has_signal] == htf_partial_confirm).sum()
+        n_4h_only = (confirmation[has_signal] == htf_4h_only_confirm).sum()
+        n_filtered = (confirmation[has_signal] == htf_no_confirm).sum()
+        logger.info(
+            f"  HTF filter [{ctx_symbol}]: "
+            f"full={n_full}/{n_signal} ({n_full/n_signal*100:.1f}%), "
+            f"partial={n_partial} ({n_partial/n_signal*100:.1f}%), "
+            f"4h_only={n_4h_only} ({n_4h_only/n_signal*100:.1f}%), "
+            f"filtered={n_filtered} ({n_filtered/n_signal*100:.1f}%)"
+        )
+
+    return filtered
 
 
 # ══════════════════════════════════════════════════════════════

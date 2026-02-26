@@ -8,7 +8,9 @@ alwaysApply: true
 
 These rules prevent documentation rot and config sprawl. ALL agents must follow them.
 
-## 1. CLI_REFERENCE.md is Auto-Generated
+## 1. Auto-Generated Docs (Never Edit by Hand)
+
+### CLI_REFERENCE.md
 
 `docs/CLI_REFERENCE.md` is produced by `scripts/gen_cli_reference.py`. **Never edit it by hand.**
 
@@ -20,6 +22,20 @@ When to regenerate:
 Command:
 ```bash
 PYTHONPATH=src python scripts/gen_cli_reference.py
+```
+
+### DATA_STRATEGY_CATALOG.md
+
+`docs/DATA_STRATEGY_CATALOG.md` is produced by `scripts/gen_data_strategy_catalog.py`. **Never edit it by hand.**
+
+When to regenerate:
+- After adding, renaming, or removing any module in `src/qtrade/data/`
+- After adding or removing a strategy (new `@register_strategy`)
+- After changing production/candidate config files (`config/prod_*.yaml`)
+
+Command:
+```bash
+PYTHONPATH=src python scripts/gen_data_strategy_catalog.py
 ```
 
 ## 2. Archive Completed Research

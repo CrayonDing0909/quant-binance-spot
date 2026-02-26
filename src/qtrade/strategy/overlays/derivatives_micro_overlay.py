@@ -198,7 +198,9 @@ def compute_enhanced_micro_features(
         logger.info("  📊 CVD momentum feature added")
 
     # ── 升級 3: LSR 逆向制動器（新特徵）──
-    lsr = deriv.get("lsr") or deriv.get("top_lsr_account")
+    lsr = deriv.get("lsr")
+    if lsr is None:
+        lsr = deriv.get("top_lsr_account")
     if lsr is not None:
         z_window = int(p.get("lsr_z_window", 168))
         brake_thresh = float(p.get("lsr_brake_threshold", 1.5))

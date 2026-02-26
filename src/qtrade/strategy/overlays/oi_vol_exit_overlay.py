@@ -433,28 +433,29 @@ def apply_full_oi_vol_overlay(
     )
 
 
-def apply_overlay_by_mode(
+def _apply_single_overlay(
     position: pd.Series,
     price_df: pd.DataFrame,
     oi_series: pd.Series | None,
     params: dict,
-    mode: str = "vol_pause",
+    mode: str,
 ) -> pd.Series:
     """
-    根據 mode 選擇對應的 overlay 函數
+    套用單一 overlay 模式
 
     Modes:
-        "vol_pause"  → apply_vol_pause_overlay（Phase A）
-        "oi_vol"     → apply_full_oi_vol_overlay（Phase C: oi+vol）
-        "oi_only"    → apply_full_oi_vol_overlay with vol disabled
-        "vol_only"   → apply_vol_pause_overlay（等同 vol_pause）
+        "vol_pause"           → Vol spike entry pause
+        "oi_vol"              → OI + Vol 出場
+        "oi_only"             → OI only（vol disabled）
+        "vol_only"            → Vol only（等同 vol_pause）
+        "lsr_confirmatory"    → LSR 散戶多空比擇時縮放
 
     Args:
-        position: 原始持倉信號
+        position: 持倉信號
         price_df: K 線 DataFrame
         oi_series: OI 數值序列（可為 None）
-        params: overlay 參數
-        mode: overlay 模式
+        params: overlay 參數（各 overlay 讀取自己的子集）
+        mode: 單一 overlay 模式名稱
 
     Returns:
         修改後的持倉信號
@@ -466,8 +467,7 @@ def apply_overlay_by_mode(
             params=params,
         )
     elif mode == "oi_only":
-        # Only OI, disable vol rules
-        oi_only_params = {**params, "vol_spike_z": 999.0}  # vol 永不觸發
+        oi_only_params = {**params, "vol_spike_z": 999.0}
         return apply_full_oi_vol_overlay(
             position=position,
             price_df=price_df,
@@ -481,5 +481,70 @@ def apply_overlay_by_mode(
             oi_series=oi_series,
             params=params,
         )
+    elif mode == "lsr_confirmatory":
+        from .lsr_confirmatory_overlay import apply_lsr_confirmatory_overlay
+        lsr_series = params.get("_lsr_series")
+        return apply_lsr_confirmatory_overlay(
+            position=position,
+            price_df=price_df,
+            lsr_series=lsr_series,
+            params=params,
+        )
     else:
         raise ValueError(f"Unknown overlay mode: {mode}")
+
+
+def apply_overlay_by_mode(
+    position: pd.Series,
+    price_df: pd.DataFrame,
+    oi_series: pd.Series | None,
+    params: dict,
+    mode: str = "vol_pause",
+) -> pd.Series:
+    """
+    根據 mode 選擇對應的 overlay 函數（支援 '+' 連鎖複合模式）
+
+    單一模式：
+        "vol_pause"           → Vol spike entry pause（Phase A）
+        "oi_vol"              → OI + Vol 出場（Phase C）
+        "oi_only"             → OI only（vol disabled）
+        "vol_only"            → Vol only（等同 vol_pause）
+        "lsr_confirmatory"    → LSR 散戶多空比擇時縮放
+
+    複合模式（用 '+' 連接，依序套用）：
+        "vol_pause+lsr_confirmatory"  → 先 vol_pause 再 LSR 縮放
+        "oi_vol+lsr_confirmatory"     → 先 OI+Vol 再 LSR 縮放
+
+    Args:
+        position: 原始持倉信號
+        price_df: K 線 DataFrame
+        oi_series: OI 數值序列（可為 None）
+        params: overlay 參數（各 overlay 讀取自己的子集，LSR 以 lsr_ 前綴區分）
+        mode: overlay 模式（單一或 '+' 連鎖）
+
+    Returns:
+        修改後的持倉信號
+    """
+    # 支援 '+' 連鎖：依序套用
+    if "+" in mode:
+        sub_modes = [m.strip() for m in mode.split("+") if m.strip()]
+        pos = position
+        for sub_mode in sub_modes:
+            pos = _apply_single_overlay(
+                position=pos,
+                price_df=price_df,
+                oi_series=oi_series,
+                params=params,
+                mode=sub_mode,
+            )
+            logger.info(f"📊 Compound overlay step: {sub_mode} done")
+        return pos
+
+    # 單一模式
+    return _apply_single_overlay(
+        position=position,
+        price_df=price_df,
+        oi_series=oi_series,
+        params=params,
+        mode=mode,
+    )

@@ -24,8 +24,9 @@ End-of-Day 文件同步檢查。依序執行以下步驟，每步自動判斷是
 
 ---
 
-## Step 2：CLI_REFERENCE.md 判斷
+## Step 2：自動生成文件判斷
 
+### 2a. CLI_REFERENCE.md
 如果 `scripts/` 或 `config/` 有任何改動（新增/修改/刪除），執行：
 ```bash
 cd /Users/dylanting/Documents/spot_bot/quant-binance-spot
@@ -33,6 +34,13 @@ source .venv/bin/activate
 PYTHONPATH=src python scripts/gen_cli_reference.py
 ```
 如果沒有改動，輸出「✅ scripts/ 和 config/ 無改動，跳過 CLI_REFERENCE 重新生成」。
+
+### 2b. DATA_STRATEGY_CATALOG.md
+如果 `src/qtrade/data/` 或 `src/qtrade/strategy/` 有任何改動（新增/修改/刪除模組），執行：
+```bash
+PYTHONPATH=src python scripts/gen_data_strategy_catalog.py
+```
+如果沒有改動，輸出「✅ data/ 和 strategy/ 無改動，跳過 DATA_STRATEGY_CATALOG 重新生成」。
 
 ---
 
@@ -51,6 +59,8 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 | config 結構或命名規則變更 | `.cursor/rules/hygiene.mdc` 的 Config Naming Convention 表 |
 | 部署/監控相關 (`src/qtrade/live/`, `src/qtrade/monitor/`) | `.cursor/agents/devops.md` |
 | 策略狀態變更（上線、退役、候選） | `.cursor/rules/project-overview.mdc` |
+| 數據模組新增/修改 (`src/qtrade/data/`) | Step 2b 已自動重新生成 `DATA_STRATEGY_CATALOG.md`（如 Step 2b 已執行則無需額外動作） |
+| 策略新增/修改 (`src/qtrade/strategy/`) | Step 2b 已自動重新生成 `DATA_STRATEGY_CATALOG.md`（如 Step 2b 已執行則無需額外動作） |
 
 對每個需要更新的 doc：
 1. 讀取該 doc 的當前內容
@@ -94,6 +104,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 ```
 🏁 EOD 檢查完成：
   ✅/⚠️ CLI_REFERENCE: (結果)
+  ✅/⚠️ DATA_STRATEGY_CATALOG: (結果)
   ✅/⚠️ Living docs: (更新了哪些 / 無需更新)
   ✅/⚠️ Lint: (結果)
   ✅/⚠️ Recent changes: (已更新 / 已是最新)

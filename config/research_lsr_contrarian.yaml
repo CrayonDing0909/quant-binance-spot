@@ -1,0 +1,107 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — LSR Contrarian (lsr_contrarian)
+# ═══════════════════════════════════════════════════════════════
+# Created: 2026-02-26
+# Origin: Alpha Researcher — LSR 極端值逆向策略
+# Scope: 8 symbols 合約, Both (Long + Short)
+#
+# Hypothesis:
+#   散戶 LSR 達到極端高/低時，群眾情緒過度一致，逆向交易有統計優勢。
+#   LSR 高（多頭擁擠）→ 做空；LSR 低（空頭擁擠）→ 做多。
+#   初步研究：8/8 幣種 gross Sharpe > 0，avg IC = -0.025（逆向有效）。
+#
+# Mechanism:
+#   - Rolling percentile rank of LSR (168h window)
+#   - Entry: pctrank > 85th → short, pctrank < 15th → long
+#   - Exit: pctrank reverts to 50th percentile (mid)
+#   - Vol scaling: position size inversely proportional to realized vol
+#
+# Key research findings:
+#   - Avg gross Sharpe = 9.33 (8/8 symbols positive)
+#   - WR = 40.3%, R:R = 1.97, Skew = +2.58 (positive skew = trend-like!)
+#   - IC stability: 51-67% of time IC is negative (contrarian works)
+#   - Retail LSR >> Top trader LSR for contrarian IC (0.026 vs 0.002)
+#   - Cost estimate: ~130 trades/yr, manageable for 1h strategy
+#
+# Research evidence:
+#   Notebook: notebooks/research/20260226_lsr_extremes_contrarian.ipynb
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"   # 多空皆做
+
+strategy:
+  name: "lsr_contrarian"
+  params:
+    # ── Core signal ──
+    lsr_type: "lsr"           # 散戶全帳戶 LSR（研究證明比大戶 LSR 更有效）
+    lsr_window: 168            # 7 天 rolling percentile（研究最佳窗口）
+    entry_pctile: 0.85         # top/bottom 15% 入場
+
+    # ── Exit rules (v2 Swing Mode) ──
+    tp_pctile: 0.25            # TP: LSR 擺盪到對面 25th percentile
+    sl_atr_mult: 2.5           # ATR 止損乘數
+    sl_atr_lookback: 14        # ATR 計算窗口
+    max_hold_bars: 120         # 最大持倉 120h (5天)
+
+    # ── Vol scaling ──
+    vol_scale_enabled: true
+    vol_target: 0.15           # 年化波動率目標 15%
+    vol_lookback: 168          # 7 天波動率回看
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.30
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.20
+    ETHUSDT: 0.20
+    SOLUSDT: 0.15
+    BNBUSDT: 0.10
+    DOGEUSDT: 0.10
+    ADAUSDT: 0.10
+    AVAXUSDT: 0.10
+    LINKUSDT: 0.05
+
+notification:
+  enabled: false
+
+output:
+  report_dir: "./reports"

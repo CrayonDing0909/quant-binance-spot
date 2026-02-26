@@ -83,33 +83,48 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 ## Oracle Cloud 部署
 
-### 當前架構（2026-02-25 Meta-Blend 上線）
+### 當前架構（2026-02-27 HTF Filter v2 上線）
 
 ```
 Server: Oracle Cloud (1GB RAM, x86_64, Ubuntu 22.04)
 IP: 140.83.57.255
 Mode: WebSocket event-driven (tmux session: meta_blend_live)
-Config: config/prod_candidate_meta_blend.yaml
-Strategy: meta_blend 8-Symbol (R3C × tsmom_carry_v2)
-  - BTC: breakout_vol_atr(30%) + tsmom_carry_v2/btc_enhanced(70%)
-  - ETH: tsmom_carry_v2/eth_enhanced (OI/FR/Basis)
-  - SOL/AVAX: tsmom_carry_v2/tsmom_heavy
-  - BNB/DOGE/ADA: tsmom_carry_v2/default
-  - LINK: tsmom_carry_v2/tsmom_only (carry IC unstable)
+Config: config/prod_candidate_htf_filter.yaml
+Strategy: meta_blend 8-Symbol + HTF Filter v2
+  - BTC: breakout_vol_atr(30%) + tsmom_carry_v2/btc_enhanced(70%) + HTF daily-dominant
+         (htf_no_confirm=0.7, htf_4h_only_confirm=0.3, htf_4h_ema 30/100)
+  - ETH: tsmom_carry_v2/eth_enhanced (OI/FR/Basis) + HTF C_hard
+  - SOL/AVAX: tsmom_carry_v2/tsmom_heavy + HTF C_hard
+  - BNB/DOGE/ADA: tsmom_carry_v2/default + HTF C_hard
+  - LINK: tsmom_carry_v2/tsmom_only + HTF C_hard
 Leverage: 3x ISOLATED
 Weight sum: 3.0 (3× allocation leverage)
 Circuit breaker: 40% MDD
 Overlays: vol_pause (oi_vol mode, vol_spike_z=2.0)
-Telegram prefix: 🔬 [CANDIDATE-MetaBlend-8S]
+Telegram prefix: 🚀 [CANDIDATE-HTF-Filter-v2]
+HTF Filter: 4h EMA trend + daily ADX regime（從 1h K 線因果重採樣，無額外數據需求）
+Risk Audit: 12/12 PASS (2026-02-27)
+  - Portfolio SR: 2.75, MDD: -4.45%, Calmar: 5.72
+  - 2x Cost SR: 2.24, WFA 8/8 OOS+, CPCV PBO max 0.13
+  - 8/8 symbols SR improved (avg Δ+0.39)
+Observation Period: 2026-02-27 ~ 2026-03-13 (≥ 2 weeks)
+  - 每日比較信號 + weekly /risk-review 監控
+  - 異常指標: 連續 3 天 SR < 0 或 MDD > -10% → rollback
 ```
 
 ### 已退役（可 rollback）
 
 ```
-Prev Config: config/prod_live_R3C_E3.yaml
-Prev tmux: r3c_e3_live (已停止)
-Prev Strategy: R3C 10-Symbol Ensemble (tsmom_ema + breakout_vol_atr)
-Rollback: 停止 meta_blend_live → 啟動 r3c_e3_live 用 prod_live_R3C_E3.yaml
+Rollback Level 1 (immediate):
+  Config: config/prod_candidate_meta_blend.yaml
+  Action: 修改 tmux 啟動指令 config → 重啟 meta_blend_live
+  Strategy: meta_blend baseline（無 HTF filter）
+  SR: 2.265, MDD: -4.2%
+
+Rollback Level 2 (legacy):
+  Config: config/prod_live_R3C_E3.yaml
+  tmux: r3c_e3_live (已停止)
+  Strategy: R3C 10-Symbol Ensemble (tsmom_ema + breakout_vol_atr)
 ```
 
 ### OI Liquidation Bounce — Paper Trading 中 🟡
@@ -183,51 +198,45 @@ PYTHONPATH=src python scripts/run_websocket.py -c config/prod_live_R3C_E3.yaml -
 # Ctrl+B, d 離開
 ```
 
-### 部署 meta_blend 策略（替換或平行）
+### 策略升級部署（Config 替換）
 
-#### 方案 A — 替換現有 R3C runner（推薦）
-只需更換 config，同一個 tmux session 即可：
+直接替換 config 即可升級策略版本。同一個 tmux session（`meta_blend_live`），不需要額外 runner。
 
 ```bash
 ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255
 cd ~/quant-binance-spot && source .venv/bin/activate && git pull
 
-# 下載 meta_blend 所需數據（含 Funding Rate + OI）
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml --funding-rate
-PYTHONPATH=src python scripts/download_oi_data.py --symbols BTCUSDT ETHUSDT --provider binance
+# 確認數據（HTF Filter 從 1h 重採樣，無額外數據需求）
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_htf_filter.yaml
 
-# ⚠️ 先平倉舊策略所有持倉
-PYTHONPATH=src python scripts/close_all_positions.py --real --confirm
+# 重啟 runner（tmux while-true 循環會自動 git pull + 使用新 config）
+tmux send-keys -t meta_blend_live C-c
+# 等待自動重啟（10 秒後 while-true 循環會 git pull + 啟動新 config）
+sleep 15 && tmux capture-pane -t meta_blend_live -p | tail -20
+```
 
-# 替換 runner config
-tmux kill-session -t r3c_e3_live 2>/dev/null
+如果 tmux session 不存在或需要完全重建：
+
+```bash
+tmux kill-session -t meta_blend_live 2>/dev/null
 tmux new -d -s meta_blend_live 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
-  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_meta_blend.yaml --real;
+  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_htf_filter.yaml --real;
   echo "Runner exited, restarting in 10s..."; sleep 10;
 done'
 sleep 10 && tmux capture-pane -t meta_blend_live -p | tail -20
 ```
 
-#### 方案 B — 平行運行兩個策略（需子帳號或 HEDGE_MODE）
-
-⚠️ **ONE_WAY mode 下同帳戶不能跑兩個獨立 runner（倉位會互相覆蓋）**。如果要平行運行：
-
-1. **使用 Binance 子帳號**：主帳號跑 R3C，子帳號跑 meta_blend
-2. **使用 meta_blend 統一路由**：把兩個策略合併成一個 `meta_blend` runner（推薦）
-
-`meta_blend` 的優勢就是讓多個策略**共享同一帳戶**，信號在 runner 內部混合後才下單，避免 ONE_WAY 倉位衝突。
-
-#### meta_blend 額外數據需求
-meta_blend 策略中的 `tsmom_carry_v2` 子策略需要額外數據：
+#### 額外數據需求
+meta_blend / HTF Filter v2 策略需要的數據：
 
 | 數據 | 用途 | 下載指令 |
 |------|------|----------|
+| 1h Klines | 主數據 + HTF 重採樣 (4h/1d) | `download_data.py -c <cfg>` |
 | Funding Rate | FR carry signal | `download_data.py -c <cfg> --funding-rate` |
-| Open Interest | OI signal (BTC/ETH only) | `download_oi_data.py --symbols BTCUSDT ETHUSDT` |
+| Open Interest | OI overlay (vol_pause) | `download_data.py --oi` |
 
-確保 Oracle Cloud 上的 cron 也包含這些數據的定期更新。
+HTF Filter 的 4h/1d 數據由 `_resample_ohlcv()` 從 1h 因果重採樣，**不需要**額外 4h/1d K 線下載。
 
 ### 緊急回滾
 
@@ -243,11 +252,11 @@ meta_blend 策略中的 `tsmom_carry_v2` 子策略需要額外數據：
 | 用途 | 指令 |
 |------|------|
 | 查看 runner 日誌 | `tmux attach -t meta_blend_live` 或 `tail -100 logs/meta_blend_live.log` |
-| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_meta_blend.yaml --real --notify` |
-| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_meta_blend.yaml` |
-| 查詢交易 DB | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_meta_blend.yaml summary` |
-| 匯出交易紀錄 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_meta_blend.yaml export` |
-| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_meta_blend.yaml` |
+| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_htf_filter.yaml --real --notify` |
+| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_htf_filter.yaml` |
+| 查詢交易 DB | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_filter.yaml summary` |
+| 匯出交易紀錄 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_filter.yaml export` |
+| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_htf_filter.yaml` |
 | 查看當前持倉 | 見下方 Python snippet |
 
 ### 查看當前持倉
@@ -310,8 +319,8 @@ data/binance/futures/liquidation/{SYMBOL}.parquet                 ← 爆倉數�
 ### Cron Jobs（Oracle Cloud，UTC 時區）
 
 ```
-# Meta-Blend Kline + FR (every 6h)
-10 */6 * * * download_data.py -c config/prod_candidate_meta_blend.yaml
+# HTF Filter v2 / Meta-Blend Kline + FR (every 6h)
+10 */6 * * * download_data.py -c config/prod_candidate_htf_filter.yaml
 
 # R3C Kline + FR (retained for rollback, every 6h)
 15 */6 * * * download_data.py -c config/prod_live_R3C_E3.yaml
@@ -387,7 +396,7 @@ cd ~/quant-binance-spot && source .venv/bin/activate && git pull
 tmux new -d -s tg_bot 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate &&
   PYTHONPATH=src python scripts/run_telegram_bot.py \
-    -c config/prod_candidate_meta_blend.yaml \
+    -c config/prod_candidate_htf_filter.yaml \
     -c config/prod_live_oi_liq_bounce.yaml \
     --real;
   echo "TG Bot exited, restarting in 10s..."; sleep 10;

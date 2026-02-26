@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-02-26 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-02-27 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
@@ -68,7 +68,9 @@
 | `fetch_derivatives_data.py` | Binance 衍生品數據下載工具（LSR, Taker Vol, CVD） |
 | `fetch_liquidation_data.py` | 清算/爆倉數據下載工具 |
 | `fetch_onchain_data.py` | 鏈上數據探索工具（DeFi Llama / CryptoQuant / Glassnode） |
+| `gen_data_strategy_catalog.py` | Auto-generate docs/DATA_STRATEGY_CATALOG.md by scanning src/qtrade/data/ and strategy/. |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
+| `research_btc_htf_variants.py` | BTC HTF Filter 變體研究：為什麼 BTC 的 HTF filter 改善最小 (+0.04 SR)? |
 | `research_ic_deep_analysis.py` | IC Deep Analysis — Quant Researcher |
 | `research_overlay_4way.py` | ═══════════════════════════════════════════════════════════════ |
 | `research_overlay_ic_analysis.py` | P0: Overlay-Adjusted IC Analysis |
@@ -86,6 +88,7 @@
 | Config | File |
 |--------|------|
 | `prod_candidate_R3C_universe.yaml` | `config/prod_candidate_R3C_universe.yaml` |
+| `prod_candidate_htf_filter.yaml` | `config/prod_candidate_htf_filter.yaml` |
 | `prod_candidate_meta_blend.yaml` | `config/prod_candidate_meta_blend.yaml` |
 | `prod_live_R3C_E3.yaml` | `config/prod_live_R3C_E3.yaml` |
 | `prod_live_oi_liq_bounce.yaml` | `config/prod_live_oi_liq_bounce.yaml` |
@@ -109,6 +112,9 @@
 
 | Config | File |
 |--------|------|
+| `research_htf_filter.yaml` | `config/research_htf_filter.yaml` |
+| `research_lsr_contrarian.yaml` | `config/research_lsr_contrarian.yaml` |
+| `research_lsr_overlay_meta_blend.yaml` | `config/research_lsr_overlay_meta_blend.yaml` |
 | `research_meta_blend.yaml` | `config/research_meta_blend.yaml` |
 | `research_oi_liq_bounce.yaml` | `config/research_oi_liq_bounce.yaml` |
 | `research_param_refresh_BTC.yaml` | `config/research_param_refresh_BTC.yaml` |
@@ -209,6 +215,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 |-----|-------------|
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
+| [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |
 | [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
 | [`R3C_SYMBOL_GOVERNANCE_SPEC.md`](docs/R3C_SYMBOL_GOVERNANCE_SPEC.md) | R3C Symbol Governance Spec |
 | [`RESEARCH_LITERATURE.md`](docs/RESEARCH_LITERATURE.md) | > **Last updated**: 2026-02-26 |

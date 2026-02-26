@@ -190,9 +190,10 @@ def generate_signal(
 
         # OI 資料：與 run_symbol_backtest 一致的載入邏輯
         # 優先使用 params 中已注入的 _oi_series（來自 BaseRunner OI cache），
-        # 否則從 _data_dir 自動載入（僅 oi_only / oi_vol 模式需要）
+        # 否則從 _data_dir 自動載入（支援複合模式如 "oi_vol+lsr_confirmatory"）
         oi_series = params.get("_oi_series")
-        if oi_series is None and overlay_mode in ("oi_only", "oi_vol"):
+        _needs_oi = any(m in overlay_mode for m in ("oi_only", "oi_vol"))
+        if oi_series is None and _needs_oi:
             data_dir = params.get("_data_dir")
             if data_dir:
                 try:
@@ -216,6 +217,26 @@ def generate_signal(
                         )
                 except Exception as e:
                     logger.warning(f"  {symbol}: overlay OI 載入失敗: {e}")
+
+        # LSR 資料：overlay mode 含 lsr_confirmatory 時自動載入
+        if "lsr_confirmatory" in overlay_mode and "_lsr_series" not in overlay_params:
+            data_dir = params.get("_data_dir")
+            if data_dir:
+                try:
+                    from ..data.long_short_ratio import load_lsr, align_lsr_to_klines
+                    from pathlib import Path
+                    data_dir_path = Path(data_dir)
+                    deriv_dir = data_dir_path / "binance" / "futures" / "derivatives"
+                    lsr_type = overlay_params.get("lsr_type", "lsr")
+                    lsr_raw = load_lsr(symbol, lsr_type, data_dir=deriv_dir)
+                    if lsr_raw is not None and not lsr_raw.empty:
+                        lsr_aligned = align_lsr_to_klines(lsr_raw, df.index, max_ffill_bars=2)
+                        overlay_params["_lsr_series"] = lsr_aligned
+                        logger.debug(f"  {symbol}: overlay LSR 載入成功 ({len(lsr_raw)} rows)")
+                    else:
+                        logger.warning(f"  {symbol}: overlay LSR 數據不存在 ({lsr_type})")
+                except Exception as e:
+                    logger.warning(f"  {symbol}: overlay LSR 載入失敗: {e}")
 
         positions = apply_overlay_by_mode(
             position=positions,

@@ -300,107 +300,45 @@ docs/research/YYYYMMDD_<strategy_name>_proposal.md
 > 當你的研究需要新數據源時，必須在 Strategy Proposal 的「Data Requirements」中明確標注，
 > 讓 DevOps 在部署時知道需要設定哪些持久化下載。
 
-## 數據源速查
+## 數據源與策略目錄
 
-### 已整合到系統中的數據源
+> 📦 **完整目錄已自動生成**：[docs/DATA_STRATEGY_CATALOG.md](mdc:docs/DATA_STRATEGY_CATALOG.md)
+>
+> 包含：所有數據模組（17 個）、所有已註冊策略（29 個，含狀態）、下載腳本、數據儲存路徑。
+> 由 `scripts/gen_data_strategy_catalog.py` 掃描原始碼自動產生，**不會過時**。
+>
+> 重新生成：`PYTHONPATH=src python scripts/gen_data_strategy_catalog.py`
 
-| 類別 | 數據源 | 模組 / 腳本 | 歷史覆蓋 | Rate Limit | 說明 |
-|------|--------|------------|---------|------------|------|
-| **K 線** | Binance Spot/Futures | `src/qtrade/data/klines.py` | 2017-08 起 | 1200 req/min | 主要數據源，支援 1m-1M |
-| **K 線** | Binance Vision | `src/qtrade/data/binance_vision.py` | 2017-08 起 | 無限制 | 批量歷史下載 |
-| **K 線** | Yahoo Finance | `src/qtrade/data/yfinance_client.py` | BTC 2014-09 | 無明確 | 傳統市場數據 |
-| **K 線** | CCXT (100+ 交易所) | `src/qtrade/data/ccxt_client.py` | Bitstamp 2011 | 依交易所 | 跨交易所歷史 |
-| **衍生品** | Open Interest | `src/qtrade/data/open_interest.py` | Vision 2021-12 / CG 2020 | 30 req/min (CG) | OI 歷史 |
-| **衍生品** | Funding Rate | `scripts/download_data.py --funding-rate` | 2020 起 | 同 Binance API | 合約必備 |
-| **衍生品** | Long/Short Ratio | `scripts/fetch_derivatives_data.py` | Vision 2021-12 / API ~30d | 同 Binance API | 帳戶 + 大戶 L/S 比 |
-| **衍生品** | Taker Buy/Sell Vol | `scripts/fetch_derivatives_data.py` | Vision 2021-12 / API ~30d | 同 Binance API | 主動買賣量比 |
-| **衍生品** | CVD (Cumulative Volume Delta) | `scripts/fetch_derivatives_data.py` | 同 taker vol | 衍生計算 | 從 taker ratio 衍生 |
-| **清算** | Liquidation / Force Orders | `scripts/fetch_liquidation_data.py` | Binance ~7d / CG 歷史 | 同上 | 清算瀑布事件 |
-| **鏈上** | DeFi Llama TVL | `scripts/fetch_onchain_data.py` | 2020 起 | 寬鬆 | 鏈/協議 TVL 歷史 |
-| **鏈上** | Stablecoin 市值 | `scripts/fetch_onchain_data.py --stablecoins` | 2020 起 | 寬鬆 | Top 5 穩定幣 mcap |
-| **鏈上** | DeFi Yields | `scripts/fetch_onchain_data.py --yields` | 快照 | 寬鬆 | 全 DeFi 收益率 |
+**數據類別摘要**（詳細表格見 Catalog）：
+- **K 線**：Binance API / Vision / Yahoo Finance / CCXT（100+ 交易所）
+- **衍生品**：OI / Funding Rate / LSR / Taker Vol / CVD / 清算
+- **鏈上**：DeFi Llama（TVL / Stablecoin / Yields）
+- **即時**：Order Book Depth（WebSocket，微結構研究用）
+- **工具**：MultiTFLoader（多 TF 因果對齊）、DataQualityChecker
 
-### 數據儲存路徑
-
-```
-data/
-├── binance/
-│   ├── futures/1h/              ← 主力 K 線（8 幣種, 生產用）
-│   ├── futures/5m/              ← 微結構研究用
-│   ├── futures/15m/             ← overlay 研究用
-│   ├── futures/4h/              ← HTF 趨勢用
-│   ├── futures/1d/              ← 日線 regime 用
-│   ├── futures/open_interest/   ← OI 數據（binance/coinglass/merged）
-│   ├── futures/derivatives/     ← 衍生品指標
-│   │   ├── lsr/                 ← Long/Short Ratio
-│   │   ├── top_lsr_account/     ← 大戶 L/S (帳戶)
-│   │   ├── top_lsr_position/    ← 大戶 L/S (持倉)
-│   │   ├── taker_vol_ratio/     ← Taker Buy/Sell Ratio
-│   │   └── cvd/                 ← Cumulative Volume Delta
-│   └── futures/liquidation/     ← 清算數據
-├── onchain/
-│   └── defillama/               ← DeFi Llama 鏈上數據
-└── ...
-```
-
-### 下載數據指令
+### 下載數據指令（常用）
 
 ```bash
 source .venv/bin/activate
 
-# ── K 線數據 ──
-# 單一 interval
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml
+# K 線（多 interval 批量）
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml --interval 5m,15m,1h,4h,1d
 
-# 多 interval 批量下載（逗號分隔）
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml \
-  --interval 5m,15m,1h,4h,1d
-
-# Funding Rate
+# Funding Rate / Open Interest
 PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_meta_blend.yaml --funding-rate
-
-# Open Interest
 PYTHONPATH=src python scripts/download_oi_data.py --symbols BTCUSDT ETHUSDT --provider binance
 
-# ── 衍生品數據 ──
-# 全部衍生品指標（LSR, Taker Vol, CVD, 從 Vision 完整歷史）
+# 衍生品（LSR, Taker Vol, CVD — Vision 完整歷史）
 PYTHONPATH=src python scripts/fetch_derivatives_data.py --symbols BTCUSDT ETHUSDT SOLUSDT
+PYTHONPATH=src python scripts/fetch_derivatives_data.py --symbols BTCUSDT ETHUSDT --coverage  # 覆蓋率報告
 
-# 只下載特定指標
-PYTHONPATH=src python scripts/fetch_derivatives_data.py --symbols BTCUSDT --metrics lsr taker_vol_ratio
-
-# 最近 30 天（Binance API）
-PYTHONPATH=src python scripts/fetch_derivatives_data.py --symbols BTCUSDT --source api
-
-# 覆蓋率報告
-PYTHONPATH=src python scripts/fetch_derivatives_data.py --symbols BTCUSDT ETHUSDT --coverage
-
-# ── 清算數據 ──
+# 清算 / 鏈上
 PYTHONPATH=src python scripts/fetch_liquidation_data.py --symbols BTCUSDT ETHUSDT
-
-# Coinglass 歷史清算（需 COINGLASS_API_KEY）
-PYTHONPATH=src python scripts/fetch_liquidation_data.py --symbols BTCUSDT --source coinglass
-
-# ── 鏈上數據 ──
-# DeFi Llama TVL（免費）
-PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama
-
-# Stablecoin 市值歷史
-PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --stablecoins
-
-# DeFi 收益率快照
-PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --yields
-
-# 特定協議 TVL
-PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --protocols aave lido uniswap
-
-# ── 長期歷史（via CCXT）──
-PYTHONPATH=src python -c "
-from qtrade.data.ccxt_client import fetch_ccxt_klines
-df = fetch_ccxt_klines('BTC/USD', '1h', '2015-01-01', exchange='kraken')
-print(f'Rows: {len(df)}, Range: {df.index[0]} ~ {df.index[-1]}')
-"
+PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama  # TVL
+PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --stablecoins  # 穩定幣 mcap
 ```
+
+> 完整指令參數見 [docs/CLI_REFERENCE.md](mdc:docs/CLI_REFERENCE.md)（自動生成，包含所有腳本的 `--help` 輸出）。
 
 ## 研究參考範例
 
@@ -412,6 +350,12 @@ print(f'Rows: {len(df)}, Range: {df.index[0]} ~ {df.index[-1]}')
 - `scripts/research_dual_momentum.py` — 雙動量策略研究
 - `scripts/research_strategy_blend.py` — **多策略混合權重優化**（sweep A/B allocation）
 - `docs/R2_100_RESEARCH_MATRIX.md` — 研究矩陣範例（6 個實驗的結構化規劃）
+
+### 已實作策略（避免重複研究）
+
+> 完整的 29 個已註冊策略清單見 [DATA_STRATEGY_CATALOG.md](mdc:docs/DATA_STRATEGY_CATALOG.md)（自動生成，含狀態標記）。
+>
+> **規則**：如果新研究方向與目錄中某策略高度重疊，應優先考慮**增強現有策略**（overlay / 參數改進）而非重新發明。
 
 ## 多策略混合研究指引
 
@@ -505,9 +449,9 @@ print(f'Rows: {len(df)}, Range: {df.index[0]} ~ {df.index[-1]}')
 
 ## 關鍵參考文件
 
+- **數據 & 策略目錄**（自動生成）：`docs/DATA_STRATEGY_CATALOG.md`
 - 開發 Playbook：`docs/STRATEGY_DEV_PLAYBOOK_R2_1.md`
 - 研究矩陣範例：`docs/R2_100_RESEARCH_MATRIX.md`
 - **學術文獻參考庫**：`docs/RESEARCH_LITERATURE.md`
-- 數據品質模組：`src/qtrade/data/quality.py`
-- 數據源總覽：`src/qtrade/data/__init__.py`
+- CLI 指令參考（自動生成）：`docs/CLI_REFERENCE.md`
 - Anti-Bias 規則：`.cursor/rules/anti-bias.mdc`

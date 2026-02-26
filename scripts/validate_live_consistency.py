@@ -743,17 +743,21 @@ class ConsistencyChecker:
         # 3c. OI 數據可用性（oi_vol 和 oi_only mode 需要 OI）
         overlay_mode = overlay_cfg.get("mode", "vol_pause")
         if overlay_mode in ("oi_vol", "oi_only"):
-            # 檢查 live signal_generator 路徑是否能載入 OI
+            # 檢查 live signal_generator 路徑是否能自動載入 OI
+            # 機制：BaseRunner 注入 _data_dir → signal_generator 的 overlay 處理區塊
+            #       透過 params.get("_data_dir") 自動從 parquet 載入 OI
             try:
                 from qtrade.live.signal_generator import generate_signal
                 import inspect
-                sig = inspect.signature(generate_signal)
-                if "oi_series" in sig.parameters:
+                source = inspect.getsource(generate_signal)
+                if "_data_dir" in source and "oi_series" in source:
+                    notes.append(f"Live signal_generator 支援 overlay OI 自動載入 (_data_dir) ✓")
+                elif "oi_series" in inspect.signature(generate_signal).parameters:
                     notes.append(f"Live signal_generator 支援 oi_series 參數 ✓")
                 else:
                     issues.append(
                         f"Overlay mode={overlay_mode} 需要 OI 數據，"
-                        f"但 live signal_generator 不接受 oi_series 參數"
+                        f"但 live signal_generator 缺乏 OI 載入機制"
                     )
             except ImportError:
                 issues.append("無法載入 signal_generator 模組")

@@ -13,6 +13,7 @@ alwaysApply: true
 | 你做了什麼 | 必須更新 |
 |-----------|---------|
 | 新增/修改/刪除 `scripts/` 下的腳本 | 1. 重新生成 `CLI_REFERENCE.md`：`PYTHONPATH=src python scripts/gen_cli_reference.py` <br> 2. 若為重要工具，更新 `project-overview.mdc` |
+| 新增/修改 `src/qtrade/data/` 或 `src/qtrade/strategy/` 模組 | 重新生成 `DATA_STRATEGY_CATALOG.md`：`PYTHONPATH=src python scripts/gen_data_strategy_catalog.py` |
 | 策略狀態變更（新策略通過驗證、風控審計、上線、退役） | 1. 更新 `project-overview.mdc`（Production Strategy / Approved Candidates） <br> 2. 更新 `devops.md`（候選策略 / 部署資訊） |
 | 新增 `docs/` 下的 living doc | 更新 `hygiene.mdc` 的 Living docs 表 |
 | 新增概念/工具/流程（如策略治理、新回測模式） | 更新相關 `.mdc` rule 或建立新 rule |
