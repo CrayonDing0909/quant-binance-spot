@@ -20,9 +20,10 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
   - **Deployment**: Oracle Cloud (x86_64, 1GB RAM), WebSocket mode via tmux (`meta_blend_live`)
   - **Routing**: BTC=breakout_vol_atr+tsmom_carry_v2/btc_enhanced+HTF_daily_dominant, ETH/SOL/AVAX/BNB/DOGE/ADA/LINK=tsmom_carry_v2+HTF_C_hard
   - **HTF Filter**: 4h EMA trend + daily ADX regime（從 1h 因果重採樣）
-  - **LSR Overlay**: oi_vol+lsr_confirmatory（boost=1.3, reduce=0.3, pctile=0.85）
-  - **Key metrics**: Portfolio SR=2.87, MDD=-4.75%, Calmar=6.09, 2x Cost SR=2.11
-  - **Risk Audit**: APPROVED (2026-02-27), WFA 8/8 OOS+, CPCV PBO 0.07, MC 4/4 PASS
+  - **LSR Overlay**: oi_vol+lsr_confirmatory D mode（boost=1.3, reduce=0.3, pctile=0.85, oi_confirm+fr_confirm）
+  - **Key metrics**: Portfolio SR=4.31, MDD=-3.73%, Calmar=11.54, 2x Cost SR=3.32
+  - **Risk Audit**: APPROVED (2026-02-27), WFA 8/8 OOS+, CPCV PBO max 0.13, MC 4/4 PASS
+  - **Bug fix (2026-02-27)**: overlay_params cross-contamination — 修正後指標大幅提升
   - **Launched**: 2026-02-27 (replaced HTF Filter v2)
   - **Observation period**: → 2026-03-13, rollback if MDD > -10% or SR < 0 for 3 consecutive days
 
@@ -31,15 +32,14 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
   - **Level 2 — Meta-Blend baseline**: [prod_candidate_meta_blend.yaml](mdc:config/prod_candidate_meta_blend.yaml) (SR=2.265)
   - **Level 3 — R3C Ensemble**: [prod_live_R3C_E3.yaml](mdc:config/prod_live_R3C_E3.yaml) (legacy rollback)
 
-## Approved Candidates (pending paper trading)
+## Shelved Strategies (code preserved, not deployed)
 
-- **OI Liquidation Bounce v4.2**: 5-symbol long-only (BTC/ETH/SOL/DOGE/AVAX), 1x leverage
-  - **Config**: [prod_live_oi_liq_bounce.yaml](mdc:config/prod_live_oi_liq_bounce.yaml)
-  - **Strategy code**: [oi_liq_bounce_strategy.py](mdc:src/qtrade/strategy/oi_liq_bounce_strategy.py)
-  - **Status**: 🟡 Paper Trading 中 (2026-02-25 起, tmux: `oi_liq_paper`)
-  - **Risk conditions applied**: position_pct=0.50, circuit_breaker=10%, 1x leverage
-  - **Graduation**: ≥ 2026-03-11, OI data stable, no circuit breaker triggers
-  - **Key metrics**: Portfolio SR=2.49, MDD=-1.3%, time-in-market=4.2%, correlation w/ R3C ≈ 0.01
+- **OI Liquidation Bounce v4.2**: 5-symbol long-only, 1x leverage — **SHELVED (2026-02-27)**
+  - **Reason**: Time-in-market=4.2% (每幣種每月 ~0.8 次交易)，資源效益過低
+  - **Pivot**: OI 清算反彈 insight 將整合為主策略的 overlay（類似 LSR overlay）
+  - **Config**: [prod_live_oi_liq_bounce.yaml](mdc:config/prod_live_oi_liq_bounce.yaml) (preserved)
+  - **Strategy code**: [oi_liq_bounce_strategy.py](mdc:src/qtrade/strategy/oi_liq_bounce_strategy.py) (preserved)
+  - **Key metrics**: Portfolio SR=2.49, MDD=-1.3%, correlation w/ main ≈ 0.01
 
 ## Strategy Portfolio Management
 

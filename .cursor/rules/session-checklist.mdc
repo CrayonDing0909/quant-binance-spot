@@ -19,6 +19,7 @@ alwaysApply: true
 | 新增概念/工具/流程（如策略治理、新回測模式） | 更新相關 `.mdc` rule 或建立新 rule |
 | 修改了 config 結構或命名規則 | 更新 `hygiene.mdc` 的 Config Naming Convention 表 |
 | 修改了 agent 職責或 handoff 流程 | 更新 `project-overview.mdc` 的 Workflow & Handoff |
+| 跑了 Alpha Research（任何探索性研究） | 更新 `docs/ALPHA_RESEARCH_MAP.md`（數據-信號圖譜 + 研究前沿排序 + 已關閉方向） |
 
 ## 最後一步：更新變更日誌
 

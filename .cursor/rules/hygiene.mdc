@@ -74,6 +74,7 @@ When you modify code that a doc describes, update the `Last updated` date in tha
 | `STRATEGY_PORTFOLIO_GOVERNANCE.md` | Strategy portfolio addition/replacement/retirement rules change |
 | `CURSOR_WORKFLOW.md` | Agent roles or workflow changes |
 | `RESEARCH_LITERATURE.md` | New literature discovered during research |
+| `ALPHA_RESEARCH_MAP.md` | After any Alpha Research session (new signal tested, direction closed, coverage changed) |
 
 ## 4. Config Naming Convention
 

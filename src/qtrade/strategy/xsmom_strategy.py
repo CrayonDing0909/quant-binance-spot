@@ -252,7 +252,8 @@ def generate_xsmom(df: pd.DataFrame, ctx: StrategyContext, params: dict) -> pd.S
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
         "DOGEUSDT", "XRPUSDT", "AVAXUSDT", "LINKUSDT", "ADAUSDT",
     ])
-    data_dir = params.get("data_dir", "data")
+    # 優先使用 _data_dir（由 run_symbol_backtest 自動注入），fallback 到 data_dir
+    data_dir = params.get("_data_dir") or params.get("data_dir", "data")
 
     lookbacks_raw = params.get("lookbacks", [336, 720, 1440])
     if isinstance(lookbacks_raw, str):

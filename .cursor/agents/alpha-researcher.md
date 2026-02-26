@@ -538,12 +538,20 @@ PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --stablec
 
 ## 自我檢查清單
 
+### 組合導向檢查（Portfolio-Aware — 最先檢查）
+- [ ] 開始前是否查閱了 Alpha 覆蓋地圖（`docs/ALPHA_RESEARCH_MAP.md`）？
+- [ ] 是否查閱了數據-信號圖譜確認**無重複研究**？
+- [ ] 本次研究是否對應一個**具名缺口**（而非隨機探索）？
+- [ ] 是否用 5 因子框架評分了本研究方向？（總分 ≥ 2.5？）
+- [ ] 是否在 Notebook Section 0 / Proposal Section 0.5 寫明了組合脈絡？
+- [ ] 是否指定了整合目標（Filter / Overlay / Standalone / Portfolio Layer）？
+
 ### 基礎檢查
 - [ ] 我的假說是否明確且可證偽？
 - [ ] 我是否有足夠的數據覆蓋率（>= 70%）？
 - [ ] 我是否記錄了數據來源和潛在偏差？
-- [ ] 我的 Notebook 是否包含了所有必要章節？
-- [ ] 我的 Strategy Proposal 是否完整填寫？
+- [ ] 我的 Notebook 是否包含了所有必要章節（含 Section 0 組合脈絡）？
+- [ ] 我的 Strategy Proposal 是否完整填寫（含 Section 0.5 組合脈絡）？
 - [ ] 我是否避免了 cherry-picking（只展示好的結果）？
 - [ ] 我是否考慮了交易成本對信號的影響（即使是初步估算）？
 - [ ] 我是否標記了需要的鏈上數據的覆蓋率和延遲？
@@ -558,6 +566,12 @@ PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --stablec
 
 ### 文獻維護
 - [ ] 研究過程中是否發現了新的有價值文獻？如果有，是否已加入 `docs/RESEARCH_LITERATURE.md`？
+
+### 研究地圖維護（Session 結束時 — 必做）
+- [ ] 是否更新了 `docs/ALPHA_RESEARCH_MAP.md` 的**數據-信號圖譜**（標記已測試的組合及結果）？
+- [ ] 是否更新了**研究前沿排序表**（調整分數、移除已完成/已失敗方向）？
+- [ ] 若驗證了新 alpha 維度，是否更新了 **Alpha 覆蓋地圖**？
+- [ ] 若確認某方向無效，是否加入了**已關閉研究方向**清單？
 
 ## Handoff 協議
 
@@ -592,9 +606,11 @@ PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama --stablec
 
 ## 關鍵參考文件
 
+- ⭐ **Alpha 研究地圖**（研究前必讀）：`docs/ALPHA_RESEARCH_MAP.md`
 - **數據 & 策略目錄**（自動生成）：`docs/DATA_STRATEGY_CATALOG.md`
+- **學術文獻參考庫**：`docs/RESEARCH_LITERATURE.md`
+- **策略組合治理**：`docs/STRATEGY_PORTFOLIO_GOVERNANCE.md`
 - 開發 Playbook：`docs/STRATEGY_DEV_PLAYBOOK_R2_1.md`
 - 研究矩陣範例：`docs/R2_100_RESEARCH_MATRIX.md`
-- **學術文獻參考庫**：`docs/RESEARCH_LITERATURE.md`
 - CLI 指令參考（自動生成）：`docs/CLI_REFERENCE.md`
 - Anti-Bias 規則：`.cursor/rules/anti-bias.mdc`

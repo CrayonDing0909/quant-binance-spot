@@ -108,13 +108,13 @@
 | `futures_multi_strat_ensemble.yaml` | `config/futures_multi_strat_ensemble.yaml` |
 | `futures_nwkl.yaml` | `config/futures_nwkl.yaml` |
 | `futures_tsmom.yaml` | `config/futures_tsmom.yaml` |
-| `futures_xsmom.yaml` | `config/futures_xsmom.yaml` |
 
 ### Research (active experiments)
 
 | Config | File |
 |--------|------|
 | `research_htf_filter.yaml` | `config/research_htf_filter.yaml` |
+| `research_htf_lsr_oi_cascade.yaml` | `config/research_htf_lsr_oi_cascade.yaml` |
 | `research_htf_lsr_overlay.yaml` | `config/research_htf_lsr_overlay.yaml` |
 | `research_lsr_contrarian.yaml` | `config/research_lsr_contrarian.yaml` |
 | `research_lsr_overlay_meta_blend.yaml` | `config/research_lsr_overlay_meta_blend.yaml` |
@@ -125,6 +125,7 @@
 | `research_risk_mitigation_A_20260224.yaml` | `config/research_risk_mitigation_A_20260224.yaml` |
 | `research_risk_mitigation_B_20260224.yaml` | `config/research_risk_mitigation_B_20260224.yaml` |
 | `research_tsmom_carry_v2.yaml` | `config/research_tsmom_carry_v2.yaml` |
+| `research_xsmom.yaml` | `config/research_xsmom.yaml` |
 
 ### Utility
 
@@ -138,7 +139,7 @@
 |--------|------|
 | `dual_momentum.yaml` | `config/dual_momentum.yaml` |
 
-> **Archive**: 53 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
+> **Archive**: 55 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
 
 ---
 

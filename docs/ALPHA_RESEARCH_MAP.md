@@ -1,4 +1,4 @@
-> **Last updated**: 2026-02-27
+> **Last updated**: 2026-02-27 (Taker Vol EDA updated)
 
 # Alpha 研究地圖 (Alpha Research Map)
 
@@ -15,7 +15,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 當前生產組合已捕捉的 alpha 維度、覆蓋品質、以及尚未填補的缺口。
 
 **生產策略**：HTF Filter v2 + LSR — Meta-Blend 8-Symbol + HTF Filter + LSR Confirmatory Overlay, 3x leverage
-**Satellite 策略**：OI Liquidation Bounce v4.2 — 5-Symbol long-only, 1x leverage (Paper Trading 中)
+**Satellite 策略**：無（OI Liq Bounce v4.2 已 SHELVED 2026-02-27，insight 轉為 oi_cascade overlay）
 
 | # | Alpha 維度 | 信號來源 | 生產策略/組件 | 覆蓋品質 | 缺口/機會 |
 |---|-----------|---------|-------------|---------|----------|
@@ -25,10 +25,10 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 4 | 散戶擁擠（LSR） | LSR percentile rank | LSR Confirmatory Overlay（boost/reduce） | ★★★★☆ 強（overlay） | standalone potential 受限於 2026 IC 翻轉 |
 | 5 | OI 確認層 | OI 24h pct_change | LSR Overlay v2（`oi_confirm`） | ★★★☆☆ 中（overlay 組件） | OI 作為獨立 regime 信號未探索 |
 | 6 | FR 擁擠確認 | FR pctrank + LSR 同向 | LSR Overlay v2（`fr_confirm`） | ★★★☆☆ 中（overlay 組件） | — |
-| 7 | OI 事件驅動 | OI drop + price drop → bounce | `oi_liq_bounce` v4.2 | ★★★★☆ 強（satellite） | 僅做多、低曝險率（4.2%）、歷史數據有限 |
+| 7 | OI 事件驅動 | OI drop + price drop → bounce | `oi_cascade` overlay + `oi_liq_bounce`（SHELVED） | ★★★☆☆ 中（overlay 研究中） | 獨立策略效益低（TIM=4.2%），已轉 overlay；BTC 空頭抵消需調優 |
 | 8 | 波動率 regime | ATR percentile | `vol_pause` overlay | ★★★☆☆ 中（僅退出用） | 方向性波動率信號未探索 |
-| 9 | 截面動量 (XSMOM) | 相對強弱排名 | `xsmom`（已實作，未上線） | ☆☆☆☆☆ 未驗證 | 需正式回測 + corr 分析 |
-| 10 | 微結構/訂單流 | Taker vol, CVD | `derivatives_micro_overlay`（已實作） | ☆☆☆☆☆ 未驗證 | 成本可行性待確認 |
+| 9 | 截面動量 (XSMOM) | 相對強弱排名 | `xsmom`（已實作，**FAIL**） | ❌ 無效（SR=-0.50, 6 variants 全負） | 加密截面動量不存在（高相關性 + rank-invariant residual） |
+| 10 | 微結構/訂單流 | Taker vol, CVD | `derivatives_micro_overlay`（已實作） | ★★☆☆☆ 弱（WEAK GO） | TVR IC=-0.006(弱但獨立), CVD 不穩定, 建議作為 LSR overlay 第4確認因子 |
 | 11 | 鏈上 regime | TVL, 穩定幣流量 | `onchain.py`（僅數據模組） | ☆☆☆☆☆ 無信號 | 需建構 risk-on/off 信號 |
 | 12 | 清算瀑布精確化 | 清算數據 | `oi_liq_bounce`（部分使用） | ★★☆☆☆ 弱（CoinGlass 歷史有限） | 更豐富數據源 + 更精確入場 |
 | 13 | 多 TF 共振（獨立策略）| 多 TF 信號一致 | `multi_tf_resonance`（已實作） | ☆☆☆☆☆ 未驗證 | HTF Filter 已覆蓋部分功能 |
@@ -38,7 +38,9 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 - **已充分覆蓋（★★★★+）**：時序動量、HTF 趨勢、散戶擁擠、OI 事件
 - **部分覆蓋（★★-★★★）**：Carry、OI 確認、波動率、清算
-- **未覆蓋（空白缺口）**：截面動量、微結構/訂單流、鏈上 regime、Order Book
+- **已確認無效**：截面動量 (XSMOM)
+- **已測試但弱（★★）**：微結構/訂單流（TVR 獨立但 IC 弱，CVD 不穩定）
+- **未覆蓋（空白缺口）**：鏈上 regime、Order Book
 
 ---
 
@@ -58,7 +60,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 4h K 線 | EMA 趨勢過濾 | ✅ 是 (20260226) | +0.485 SR 改善 | HTF Filter v2（4h 趨勢腿） |
 | Daily K 線 | ADX regime 判斷 | ✅ 是 (20260226) | HTF Filter 組件 | HTF Filter v2（daily regime 腿） |
 | 5m/15m K 線 | 微結構入場時機 | ⚠️ 部分（EDA） | 高成本風險（12× turnover） | 無 |
-| 1h K 線 | 截面相對強弱 | ⚠️ 部分（已實作） | 需正式回測 | `xsmom`（未上線） |
+| 1h K 線 | 截面相對強弱 | ✅ 是 (20260227) | ❌ FAIL — avg SR=-0.50, 6 variants 全負 | `xsmom`（FAIL，已關閉） |
 
 ### 2B. 衍生品信號
 
@@ -69,10 +71,12 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | LSR（散戶 vs 大戶） | 散戶/大戶背離 | ✅ 是 (20260227) | IC=-0.041 最強，但 2026 IC 翻轉 + 換手率 7.8x | 僅研究，風險過高 |
 | Top LSR（大戶帳戶） | 大戶方向追隨 | ✅ 是 (20260227) | IC 弱（-0.002），不如散戶 LSR | 無價值 |
 | Top LSR（大戶持倉） | 大戶持倉追隨 | ✅ 是 (20260227) | IC 接近 0 | 無價值 |
-| Taker Vol Ratio | 買賣不平衡動量 | ⚠️ 部分（EDA 20260227） | IC 有潛力，需獨立深入分析 | 無 |
-| CVD | 價格-CVD 背離 | ⚠️ 部分（EDA 20260226） | 概念可行，需更多樣本 | `cvd_divergence`（已實作未驗證） |
-| CVD | CVD momentum overlay | ⚠️ 部分（EDA 20260227） | IC 中等，待深入 | 無 |
-| OI | Drop + bounce 事件 | ✅ 是（v4.2 完整驗證） | SR=2.49, corr≈0.01 | `oi_liq_bounce`（paper trading） |
+| Taker Vol Ratio | TVR pctrank 逆向 overlay | ✅ 是 (20260227 EDA) | IC=-0.006(弱逆向), corr(LSR)=-0.013(獨立), Smooth24+85pctile Δ SR=+0.155(2.1x turnover) | **WEAK GO**: 建議作為 LSR overlay v2 第4確認因子 |
+| Taker Vol Ratio | Raw TVR overlay | ✅ 是 (20260227 EDA) | autocorr≈0.01(iid noise), raw pctrank→6x turnover(overfitted) | ❌ 必須先 24h SMA 平滑 |
+| CVD | CVD direction momentum | ✅ 是 (20260227 EDA) | IC=+0.001(不可復現), 直接 overlay Δ SR=-0.251(HURTS performance) | ❌ CVD 非動量信號，與初步 EDA 矛盾 |
+| CVD | CVD raw/pctrank 逆向 | ✅ 是 (20260227 EDA) | IC=-0.013~-0.023(逆向), 但 IC 年度翻轉(2022 負→2026 正) | ❌ 不穩定，不建議使用 |
+| CVD | 價格-CVD 背離 | ✅ 是 (20260227 EDA) | Δ SR=+0.053(邊際), turnover 2.6x | ❌ 不值得複雜度 |
+| OI | Drop + bounce 事件 | ✅ 是（v4.2 完整驗證） | SR=2.49 standalone, +0.11 SR as overlay | `oi_liq_bounce`（SHELVED）→ `oi_cascade` overlay |
 | OI | Rising 確認（24h pct_change） | ✅ 是 (20260227) | overlay 組件，邊際改善小 | LSR Overlay v2 `oi_confirm` |
 | OI | Regime 指標（high/low OI） | ❌ 否 | — | — |
 | OI | Crowding 逆向 | ⚠️ 部分（EDA 20260227） | Cross-symbol crowding 因果修正後無效 | 無 |
@@ -80,7 +84,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | Funding Rate | Proxy carry（價格估算） | ✅ 是 | 作為 tsmom 輔助因子有效 | `tsmom_carry_v2` carry 腿 |
 | Funding Rate | FR pctrank 擁擠確認 | ✅ 是 (20260227) | overlay 組件 | LSR Overlay v2 `fr_confirm` |
 | Funding Rate | FR + LSR 雙重擁擠 | ✅ 是 (20260227) | 邊際改善 +0.013 SR（小但正面） | LSR Overlay v2 D mode |
-| 清算數據 | 瀑布後反彈 | ✅ 是 | OI Liq Bounce 核心 | `oi_liq_bounce` |
+| 清算數據 | 瀑布後反彈 | ✅ 是 | OI Liq Bounce 核心 → overlay 轉化 | `oi_cascade` overlay（+0.11 SR, 5/8 symbols） |
 | 清算數據 | 精確入場時機 | ❌ 否 | — | 歷史數據不足 |
 
 ### 2C. 鏈上/另類數據信號
@@ -123,22 +127,27 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 | # | 研究方向 | 目標缺口 | 整合模式 | 分散化 | 數據 | Alpha | 複雜度 | 文獻 | **總分** | 備註 |
 |---|---------|---------|---------|:------:|:----:|:-----:|:------:|:----:|:--------:|------|
-| 1 | Taker Vol 不平衡 overlay | 微結構/訂單流 | Overlay | 4 | 4 | 3 | 4 | 3 | **3.6** | EDA 顯示 IC 有潛力，成本需驗證 |
-| 2 | 鏈上 regime overlay（TVL/穩定幣） | 鏈上 regime | Overlay/Filter | 5 | 3 | 2 | 4 | 2 | **3.4** | 與現有策略正交，但 alpha 不確定 |
-| 3 | OI regime（high/low OI 環境分類） | OI 確認 | Filter | 3 | 5 | 3 | 5 | 2 | **3.4** | 數據已有，簡單實作 |
-| 4 | 截面動量 (XSMOM) 上線驗證 | 截面動量 | Standalone/Blend | 3 | 5 | 3 | 5 | 4 | **3.7** | 已實作，需正式 corr + 回測 |
-| 5 | CVD divergence 深入研究 | 微結構 | Overlay | 4 | 4 | 2 | 3 | 3 | **3.2** | EDA 初步，需更完整驗證 |
-| 6 | 真實 FR carry 改進 | Carry 品質 | 策略內部升級 | 1 | 5 | 2 | 5 | 3 | **2.7** | corr 高（改善同一策略），但簡單 |
-| 7 | Order Book depth 不平衡 | 訂單流 | Overlay | 5 | 1 | 3 | 2 | 3 | **3.0** | 無歷史數據是致命問題 |
-| 8 | retail_vs_top LSR standalone | 散戶擁擠 | Standalone | 4 | 4 | 3 | 3 | 2 | **3.3** | 2026 IC 翻轉 + 高換手率待解決 |
-| 9 | Cross-symbol 擁擠偵測 | 系統風險 | Filter | 3 | 4 | 1 | 4 | 2 | **2.6** | 因果修正後幾乎無效 |
-| 10 | 5m/15m 微結構入場 overlay | 執行改善 | Overlay | 2 | 3 | 2 | 2 | 3 | **2.3** | 成本侵蝕太大，低於門檻 |
+| 1 | 鏈上 regime overlay（TVL/穩定幣） | 鏈上 regime | Overlay/Filter | 5 | 3 | 2 | 4 | 2 | **3.4** | 與現有策略正交，但 alpha 不確定 |
+| 2 | OI regime（high/low OI 環境分類） | OI 確認 | Filter | 3 | 5 | 3 | 5 | 2 | **3.4** | 數據已有，簡單實作 |
+| 3 | retail_vs_top LSR standalone | 散戶擁擠 | Standalone | 4 | 4 | 3 | 3 | 2 | **3.3** | 2026 IC 翻轉 + 高換手率待解決 |
+| 4 | 真實 FR carry 改進 | Carry 品質 | 策略內部升級 | 1 | 5 | 2 | 5 | 3 | **2.7** | corr 高（改善同一策略），但簡單 |
+| 5 | Order Book depth 不平衡 | 訂單流 | Overlay | 5 | 1 | 3 | 2 | 3 | **3.0** | 無歷史數據是致命問題 |
+| 6 | Cross-symbol 擁擠偵測 | 系統風險 | Filter | 3 | 4 | 1 | 4 | 2 | **2.6** | 因果修正後幾乎無效 |
+| 7 | 5m/15m 微結構入場 overlay | 執行改善 | Overlay | 2 | 3 | 2 | 2 | 3 | **2.3** | 成本侵蝕太大，低於門檻 |
+| ~~8~~ | ~~截面動量 (XSMOM)~~ | — | — | — | — | — | — | — | ~~3.7~~ | **FAIL (20260227)**: avg SR=-0.50，已移至 Dead Ends |
+| ~~9~~ | ~~Taker Vol 不平衡 overlay~~ | — | — | — | — | — | — | — | ~~3.6~~ | **WEAK GO (20260227)**: IC弱(-0.006)但獨立, Δ SR+0.155, 建議作第4確認因子→Quant Dev |
+| ~~10~~ | ~~CVD divergence/momentum~~ | — | — | — | — | — | — | — | ~~3.2~~ | **FAIL (20260227)**: CVD momentum 傷害 TSMOM(Δ SR=-0.25), IC 年度翻轉, 背離信號邊際 |
 
 ### 建議下一步研究（Top 3）
 
-1. **XSMOM 上線驗證**（#4, 3.7 分）— 已實作，只需跑正式回測 + 與生產組合 corr 分析。成本最低的研究。
-2. **Taker Vol 不平衡 overlay**（#1, 3.6 分）— EDA 有初步信號，作為 overlay 成本影響小。
-3. **鏈上 regime overlay**（#2, 3.4 分）/ **OI regime filter**（#3, 3.4 分）— 兩者並列，前者分散化更好但 alpha 不確定，後者數據更成熟。
+1. **鏈上 regime overlay**（#1, 3.4 分）— 與現有策略正交，分散化效果最好。需先做 TVL/穩定幣數據 EDA。
+2. **OI regime filter**（#2, 3.4 分）— 數據最成熟（已有完整 OI），簡單實作。
+3. **retail_vs_top LSR standalone**（#3, 3.3 分）— IC 最強但需解決 2026 翻轉 + 換手率。
+
+### 已完成但邊際的方向（可選 Handoff → Quant Developer）
+
+- **Taker Vol (Smooth24) overlay** → 作為 LSR overlay 第4確認因子（`tvr_confirm_enabled`）。
+  預期邊際改善 Δ SR ≈ +0.05~0.10（含成本）。低風險低收益，開發者決定是否值得實作。
 
 ---
 
@@ -155,6 +164,9 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | Cross-symbol crowding filter | 2026-02-27 | 因果修正後 Δ SR=+0.01（無效） | `notebooks/research/20260227_lsr_full_alpha_exploration.ipynb` | 更好的因果處理方法 |
 | Top LSR（大戶）方向追隨 | 2026-02-27 | IC ≈ 0（無信息量） | `notebooks/research/20260227_lsr_full_alpha_exploration.ipynb` | — |
 | retail_vs_top LSR standalone | 2026-02-27 | IC 最強但 2026 IC 翻轉 + 換手率 7.8x | `notebooks/research/20260227_lsr_full_alpha_exploration.ipynb` | 解決 IC 翻轉問題 + 降低換手率 |
+| XSMOM 截面動量 | 2026-02-27 | 8/8 幣種 avg SR=-0.50, 6 variants 全負。residual 去 BTC 是 rank-invariant（數學等價無殘差）。blend TSMOM 也只稀釋。corr=-0.11 但負 alpha 無意義 | `config/research_xsmom.yaml`, 回測報告 `reports/futures/xsmom/` | 加密截面動量因子結構性改變（極不可能） |
+| CVD momentum overlay | 2026-02-27 | CVD direction 直接 overlay 傷害 TSMOM（Δ SR=-0.251, 0/8 improved）。初步 EDA 的 IC=+0.019 不可復現（嚴格計算後 IC=+0.001）。CVD 是逆向信號而非動量信號。IC 年度翻轉（2022 負→2026 正） | `notebooks/research/20260227_taker_vol_overlay_eda.ipynb` | CVD IC 穩定化（極不可能） |
+| Price-CVD divergence | 2026-02-27 | Δ SR=+0.053（邊際），turnover 2.6x baseline。IC=-0.010 且不穩定 | `notebooks/research/20260227_taker_vol_overlay_eda.ipynb` | — |
 
 ---
 
@@ -163,3 +175,5 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 日期 | 更新內容 | 更新者 |
 |------|---------|--------|
 | 2026-02-27 | 初版建立：覆蓋地圖 14 維度、數據-信號圖譜 40+ 條目、研究前沿 10 方向 | Quant Developer（從歷史研究記錄彙整） |
+| 2026-02-27 | XSMOM 正式回測 FAIL：avg SR=-0.50, 6 variants 全負。移至 Dead Ends。研究前沿重新排序 | Quant Developer |
+| 2026-02-27 | Taker Vol overlay 深入 EDA: TVR IC=-0.006(弱逆向,獨立), CVD momentum FAIL(Δ SR=-0.25), smooth24 TVR overlay Δ SR=+0.155。WEAK GO: 建議作 LSR overlay 第4確認因子。CVD direction/divergence 移至 Dead Ends | Alpha Researcher |

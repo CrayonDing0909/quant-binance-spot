@@ -434,8 +434,11 @@ def run_symbol_backtest(
     overlay_cfg = cfg.get("overlay")
     if overlay_cfg and overlay_cfg.get("enabled", False):
         from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
+        import copy as _copy
         overlay_mode = overlay_cfg.get("mode", "vol_pause")
-        overlay_params = overlay_cfg.get("params", {})
+        # ⚠️ 必須 deepcopy：防止 per-symbol 的 _lsr_series / _oi_series / _fr_series
+        # 注入後汙染共用 dict（portfolio backtest 會跑多個 symbol）
+        overlay_params = _copy.deepcopy(overlay_cfg.get("params", {}))
 
         # OI 資料：優先使用呼叫者注入的 _oi_series，否則自動從 data_dir 載入
         # 支援複合模式：如 "oi_vol+lsr_confirmatory" 也需載入 OI

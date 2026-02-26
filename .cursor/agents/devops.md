@@ -136,36 +136,14 @@ Rollback Level 2 (legacy):
   Strategy: R3C 10-Symbol Ensemble (tsmom_ema + breakout_vol_atr)
 ```
 
-### OI Liquidation Bounce — Paper Trading 中 🟡
+### OI Liquidation Bounce — SHELVED ⚪ (2026-02-27)
 
 ```
-Config: config/prod_live_oi_liq_bounce.yaml
-tmux session: oi_liq_paper
-Strategy: oi_liq_bounce v4.2 — 5-Symbol Long-Only
-  - BTC(30%), ETH(25%), SOL(20%), DOGE(15%), AVAX(10%)
-  - Long-only, 1x leverage, ISOLATED margin
-  - 需要 OI 數據（binance_vision provider）
-Risk Audit: APPROVED (2026-02-25)
-  - MC 4/4 PASS, Portfolio Risk 3/3 PASS
-  - Portfolio SR: 2.49, MDD: -1.3%, Time-in-market: 4.2%
-Paper Trading Started: 2026-02-25 (至少跑到 2026-03-11)
-Risk Conditions Applied:
-  ✅ position_pct = 0.50
-  ✅ circuit_breaker_pct = 0.10
-  ✅ 1x leverage
-Data Pipeline:
-  ✅ OI cron: binance API every 2h + binance_vision daily
-  ✅ Watchdog: OI freshness monitoring enabled
-  ✅ OI in-memory cache in BaseRunner (refreshes every 30min)
-  ✅ download_data.py --oi auto-detects oi_liq_bounce strategy
-Graduation Criteria:
-  1. ≥ 2 weeks paper trading without critical errors
-  2. OI data source stable (no gaps > 4h)
-  3. Signal consistency with backtest expectations
-  4. No circuit breaker triggers
-Note: 與 R3C 平行運行中（Paper 模式無倉位衝突）
-      實盤需子帳號或 HEDGE_MODE
-      Watchdog 已按策略名隔離（不再 PID 衝突）
+Status: SHELVED — paper trading 已停止，tmux session 已移除
+Reason: Time-in-market=4.2% (每幣種每月 ~0.8 次交易)，1GB RAM 機器資源效益過低
+Pivot: OI 清算反彈 insight 將整合為主策略的 overlay（類似 LSR overlay）
+Config: config/prod_live_oi_liq_bounce.yaml (preserved, not deployed)
+Strategy code: src/qtrade/strategy/oi_liq_bounce_strategy.py (preserved)
 ```
 
 ### 部署 / 重啟 WebSocket Runner
@@ -337,13 +315,10 @@ data/binance/futures/liquidation/{SYMBOL}.parquet                 ← 爆倉數�
 # R3C Kline + FR (retained for rollback, every 6h)
 15 */6 * * * download_data.py -c config/prod_live_R3C_E3.yaml
 
-# OI Liq Bounce Kline + FR (every 6h)
-20 */6 * * * download_data.py -c config/prod_live_oi_liq_bounce.yaml
-
-# OI binance_vision (daily at 02:30 UTC)
+# OI binance_vision (daily at 02:30 UTC) — retained for OI overlay research
 30 2 * * * download_oi_data.py --provider binance_vision --symbols ...
 
-# OI binance API (every 2h at :45)
+# OI binance API (every 2h at :45) — retained for OI overlay research
 45 */2 * * * download_oi_data.py --provider binance --symbols ...
 
 # Derivatives (LSR + Taker Vol + CVD) — daily at 03:00 UTC
@@ -375,22 +350,21 @@ cat reports/live_watchdog/R3C_E3/latest_status.json | python3 -m json.tool  # (�
 讀取各策略 Runner 寫出的信號快照 (`last_signals.json`)。
 
 ```
-┌─────────────────────────┐     ┌─────────────────────────┐
-│  meta_blend_live (tmux) │     │  oi_liq_paper (tmux)    │
-│  WebSocketRunner        │     │  WebSocketRunner        │
-│  → writes last_signals  │     │  → writes last_signals  │
-│    .json to reports/    │     │    .json to reports/    │
-└─────────────────────────┘     └─────────────────────────┘
-            │                               │
-            └──────────┐   ┌────────────────┘
-                       ▼   ▼
-              ┌────────────────────┐
-              │  tg_bot (tmux)     │
-              │  run_telegram_bot  │
-              │  MultiStrategyBot  │
-              │  ← reads signals   │
-              │  ← queries Binance │
-              └────────────────────┘
+┌─────────────────────────┐
+│  meta_blend_live (tmux) │
+│  WebSocketRunner        │
+│  → writes last_signals  │
+│    .json to reports/    │
+└─────────────────────────┘
+            │
+            ▼
+   ┌────────────────────┐
+   │  tg_bot (tmux)     │
+   │  run_telegram_bot  │
+   │  MultiStrategyBot  │
+   │  ← reads signals   │
+   │  ← queries Binance │
+   └────────────────────┘
 ```
 
 - **Runner 不再啟動命令 Bot**：只保留 `TelegramNotifier` 做交易推送通知
@@ -410,7 +384,6 @@ tmux new -d -s tg_bot 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate &&
   PYTHONPATH=src python scripts/run_telegram_bot.py \
     -c config/prod_candidate_htf_lsr.yaml \
-    -c config/prod_live_oi_liq_bounce.yaml \
     --real;
   echo "TG Bot exited, restarting in 10s..."; sleep 10;
 done'
@@ -470,18 +443,17 @@ TELEGRAM_CHAT_ID=your_chat_id
 | Boot Volume | ~46.6GB |
 | OS | Ubuntu 22.04, x86_64 |
 
-### Current Memory Budget (estimated)
+### Current Memory Budget (estimated, updated 2026-02-27)
 
 | Process | Description | RAM |
 |---------|-------------|-----|
 | `meta_blend_live` | WebSocketRunner, 8 symbols x 1h | ~200-350MB |
-| `oi_liq_paper` | WebSocketRunner, 5 symbols x 1h | ~150-250MB |
 | `tg_bot` | Telegram Bot (MultiStrategyBot) | ~50-80MB |
 | OS + system | Ubuntu 22.04 baseline | ~200MB |
 | Cron (transient) | Data downloads every 2-6h | ~100MB (short-lived) |
-| **Total** | | **~600-880MB / 1024MB** |
+| **Total** | | **~450-630MB / 1024MB** |
 
-The machine is at capacity. Adding any new persistent process or extra WebSocket streams risks OOM.
+After shelving OI Liq Bounce (2026-02-27), ~150-250MB freed. Machine has comfortable headroom (~400MB available).
 
 ### Multi-TF Deployment Policy
 

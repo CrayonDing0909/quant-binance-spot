@@ -449,6 +449,7 @@ def _apply_single_overlay(
         "oi_only"             → OI only（vol disabled）
         "vol_only"            → Vol only（等同 vol_pause）
         "lsr_confirmatory"    → LSR 散戶多空比擇時縮放
+        "oi_cascade"          → OI 清算瀑布擇時增強（結構面確認）
 
     Args:
         position: 持倉信號
@@ -490,6 +491,14 @@ def _apply_single_overlay(
             lsr_series=lsr_series,
             params=params,
         )
+    elif mode == "oi_cascade":
+        from .oi_cascade_overlay import apply_oi_cascade_overlay
+        return apply_oi_cascade_overlay(
+            position=position,
+            price_df=price_df,
+            oi_series=oi_series,
+            params=params,
+        )
     else:
         raise ValueError(f"Unknown overlay mode: {mode}")
 
@@ -510,10 +519,12 @@ def apply_overlay_by_mode(
         "oi_only"             → OI only（vol disabled）
         "vol_only"            → Vol only（等同 vol_pause）
         "lsr_confirmatory"    → LSR 散戶多空比擇時縮放
+        "oi_cascade"          → OI 清算瀑布擇時增強（結構面確認）
 
     複合模式（用 '+' 連接，依序套用）：
         "vol_pause+lsr_confirmatory"  → 先 vol_pause 再 LSR 縮放
         "oi_vol+lsr_confirmatory"     → 先 OI+Vol 再 LSR 縮放
+        "oi_vol+lsr_confirmatory+oi_cascade" → 先 OI+Vol 再 LSR 再 OI cascade
 
     Args:
         position: 原始持倉信號

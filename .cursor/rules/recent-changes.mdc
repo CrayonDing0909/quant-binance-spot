@@ -10,6 +10,109 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-27
 
+### Taker Vol Overlay 深入 EDA（Alpha Researcher）
+- **新增** `notebooks/research/20260227_taker_vol_overlay_eda.ipynb` — Taker Volume / CVD overlay 深入探索
+  - 14 種信號變體 IC 分析（TVR 6 種 + CVD 6 種 + 背離 1 種 + 組合 1 種）
+  - **TVR IC 結果**: IC ≈ -0.006~-0.008（弱逆向），|ICIR| < 0.25（低於 actionable 門檻）
+  - **CVD IC 結果**: IC ≈ -0.013~-0.023（逆向，非動量！），cvd_direction IC=+0.001（不可復現初步 EDA 的 +0.019）
+  - **冗餘檢查**: TVR vs LSR Spearman corr = **-0.013**（完全獨立，TVR 捕捉不同維度信息）
+  - **IC 穩定性**: ⚠️ CVD 年度翻轉（2022 負→2026 正），TVR 穩定但弱
+  - 5 種 overlay 原型回測（gross PnL）：
+    - B_tvr_confirm(raw): Δ SR=+1.748, 但 turnover 6.1x（overfitted）
+    - C_cvd_momentum: Δ SR=-0.251（**HURTS** TSMOM）
+    - D_tvr_cvd_dual: Δ SR=+0.895, turnover 4.86x
+    - E_divergence: Δ SR=+0.053, turnover 2.6x
+  - **Refinement**（解決 turnover 問題）：
+    - TVR 1h autocorrelation ≈ 0.01 → 必須先 24h SMA 平滑
+    - F_smooth24_85: Δ SR=**+0.155**, turnover **2.1x**（最佳平衡）
+    - G_smooth24_95: Δ SR=+0.108, turnover 1.7x（保守）
+    - H_smooth24_cd24: Δ SR=-0.159（cooldown 反而傷害）
+  - **Verdict**: **WEAK GO** — 建議作為 LSR overlay v2 第4確認因子（`tvr_confirm_enabled`），不獨立實作
+  - **Dead Ends**: CVD momentum overlay, Price-CVD divergence 確認無效
+- **更新** `docs/ALPHA_RESEARCH_MAP.md` — 
+  - #10 微結構/訂單流：☆☆☆☆☆ → ★★☆☆☆（WEAK GO）
+  - 數據-信號圖譜：TVR/CVD 5 條目更新為已測試+結果
+  - 研究前沿：Taker Vol + CVD divergence 移至已完成，前3 → 鏈上 regime / OI regime / retail_vs_top
+  - Dead Ends：新增 CVD momentum overlay, Price-CVD divergence
+
+### overlay_params cross-contamination bug 修復 + 指標重算（Quant Developer）
+- **修復** `src/qtrade/config.py` — `to_backtest_dict()` 對 `_overlay_cfg` 改用 `copy.deepcopy()`
+  - 根因：原本用 reference 導致 portfolio backtest 中 symbol 1 的 overlay data 汙染 symbol 2-N
+  - 影響：LSR/OI/FR per-symbol 數據未隔離，portfolio SR 被低估
+- **修復** `src/qtrade/backtest/run_backtest.py` — `overlay_params` 額外 deepcopy（防禦性）
+- **修正後 portfolio 指標**（`config/research_htf_lsr_overlay.yaml`）:
+  - Portfolio SR: 2.87 → **4.31**, Total Return: +187.5% → **+343.7%**
+  - MDD: -4.75% → **-3.73%**, Calmar: 6.09 → **11.54**
+  - 2x Cost SR: 2.02 → **3.32**
+  - 8/8 symbols improved vs HTF v2 baseline, avg Δ SR=+0.95
+- **重新凍結** `config/prod_candidate_htf_lsr.yaml`:
+  - 補充缺失的 D mode params: `oi_confirm_enabled: true`, `fr_confirm_enabled: true`
+  - 更新 header 驗證數據為修正後指標
+  - 驗證 overlay params 與 research config 100% 一致
+- **新增** `tests/test_overlay_data_isolation.py` — 5 個回歸測試
+  - `TestToBacktestDictOverlayIsolation`: to_backtest_dict() 產生獨立副本 (2 tests)
+  - `TestRunSymbolBacktestOverlayIsolation`: run_symbol_backtest 不汙染 caller dict (1 test)
+  - `TestDeepCopyBehavior`: deepcopy 機制正確性 (2 tests)
+- 全部 353 測試通過（原 348 + 5 新增）
+- 更新 `project-overview.mdc` 指標
+- **Handoff → Risk Manager**: bug 修正後正確指標已更新，Risk Audit 結論不變（metrics 更強）
+
+### OI Liq Bounce Paper Trading 停止 + OI Cascade Overlay 實作（Quant Developer）
+- **Route C: 停止 OI Liq Bounce Paper Trading**
+  - SSH Oracle Cloud 停止 `oi_liq_paper` tmux session（RAM 使用率從 69% 降至 ~56%）
+  - 策略 SHELVED：Time-in-market=4.2%（每幣種每月 ~0.8 次交易），1GB RAM 資源效益過低
+  - 策略代碼和 config 保留不刪除（`prod_live_oi_liq_bounce.yaml`, `oi_liq_bounce_strategy.py`）
+  - 修改 `.cursor/rules/project-overview.mdc` — OI Liq Bounce 從 "Approved Candidates" 移至 "Shelved Strategies"
+  - 修改 `.cursor/agents/devops.md` — 移除 OI Liq Paper section、更新 RAM 預算、更新 Telegram Bot 架構
+- **Route A: OI Cascade Confirmatory Overlay**
+  - 新增 `src/qtrade/strategy/overlays/oi_cascade_overlay.py` — OI 清算瀑布擇時增強 overlay
+  - 修改 `src/qtrade/strategy/overlays/oi_vol_exit_overlay.py` — 註冊 `oi_cascade` 模式
+  - 新增 `config/research_htf_lsr_oi_cascade.yaml` — 研究配置（overlay: `oi_vol+lsr_confirmatory+oi_cascade`）
+  - 回測結果: Portfolio SR +0.11 (2.70→2.81), MDD 改善 (-5.12%→-4.87%), 5/8 symbols improved
+  - BTC -0.183 SR（breakout 空頭 alpha 被 cascade reduce 抵消），需進一步調優或排除 BTC
+  - Handoff → Quant Researcher: 如需推進，需完整驗證 (WFA/CPCV/Cost Stress)
+- 重新生成 `docs/CLI_REFERENCE.md`、`docs/DATA_STRATEGY_CATALOG.md`
+- 全部 348 測試通過
+
+### HTF v2 + LSR D_oi_fr 完整驗證 — GO_NEXT (Conditional)（Quant Researcher）
+- **完整驗證 pipeline** 對 `config/research_htf_lsr_overlay.yaml` 執行
+  - WFA: 8/8 OOS+, max decay 32.6% (LINK), avg decay 19.3%
+  - CPCV: 8/8 PASS, PBO max 0.13 (DOGE), 其餘 0.07
+  - Cost Stress: 2x Cost 8/8 symbols profitable, Portfolio 2x SR=2.02
+  - Delay Stress: avg SR drop 3.1% (<30%)
+  - DSR: 1.87 (p<0.001), PBO 50%, Cross-Asset 8/8
+  - Pre-Deploy Consistency: 11 PASS / 3 WARN / 0 FAIL
+- **🐛 發現 critical bug**: `overlay_params` cross-contamination
+  - `run_symbol_backtest()` 將 `_lsr_series`/`_oi_series`/`_fr_series` 注入 `overlay_params` dict
+  - 在 portfolio backtest 中，symbols 2-8 使用 symbol 1 的 overlay 數據（因 dict 共用引用）
+  - **根因**: `config.py` `to_backtest_dict()` line 443 用 reference 而非 deepcopy
+  - **影響**: Portfolio SR 被低估（2.87 → 正確值 ≈ 3.98），per-symbol WFA/CPCV 不受影響
+  - **Live trading 不受影響**（每次 signal generation 獨立呼叫）
+- **Verdict**: **GO_NEXT (Conditional)** — 所有 gate 通過，但需 Developer 先修 bug
+- **報告**: `reports/validation/htf_lsr_d_mode_full_validation_20260227.md`
+- **Handoff → Quant Developer**:
+  1. [MUST] 修復 overlay_params cross-contamination（deepcopy `_overlay_cfg`）
+  2. [MUST] 修復後重跑 portfolio backtest 確認正確指標
+  3. [SHOULD] 新增 overlay data isolation 回歸測試
+- **Handoff → Risk Manager**: bug 修復 + 重跑後進行風控審計
+
+### XSMOM 截面動量正式回測 — FAIL（Quant Developer）
+- **修改** `src/qtrade/strategy/xsmom_strategy.py` — `data_dir` 載入改為優先使用 `_data_dir`（一致性修復）
+- **新增** `config/research_xsmom.yaml` → 回測後移至 `config/archive/`
+- **歸檔** `config/futures_xsmom.yaml` → `config/archive/`
+- **正式回測結果**（8 symbol, 15-coin universe, 2022-01~2026-02）:
+  - Portfolio SR: **-1.45**, Total Return: **-22.46%**, MDD: **23.80%**
+  - Per-symbol: BTC -0.71, ETH -0.84, SOL -0.20, BNB -1.23, DOGE -1.27, ADA +0.29, AVAX +0.37, LINK -0.44
+  - 6 parameter variants 全部 avg SR < 0（threshold/linear/no-residual/short-lookback/no-skip/wider）
+  - **xsmom_tsmom blend 40/60**: avg SR=-0.127（XSMOM 稀釋 TSMOM）
+  - **xsmom_tsmom blend 20/80**: avg SR=+0.018（仍不如純 TSMOM +0.113）
+  - **Correlation with production**: Pearson = **-0.11**（正交但無用，因為 alpha 為負）
+  - **Quick validation**: DSR=-0.40 (p=1.00), PBO=60%
+  - **Root cause**: 加密幣高相關性 (~0.7+) 使截面排名噪音大；簡化殘差（ret-BTC）是 rank-invariant（數學等價無殘差）
+- **Verdict**: **FAIL** — 加密截面動量因子在當前市場結構下不存在
+- **更新** `docs/ALPHA_RESEARCH_MAP.md` — XSMOM 移至 Dead Ends，研究前沿重新排序
+- 重新生成 `docs/CLI_REFERENCE.md`、`docs/DATA_STRATEGY_CATALOG.md`
+
 ### Oracle 1GB RAM 記憶體優化（Quant Developer）
 - **修改** `src/qtrade/live/kline_cache.py` — `IncrementalKlineCache` 新增 `max_bars=1000` 參數
   - `_save()` 超過 max_bars 時自動裁剪最舊 bar，防止無限增長 OOM
@@ -34,6 +137,24 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 - **預估效果**: RAM -30MB per process（kline trim + close_time + aux trim），磁碟可釋放 ~622MB
 
 ## 2026-02-27
+
+### Alpha Researcher 認知升級 — 組合導向研究框架
+- **新建** `docs/ALPHA_RESEARCH_MAP.md` — Alpha 研究地圖（living doc）
+  - Alpha 覆蓋地圖：14 個 alpha 維度、覆蓋品質評級、缺口標記
+  - 數據-信號分類圖譜：40+ 條目（K 線/衍生品/鏈上/組合層級），含測試結果和當前用途
+  - 研究前沿排序表：10 個候選方向，5 因子評分（Top 3: XSMOM 3.7, Taker Vol 3.6, 鏈上 regime 3.4）
+  - 已關閉研究方向：7 項（BB MR, FR Carry, Vol Squeeze, OI Spike, cross-symbol crowding, Top LSR, retail_vs_top）
+- **修改** `.cursor/agents/alpha-researcher.md` — 3 個新 section + 模板/清單升級
+  - 新增「組合導向研究協議」：研究前必做 5 步檢查（讀覆蓋地圖 → 指定缺口 → 估邊際 SR → 查圖譜 → 宣告整合目標）
+  - 新增「信號整合層級決策樹」：Filter / Overlay / Standalone / Portfolio Layer 判斷流程 + 各層級驗證要求
+  - 新增「研究優先級評分系統」：5 因子（分散化 30%, 數據 20%, Alpha 20%, 複雜度 15%, 文獻 15%），門檻 < 2.5 不研究
+  - Strategy Proposal 新增 Section 0.5「組合脈絡」（目標缺口、corr 預期、整合目標、5 因子分數、歷史研究引用）
+  - Notebook 結構新增 Section 0「組合脈絡」（標準 7 節 → 0+7 節，Multi-TF 7+2 → 0+7+2 節）
+  - 自我檢查清單新增「組合導向檢查」6 項 + 「研究地圖維護」4 項
+  - 關鍵參考文件新增 `ALPHA_RESEARCH_MAP.md`、`STRATEGY_PORTFOLIO_GOVERNANCE.md`
+  - 修復重複 front matter（2 個 → 1 個）
+- **修改** `.cursor/rules/hygiene.mdc` — Living docs 表新增 `ALPHA_RESEARCH_MAP.md`
+- **修改** `.cursor/rules/session-checklist.mdc` — 新增觸發條件：「跑了 Alpha Research」→ 必須更新 ALPHA_RESEARCH_MAP.md
 
 ### LSR Overlay 升級 A→D（OI+FR 確認層）（Quant Developer）
 - **Quant Dev**: 修改 `src/qtrade/strategy/overlays/lsr_confirmatory_overlay.py` — v2 升級

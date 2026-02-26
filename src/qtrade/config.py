@@ -1,4 +1,5 @@
 from __future__ import annotations
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -439,8 +440,11 @@ class AppConfig:
             "participation_rate": sm.participation_rate,
         }
         # overlay（可選 — 從原始 YAML 讀取）
+        # ⚠️ 必須 deepcopy：overlay_params 會在 run_symbol_backtest 中被注入
+        # per-symbol 的 _lsr_series / _oi_series / _fr_series。如果用 reference，
+        # portfolio backtest 跑多個 symbol 時，symbol 1 的數據會汙染 symbol 2-N。
         if hasattr(self, '_overlay_cfg') and self._overlay_cfg:
-            d["overlay"] = self._overlay_cfg
+            d["overlay"] = copy.deepcopy(self._overlay_cfg)
         return d
 
 
