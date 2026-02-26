@@ -43,6 +43,7 @@ futures:
 
 strategy:
   name: "oi_liq_bounce"
+  display_name: "OI Liq Bounce"
   params:
     # ── Core signal — Path A (OI Liquidation) ──
     oi_change_lookback: 24

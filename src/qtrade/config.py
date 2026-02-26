@@ -76,6 +76,7 @@ class StrategyConfig:
     name: str
     params: dict
     symbol_overrides: dict | None = None
+    display_name: str | None = None
 
     def get_params(self, symbol: str | None = None) -> dict:
         """返回合併後的參數：base params + symbol overrides"""
@@ -623,6 +624,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
             name=raw["strategy"]["name"],
             params=raw["strategy"].get("params", {}),
             symbol_overrides=raw["strategy"].get("symbol_overrides"),
+            display_name=raw["strategy"].get("display_name"),
         ),
         output=output,
         data_dir=data_dir,

@@ -527,14 +527,24 @@ class MultiStrategyBot(TelegramBot):
 
                     line = f"  {emoji} <b>{symbol}</b>: {label} @ ${price:,.2f}"
 
-                    # 指標摘要（顯示前幾個可用的）
+                    # 指標摘要（策略指標優先，通用指標 fallback）
                     ind_parts = []
-                    for k in ("rsi", "adx", "tsmom", "carry", "er"):
-                        v = ind.get(k)
-                        if v is not None:
-                            ind_parts.append(f"{k.upper()}={v}")
+                    # 策略指標 keys（tsmom_carry_v2 / HTF）
+                    _strategy_keys = ("tsmom", "carry", "ema_trend", "htf")
+                    _has_strategy_ind = any(ind.get(k) is not None for k in _strategy_keys)
+                    if _has_strategy_ind:
+                        for k in _strategy_keys:
+                            v = ind.get(k)
+                            if v is not None:
+                                ind_parts.append(f"{k.upper()}={v}")
+                    else:
+                        # 通用 RSI/ADX fallback
+                        for k in ("rsi", "adx", "er"):
+                            v = ind.get(k)
+                            if v is not None:
+                                ind_parts.append(f"{k.upper()}={v}")
                     if ind_parts:
-                        line += f"\n    {' | '.join(ind_parts[:4])}"
+                        line += f"\n    {' | '.join(ind_parts[:5])}"
 
                     # 如果有持倉資訊（_position 欄位）
                     pos_info = sig.get("_position")

@@ -543,8 +543,41 @@ def generate_tsmom_carry_v2(
         min_change_threshold=min_change,
     )
 
+    result = pos.clip(-1.0, 1.0).fillna(0.0)
+
+    # ══════════════════════════════════════════════════
+    # 附帶策略指標（供 signal_generator / Telegram 顯示）
+    # ══════════════════════════════════════════════════
+    try:
+        _last = len(close) - 1
+        _ind: dict = {"tier": tier}
+
+        # TSMOM 分數（最後一根 K 線）
+        _tsmom_val = float(sig_tsmom.iloc[_last]) if _last < len(sig_tsmom) else 0.0
+        _ind["tsmom"] = round(_tsmom_val, 3)
+
+        # EMA 趨勢方向
+        _ema_fast_val = close.ewm(span=tsmom_ema_fast, adjust=False).mean().iloc[_last]
+        _ema_slow_val = close.ewm(span=tsmom_ema_slow, adjust=False).mean().iloc[_last]
+        _ind["ema_trend"] = "UP" if _ema_fast_val > _ema_slow_val else "DOWN"
+
+        # Carry / Basis 分數（非 tsmom_only）
+        if tier != "tsmom_only":
+            _basis_val = float(sig_basis.iloc[_last]) if _last < len(sig_basis) else 0.0
+            _ind["carry"] = round(_basis_val, 3)
+
+        # HTF 狀態
+        if htf_filter_enabled:
+            _ind["htf"] = "ON"
+        else:
+            _ind["htf"] = "OFF"
+
+        result.attrs["indicators"] = _ind
+    except Exception:
+        pass  # 指標附加失敗不影響信號
+
     # 最終裁剪 — direction clip 由 @register_strategy 框架處理
-    return pos.clip(-1.0, 1.0).fillna(0.0)
+    return result
 
 
 # ══════════════════════════════════════════════════════════════

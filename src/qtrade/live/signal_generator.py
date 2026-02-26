@@ -258,33 +258,41 @@ def generate_signal(
         "bars": len(df),
     }
 
-    # 嘗試計算常用指標
-    try:
-        from ..indicators import calculate_rsi, calculate_adx, calculate_atr
-        rsi_period = int(params.get("rsi_period", 14))
-        rsi = calculate_rsi(df["close"], rsi_period)
-        indicators["rsi"] = round(float(rsi.iloc[-1]), 2)
+    # 優先使用策略自帶指標（strategy.attrs["indicators"]）
+    strategy_indicators = getattr(positions, "attrs", {}).get("indicators")
+    if strategy_indicators:
+        for k, v in strategy_indicators.items():
+            if not k.startswith("_"):  # 跳過內部欄位
+                indicators[k] = v
 
-        adx_period = int(params.get("adx_period", 14))
-        adx_df = calculate_adx(df, adx_period)
-        indicators["adx"] = round(float(adx_df["ADX"].iloc[-1]), 2)
-        indicators["plus_di"] = round(float(adx_df["+DI"].iloc[-1]), 2)
-        indicators["minus_di"] = round(float(adx_df["-DI"].iloc[-1]), 2)
+    # 回退: 若策略未提供指標，計算通用 RSI/ADX/ATR
+    if not strategy_indicators:
+        try:
+            from ..indicators import calculate_rsi, calculate_adx, calculate_atr
+            rsi_period = int(params.get("rsi_period", 14))
+            rsi = calculate_rsi(df["close"], rsi_period)
+            indicators["rsi"] = round(float(rsi.iloc[-1]), 2)
 
-        atr_period = int(params.get("atr_period", 14))
-        atr = calculate_atr(df, atr_period)
-        indicators["atr"] = round(float(atr.iloc[-1]), 2)
+            adx_period = int(params.get("adx_period", 14))
+            adx_df = calculate_adx(df, adx_period)
+            indicators["adx"] = round(float(adx_df["ADX"].iloc[-1]), 2)
+            indicators["plus_di"] = round(float(adx_df["+DI"].iloc[-1]), 2)
+            indicators["minus_di"] = round(float(adx_df["-DI"].iloc[-1]), 2)
 
-        # Efficiency Ratio（ER filter 或 adaptive SL 啟用時計算）
-        er_period = params.get("er_period") or (
-            params.get("adaptive_sl_er_period", 10) if params.get("adaptive_sl") else None
-        )
-        if er_period is not None:
-            from ..indicators import calculate_efficiency_ratio
-            er = calculate_efficiency_ratio(df["close"], period=int(er_period))
-            indicators["er"] = round(float(er.iloc[-1]), 3)
-    except Exception:
-        pass  # 指標計算失敗不影響信號
+            atr_period = int(params.get("atr_period", 14))
+            atr = calculate_atr(df, atr_period)
+            indicators["atr"] = round(float(atr.iloc[-1]), 2)
+
+            # Efficiency Ratio（ER filter 或 adaptive SL 啟用時計算）
+            er_period = params.get("er_period") or (
+                params.get("adaptive_sl_er_period", 10) if params.get("adaptive_sl") else None
+            )
+            if er_period is not None:
+                from ..indicators import calculate_efficiency_ratio
+                er = calculate_efficiency_ratio(df["close"], period=int(er_period))
+                indicators["er"] = round(float(er.iloc[-1]), 3)
+        except Exception:
+            pass  # 指標計算失敗不影響信號
 
     result = SignalResult(
         symbol=symbol,
@@ -295,9 +303,16 @@ def generate_signal(
         indicators=indicators,
     )
 
-    logger.info(
-        f"📊 {symbol}: signal={latest_signal:.1f}, price={latest_price:.2f}, "
-        f"RSI={indicators.get('rsi', '?')}, ADX={indicators.get('adx', '?')}"
-    )
+    # 動態 log 顯示策略指標
+    _log_parts = [f"📊 {symbol}: signal={latest_signal:.1f}, price={latest_price:.2f}"]
+    if strategy_indicators:
+        for _k in ("tsmom", "carry", "ema_trend", "htf", "tier"):
+            _v = indicators.get(_k)
+            if _v is not None:
+                _log_parts.append(f"{_k}={_v}")
+    else:
+        _log_parts.append(f"RSI={indicators.get('rsi', '?')}")
+        _log_parts.append(f"ADX={indicators.get('adx', '?')}")
+    logger.info(", ".join(_log_parts))
 
     return result

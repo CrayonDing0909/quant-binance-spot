@@ -102,7 +102,7 @@ def main():
 
     for cp in config_paths:
         cfg = load_config(cp)
-        strategy_name = cfg.strategy.name
+        strategy_name = cfg.strategy.display_name or cfg.strategy.name
         configs.append((strategy_name, cfg))
         all_symbols.extend(cfg.market.symbols)
 

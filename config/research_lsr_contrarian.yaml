@@ -57,8 +57,8 @@ strategy:
     entry_pctile: 0.85         # top/bottom 15% 入場
 
     # ── Exit rules (v2 Swing Mode) ──
-    tp_pctile: 0.25            # TP: LSR 擺盪到對面 25th percentile
-    sl_atr_mult: 2.5           # ATR 止損乘數
+    tp_pctile: 0.30            # TP: LSR 擺盪到對面 30th percentile（sweep 最佳）
+    sl_atr_mult: 2.0           # ATR 止損乘數（sweep 最佳）
     sl_atr_lookback: 14        # ATR 計算窗口
     max_hold_bars: 120         # 最大持倉 120h (5天)
 

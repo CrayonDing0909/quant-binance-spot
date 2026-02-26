@@ -70,6 +70,7 @@ futures:
 
 strategy:
   name: "meta_blend"
+  display_name: "HTF Filter v2"
   params:
     # ── Default sub-strategy combo (BNB, DOGE, ADA) ──
     sub_strategies:

@@ -99,6 +99,8 @@ def generate_meta_blend(
 
     # ── 執行每個子策略 ──
     blended = pd.Series(0.0, index=df.index)
+    sub_indicators: dict = {}  # 收集子策略指標
+
     for sub in sub_strategies:
         sub_name = sub["name"]
         sub_weight = sub.get("weight", 1.0) / total_w
@@ -119,6 +121,16 @@ def generate_meta_blend(
                 f"meta_blend: {sub_name} w={sub_weight:.2f} "
                 f"avg_pos={sub_signal.abs().mean():.3f}"
             )
+
+            # 收集子策略指標（以權重最大的為主）
+            sub_ind = getattr(sub_signal, "attrs", {}).get("indicators")
+            if sub_ind and (
+                not sub_indicators or sub_weight > sub_indicators.get("_weight", 0)
+            ):
+                sub_indicators = dict(sub_ind)
+                sub_indicators["_weight"] = sub_weight
+                sub_indicators["_sub"] = sub_name
+
         except Exception as e:
             logger.error(f"meta_blend: 子策略 {sub_name} 失敗: {e}")
             # 失敗的子策略信號為 0，權重自動落在其他策略上
@@ -132,5 +144,10 @@ def generate_meta_blend(
         f"meta_blend: {ctx.symbol} 混合 {n_subs} 個子策略 {sub_names} "
         f"avg_|pos|={blended.abs().mean():.3f}"
     )
+
+    # ── 附帶子策略指標 ──
+    if sub_indicators:
+        sub_indicators.pop("_weight", None)
+        blended.attrs["indicators"] = sub_indicators
 
     return blended
