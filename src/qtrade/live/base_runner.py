@@ -39,6 +39,10 @@ from ..utils.log import get_logger
 
 logger = get_logger("base_runner")
 
+# Live 模式輔助資料最大保留行數（節省記憶體）
+# OI 策略 lookback ~500h，加上安全餘量，2000 行綽綽有餘
+_LIVE_MAX_AUX_BARS = 2000
+
 
 class BaseRunner(ABC):
     """
@@ -269,7 +273,7 @@ class BaseRunner(ABC):
         self._load_oi_from_disk()
 
     def _load_oi_from_disk(self) -> None:
-        """從 parquet 載入所有 symbol 的 OI 到記憶體快取。"""
+        """從 parquet 載入所有 symbol 的 OI 到記憶體快取（僅保留最近 N 行）。"""
         try:
             from ..data.open_interest import get_oi_path, load_open_interest
         except ImportError:
@@ -285,12 +289,18 @@ class BaseRunner(ABC):
                 if oi_df is not None and not oi_df.empty:
                     # 只保留 sumOpenInterest 欄位作為 Series
                     if "sumOpenInterest" in oi_df.columns:
-                        self._oi_cache[sym] = oi_df["sumOpenInterest"]
+                        series = oi_df["sumOpenInterest"]
                     else:
                         # fallback: 取第一個數值欄
                         num_cols = oi_df.select_dtypes(include="number").columns
                         if len(num_cols) > 0:
-                            self._oi_cache[sym] = oi_df[num_cols[0]]
+                            series = oi_df[num_cols[0]]
+                        else:
+                            continue
+                    # 裁剪：live 只需最近 N 行，節省記憶體
+                    if _LIVE_MAX_AUX_BARS > 0 and len(series) > _LIVE_MAX_AUX_BARS:
+                        series = series.iloc[-_LIVE_MAX_AUX_BARS:]
+                    self._oi_cache[sym] = series
                     loaded += 1
                     break
 
@@ -338,8 +348,15 @@ class BaseRunner(ABC):
         # （注意：is_running 需在 run() 開始後才為 True，
         #   所以 bg thread 的啟動延遲到子類呼叫 _start_derivatives_bg_refresh）
 
+    @staticmethod
+    def _trim_series(series: pd.Series, max_bars: int = _LIVE_MAX_AUX_BARS) -> pd.Series:
+        """裁剪 Series 到最近 max_bars 行（節省記憶體）。"""
+        if max_bars > 0 and len(series) > max_bars:
+            return series.iloc[-max_bars:]
+        return series
+
     def _load_derivatives_from_disk(self) -> None:
-        """從 parquet 載入所有 symbol 的衍生品數據到記憶體快取。"""
+        """從 parquet 載入所有 symbol 的衍生品數據到記憶體快取（僅保留最近 N 行）。"""
         data_dir = self.cfg.data_dir
         loaded = 0
 
@@ -352,7 +369,7 @@ class BaseRunner(ABC):
                 for lsr_type in ["lsr", "top_lsr_account"]:
                     series = load_lsr(sym, lsr_type, data_dir=data_dir / "binance" / "futures" / "derivatives" / lsr_type)
                     if series is not None and not series.empty:
-                        sym_deriv[lsr_type] = series
+                        sym_deriv[lsr_type] = self._trim_series(series)
             except Exception as e:
                 self._log.debug(f"  {sym}: LSR 載入失敗: {e}")
 
@@ -361,7 +378,7 @@ class BaseRunner(ABC):
                 from ..data.taker_volume import load_taker_volume
                 tv = load_taker_volume(sym, data_dir=data_dir / "binance" / "futures" / "derivatives" / "taker_vol_ratio")
                 if tv is not None and not tv.empty:
-                    sym_deriv["taker_vol_ratio"] = tv
+                    sym_deriv["taker_vol_ratio"] = self._trim_series(tv)
             except Exception as e:
                 self._log.debug(f"  {sym}: Taker Vol 載入失敗: {e}")
 
@@ -370,7 +387,7 @@ class BaseRunner(ABC):
                 from ..data.taker_volume import load_cvd
                 cvd = load_cvd(sym, data_dir=data_dir / "binance" / "futures" / "derivatives" / "cvd")
                 if cvd is not None and not cvd.empty:
-                    sym_deriv["cvd"] = cvd
+                    sym_deriv["cvd"] = self._trim_series(cvd)
             except Exception as e:
                 self._log.debug(f"  {sym}: CVD 載入失敗: {e}")
 
@@ -381,7 +398,7 @@ class BaseRunner(ABC):
                 if liq_df is not None and not liq_df.empty:
                     for col in ["liq_cascade_z", "liq_imbalance", "liq_total"]:
                         if col in liq_df.columns:
-                            sym_deriv[col] = liq_df[col]
+                            sym_deriv[col] = self._trim_series(liq_df[col])
             except Exception as e:
                 self._log.debug(f"  {sym}: Liquidation 載入失敗: {e}")
 

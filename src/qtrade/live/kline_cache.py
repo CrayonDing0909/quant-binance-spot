@@ -12,10 +12,17 @@ Incremental K-Line Cache — 增量 K 線快取
     策略從 bar 0 跑到最新 bar → 與回測行為一致。
 
 格式：
-    cache/{symbol}.parquet — 僅含已收盤 K 線（OHLCV + close_time）
+    cache/{symbol}.parquet — 僅含已收盤 K 線（OHLCV）
+    close_time 用於過濾未收盤 bar 後即刻移除，記憶體中不保留。
 
 典型大小：
     1h K 線 × 1 年 ≈ 8,760 bar × ~50 bytes ≈ 430 KB（可忽略）
+
+記憶體管理：
+    max_bars 參數限制快取保留的最大 bar 數（預設 1000）。
+    超過時自動裁剪最舊的 bar，避免長期運行 OOM。
+    生產策略最長 lookback 約 200 bar（TSMOM 168h + EMA warmup），
+    1000 bar 綽綽有餘。
 """
 from __future__ import annotations
 
@@ -48,6 +55,7 @@ class IncrementalKlineCache:
         interval: str = "1h",
         seed_bars: int = 300,
         market_type: str = "futures",
+        max_bars: int = 1000,
     ):
         """
         Args:
@@ -55,11 +63,14 @@ class IncrementalKlineCache:
             interval:     K 線週期，例如 "1h"
             seed_bars:    首次拉取的 K 線數量（種子）
             market_type:  "spot" 或 "futures"
+            max_bars:     記憶體中保留的最大 bar 數量（防止無限增長導致 OOM）
+                          設為 0 或 None 則不限制
         """
         self.cache_dir = Path(cache_dir)
         self.interval = interval
         self.seed_bars = seed_bars
         self.market_type = market_type
+        self.max_bars = max_bars or 0
 
         # 記憶體快取（避免每次都讀 Parquet）
         self._mem_cache: dict[str, pd.DataFrame] = {}
@@ -81,7 +92,7 @@ class IncrementalKlineCache:
         後續呼叫 → 從快取最後一根往後拉新的 bar，append
 
         Returns:
-            DataFrame (index=open_time UTC, cols=[open, high, low, close, volume, close_time])
+            DataFrame (index=open_time UTC, cols=[open, high, low, close, volume])
         """
         cached = self._load(symbol)
 
@@ -168,7 +179,7 @@ class IncrementalKlineCache:
         Args:
             symbol:  交易對
             bar_df:  單行 DataFrame (index=open_time UTC,
-                     cols=[open, high, low, close, volume, close_time])
+                     cols=[open, high, low, close, volume] + optional close_time)
 
         Returns:
             更新後的完整 DataFrame
@@ -178,6 +189,10 @@ class IncrementalKlineCache:
         # 確保 UTC index
         if bar_df.index.tz is None:
             bar_df.index = bar_df.index.tz_localize("UTC")
+
+        # WS bar 已確認收盤，移除 close_time（記憶體中不保留）
+        if "close_time" in bar_df.columns:
+            bar_df = bar_df.drop(columns=["close_time"])
 
         if cached is not None and len(cached) > 0:
             combined = pd.concat([cached, bar_df])
@@ -246,6 +261,10 @@ class IncrementalKlineCache:
             if df.index.tz is None:
                 df.index = df.index.tz_localize("UTC")
 
+            # 向後相容：舊 parquet 可能還有 close_time，載入記憶體時移除
+            if "close_time" in df.columns:
+                df = df.drop(columns=["close_time"])
+
             self._mem_cache[symbol] = df
             logger.debug(f"  {symbol}: 從磁碟載入快取 {len(df)} bar")
             return df
@@ -254,7 +273,12 @@ class IncrementalKlineCache:
             return None
 
     def _save(self, symbol: str, df: pd.DataFrame) -> None:
-        """保存到記憶體快取和磁碟 Parquet"""
+        """保存到記憶體快取和磁碟 Parquet（超過 max_bars 時裁剪舊資料）"""
+        if self.max_bars > 0 and len(df) > self.max_bars:
+            trimmed = len(df) - self.max_bars
+            df = df.iloc[-self.max_bars:]
+            logger.debug(f"  {symbol}: 裁剪快取 -{trimmed} bar → 保留 {self.max_bars} bar")
+
         self._mem_cache[symbol] = df
 
         try:
@@ -336,12 +360,24 @@ class IncrementalKlineCache:
 
     @staticmethod
     def _drop_unclosed(df: pd.DataFrame) -> pd.DataFrame:
-        """丟棄未收盤的 K 線（與 fetch_recent_klines 邏輯一致）"""
-        if "close_time" not in df.columns or len(df) == 0:
+        """
+        丟棄未收盤的 K 線，然後移除 close_time 欄位以節省記憶體。
+
+        策略不需要 close_time（只用 OHLCV），此欄位僅用於判斷是否已收盤。
+        移除後每個 symbol 可節省 ~8 bytes/bar 的 datetime64 記憶體。
+        """
+        if len(df) == 0:
+            return df
+        if "close_time" not in df.columns:
             return df
         now = pd.Timestamp.now(tz="UTC")
-        closed = df["close_time"] <= now
-        n_dropped = (~closed).sum()
+        # 保留 close_time 為 NaN 的行（舊快取已移除 close_time 的資料）
+        has_ct = df["close_time"].notna()
+        unclosed = has_ct & (df["close_time"] > now)
+        n_dropped = unclosed.sum()
         if n_dropped > 0:
             logger.debug(f"  丟棄 {n_dropped} 根未收盤 K 線")
-        return df[closed]
+        df = df[~unclosed]
+        # 移除 close_time — 策略不需要，節省記憶體
+        df = df.drop(columns=["close_time"], errors="ignore")
+        return df

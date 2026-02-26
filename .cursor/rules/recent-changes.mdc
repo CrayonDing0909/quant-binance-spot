@@ -10,6 +10,54 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-27
 
+### Oracle 1GB RAM 記憶體優化（Quant Developer）
+- **修改** `src/qtrade/live/kline_cache.py` — `IncrementalKlineCache` 新增 `max_bars=1000` 參數
+  - `_save()` 超過 max_bars 時自動裁剪最舊 bar，防止無限增長 OOM
+  - `_drop_unclosed()` 過濾後移除 `close_time` 欄位（策略不需要，節省記憶體）
+  - `_load()` 向後相容：舊 parquet 有 close_time 時自動移除
+  - `append_bar()` WebSocket bar 追加時也移除 close_time
+- **修改** `src/qtrade/live/base_runner.py` — 輔助資料裁剪
+  - 新增 `_LIVE_MAX_AUX_BARS = 2000` 常數
+  - `_load_oi_from_disk()` 載入後只保留最近 2000 行
+  - `_load_derivatives_from_disk()` 所有衍生品 Series 同理裁剪
+  - 新增 `_trim_series()` 靜態方法
+- **新增** `scripts/cleanup_data.py` — 磁碟清理工具
+  - `--vision-cache`: 清理 OI 原始 CSV (~398MB)
+  - `--5m`: 清理 5m K 線 (~247MB，僅研究用)
+  - `--kline-cache`: 清理 live K 線快取（重啟自動重建）
+  - `--dry-run`: 列出可清理項目不刪除
+  - `--all`: 清理所有項目
+- **修改** `scripts/download_data.py` — 新增 `--clean-cache` flag
+  - OI 合併後自動刪除 vision_cache 原始 CSV（節省 ~400MB 磁碟）
+- 重新生成 `docs/CLI_REFERENCE.md`
+- 全部 348 測試通過
+- **預估效果**: RAM -30MB per process（kline trim + close_time + aux trim），磁碟可釋放 ~622MB
+
+## 2026-02-27
+
+### LSR Overlay 升級 A→D（OI+FR 確認層）（Quant Developer）
+- **Quant Dev**: 修改 `src/qtrade/strategy/overlays/lsr_confirmatory_overlay.py` — v2 升級
+  - 新增 `_compute_oi_confirm()`: OI rising (24h pct_change > 0) 確認信號
+  - 新增 `_compute_fr_double_crowding()`: FR pctrank + LSR 同向擁擠確認信號
+  - `apply_lsr_confirmatory_overlay()` 新增 N 確認數梯度調整：
+    - `boost_eff = base_boost + 0.15 × N`
+    - `reduce_eff = max(0.05, base_reduce - 0.10 × N)`
+  - 向後相容：`oi_confirm_enabled=False`, `fr_confirm_enabled=False` 預設關閉
+- **Quant Dev**: 修改 `src/qtrade/backtest/run_backtest.py` — 新增 OI/FR 確認層數據自動載入
+- **Quant Dev**: 修改 `src/qtrade/live/signal_generator.py` — 新增 OI/FR 確認層數據自動載入
+- **Quant Dev**: 修改 `src/qtrade/validation/consistency.py` — 新增 OI/FR 確認層數據自動載入
+- **Quant Dev**: 修改 `config/research_htf_lsr_overlay.yaml` — 啟用 `oi_confirm_enabled: true`, `fr_confirm_enabled: true`
+- **回測結果** (D mode vs A baseline on HTF Filter v2):
+  - Per-symbol avg SR: **2.1063** (D) vs **2.0937** (A), Δ=**+0.013**
+  - Portfolio Total Return: **+204.5%** vs **+187.5%** (Δ=+17pp)
+  - Portfolio SR: **2.87** (unchanged), Calmar: **6.05** (vs 6.09)
+  - 6/8 symbols improved, BTC +0.051, ETH +0.034 最大
+  - 注：Alpha Research 預測 Δ=+0.090 是 vs raw TSMOM baseline，HTF v2 baseline 邊際較小
+- `--quick` 驗證全通過（DSR 1.87, PBO 50%, Cross-Asset robust）
+- 348/348 測試通過
+- 重新生成 `docs/DATA_STRATEGY_CATALOG.md`
+- Handoff → Quant Researcher: 完整驗證 (WFA/CPCV/Cost Stress/Delay Stress)
+
 ### LSR Alpha 全維度探索（Alpha Researcher）
 - **Alpha Research**: 新增 `notebooks/research/20260227_lsr_full_alpha_exploration.ipynb` — LSR 信號系統性探索
   - 從 6 個數據源（LSR, Top LSR, OI, CVD, TVR, FR）衍生 21 種信號變體

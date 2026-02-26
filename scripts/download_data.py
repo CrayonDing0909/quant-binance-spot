@@ -362,6 +362,11 @@ def main() -> None:
         action="store_true",
         help="同時下載 Open Interest 數據（oi_liq_bounce 等策略自動啟用）"
     )
+    parser.add_argument(
+        "--clean-cache",
+        action="store_true",
+        help="OI 合併後自動刪除 vision_cache 原始 CSV（節省 ~400MB 磁碟）"
+    )
     
     # 衍生品數據下載（LSR, Taker Vol, CVD, Liquidation）
     parser.add_argument(
@@ -619,6 +624,19 @@ def main() -> None:
                     print(f"  ⚠️  {sym}: 無任何 OI 來源可合併")
             except Exception as e:
                 print(f"  ❌ {sym} OI 合併失敗: {e}")
+
+        # 4) 清理 vision_cache（合併後原始 CSV 不再需要）
+        if getattr(args, "clean_cache", False):
+            import shutil
+            cache_base = cfg.data_dir / "binance" / "futures" / "open_interest" / "vision_cache"
+            if cache_base.exists():
+                n_files = sum(1 for f in cache_base.rglob("*") if f.is_file())
+                size_mb = sum(f.stat().st_size for f in cache_base.rglob("*") if f.is_file()) / (1024 * 1024)
+                shutil.rmtree(cache_base)
+                print(f"  🗑️  vision_cache 已清理: {n_files} 檔案, {size_mb:.1f} MB")
+            else:
+                print(f"  ⏭️  vision_cache 不存在，無需清理")
+
         print("-" * 60)
 
     # ── 衍生品數據下載 (LSR, Taker Vol, CVD) ──────────

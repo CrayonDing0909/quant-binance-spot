@@ -64,6 +64,7 @@
 
 | Script | Description |
 |--------|-------------|
+| `cleanup_data.py` | 數據清理工具 — 釋放磁碟空間 |
 | `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
 | `fetch_derivatives_data.py` | Binance 衍生品數據下載工具（LSR, Taker Vol, CVD） |
 | `fetch_liquidation_data.py` | 清算/爆倉數據下載工具 |
@@ -215,6 +216,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-27 |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |
