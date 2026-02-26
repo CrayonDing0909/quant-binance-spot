@@ -217,7 +217,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
-| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-27 |
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-27 (Taker Vol EDA updated) |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |

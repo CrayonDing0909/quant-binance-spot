@@ -57,6 +57,21 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 - 更新 `project-overview.mdc` 指標
 - **Handoff → Risk Manager**: bug 修正後正確指標已更新，Risk Audit 結論不變（metrics 更強）
 
+### Risk Audit 再評估 — APPROVED 維持（Risk Manager）
+- Bug fix 後重新評估：deepcopy 修復只影響回測計算，**不影響 live trading**
+- MC 結果仍有效（per-symbol 獨立跑，不受 portfolio-level bug 影響）
+- 修正後指標全面更強：Portfolio SR 4.31, MDD -3.73%, 2x Cost SR 3.32
+- **Verdict**: APPROVED 維持不變
+
+### 部署 HTF Filter v2 + LSR D mode 到 Oracle Cloud（DevOps）
+- Git push commit `4e5784a`（18 files changed）→ Oracle Cloud `git pull` 成功
+- **發現問題**：tmux `meta_blend_live` 實際跑的是舊 config `prod_candidate_htf_filter.yaml`（A mode，無 LSR）
+  - 原因：tmux while-true 循環裡寫死了舊 config 路徑
+- **修正**：重建 `meta_blend_live` tmux session → `prod_candidate_htf_lsr.yaml`（D mode + LSR overlay）
+- **同步更新** `tg_bot` tmux session → 同指向 `prod_candidate_htf_lsr.yaml`
+- 部署後確認：8/8 symbols subscribed, Watchdog status=ok, Memory 406Mi/956Mi
+- Observation period: 2026-02-27 ~ 2026-03-13
+
 ### OI Liq Bounce Paper Trading 停止 + OI Cascade Overlay 實作（Quant Developer）
 - **Route C: 停止 OI Liq Bounce Paper Trading**
   - SSH Oracle Cloud 停止 `oi_liq_paper` tmux session（RAM 使用率從 69% 降至 ~56%）
