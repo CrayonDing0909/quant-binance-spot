@@ -10,6 +10,97 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-27
 
+### HTF Filter intra-bar look-ahead 修正 + 完整 4-way 重跑（Quant Developer）
+- **修改** `src/qtrade/strategy/tsmom_carry_v2_strategy.py` — `_apply_htf_filter()` 修正 intra-bar look-ahead
+  - `htf_4h_trend` 在 reindex 前加 `shift(1)`（延遲 1 個 4h bar）
+  - `regime`（daily ADX/EMA）在 reindex 前加 `shift(1)`（延遲 1 個 daily bar）
+  - 根因：`_resample_ohlcv(closed='left', label='left')` 把 4h/1d bar close 標記在 bar 起始，
+    未 shift 時 ffill 使信號提前 3h（4h）或 23h（1d）可用
+  - 此 bug 同時影響 baseline（1h+HTF）和 4h TSMOM+HTF 兩條路徑
+  - 修正後 docstring 更新因果性保證說明
+- **更新** `config/prod_candidate_htf_lsr.yaml` — header 指標更新為修正後數字
+- **修正後 4-Way Ablation 結果**（所有 look-ahead 均已修正）:
+
+  | 指標 | 1h+HTF+LSR (baseline) | 4h Pure lb=180 | 4h+HTF lb=180 | 4h+HTF lb=42 |
+  |---|---|---|---|---|
+  | Portfolio SR | **3.77** | 3.97 | 3.65 | 3.87 |
+  | Total Return | +255.2% | +273.8% | +225.4% | +301.8% |
+  | MDD | 3.91% | 3.72% | 3.72% | 4.32% |
+  | Calmar | 9.11 | 10.02 | 8.82 | 9.19 |
+  | Sortino | 5.50 | 5.71 | 5.19 | 5.72 |
+  | WFA decay | 27.9% | 29.8% | 30.0% | 28.8% |
+  | DSR | 1.42 | 1.40 | 1.31 | 1.30 |
+  | PBO | 52.5% | 67.5% | 72.5% | 52.5% |
+
+  - **HTF filter look-ahead 對 baseline 影響**: SR 4.31 → **3.77** (Δ=-0.54, -12.5%)
+  - **HTF filter look-ahead 對 4h+HTF lb=42 影響**: SR 5.84 → **3.87** (Δ=-1.97, -33.7%)
+  - **修正後真實比較**: 4h+HTF lb=42 vs baseline = +0.10 SR（之前虛高 +1.53 SR）
+  - **4h Pure（無 HTF filter）不受影響**: SR 維持 3.97
+  - **結論**: 之前 4h 的巨大改善主要來自 HTF filter look-ahead bias，
+    公平比較下 4h Pure（SR 3.97）略勝 baseline（SR 3.77），但差距 +0.20 非常小
+  - ⚠️ **生產影響**: 當前 live 部署也使用 HTF filter，push 後 live 行為會改變（延遲 1 個 HTF bar）
+  - ⚠️ `multi_tf_resonance_strategy.py` 有同樣 bug（line 269, 283）但非生產策略，未修
+- 重新生成 `docs/CLI_REFERENCE.md`、`docs/DATA_STRATEGY_CATALOG.md`
+- 全部 363 測試通過
+
+### 4h Native TSMOM 正式回測 + TF vs Lookback 控制實驗（Quant Developer）
+- **修改** `src/qtrade/strategy/tsmom_carry_v2_strategy.py` — 新增 4h native mode
+  - `_tsmom_ema_signal()` 新增 `annualize_factor` 參數（1h=√8760, 4h=√2190）
+  - `generate_tsmom_carry_v2()` 新增 `tsmom_interval: "4h"` 參數
+    - 因果重採樣 1h→4h（`_resample_ohlcv(df, "4h")`）
+    - TSMOM 在 4h 上計算後 ffill 映射回 1h index
+  - `_apply_htf_filter()` 新增 `htf_daily_only` 參數
+    - 當 `tsmom_interval="4h"` 自動啟用，跳過冗餘的 4h EMA 趨勢
+    - 僅保留 daily ADX regime 過濾
+  - **🐛 修正 intra-bar look-ahead**: 4h 信號加 `shift(1)` 延遲 1 個 4h bar 再 ffill
+    - 原因：`_resample_ohlcv(closed='left', label='left')` 把 4h bar close 標記在 bar 起始
+    - 不修正時 PBO lb=42 高達 80%，修正後降至 25%
+  - 向後相容：預設 `tsmom_interval="1h"`，行為與修改前完全一致
+- **新增** `config/research_4h_tsmom_pure.yaml` — 4h TSMOM，無 HTF filter
+- **新增** `config/research_4h_tsmom_htf_daily.yaml` — 4h TSMOM + daily-only filter (lb=180/30d)
+- **新增** `config/research_4h_tsmom_htf_daily_lb42.yaml` — 4h + HTF daily (lb=42/7d control)
+- **4-Way Ablation 結果**（含 cost model + FR + slippage + look-ahead fix）:
+
+  | 指標 | 1h+HTF+LSR (baseline) | 4h Pure lb=180 | 4h+HTF lb=180 | **4h+HTF lb=42** |
+  |------|----------------------|----------------|----------------|------------------|
+  | Portfolio SR | 4.31 | 3.97 | 4.99 | **5.84** |
+  | Total Return | +343.7% | +273.8% | +417.4% | **+774.4%** |
+  | MDD | 3.73% | 3.72% | 3.28% | **3.21%** |
+  | Calmar | 11.54 | 10.02 | 14.79 | **21.34** |
+  | WFA decay | — | — | 11.2% | **9.0%** |
+  | DSR | — | — | 2.62 | **3.11** |
+  | PBO | — | — | 70% ⚠️ | **25%** ✅ |
+
+  - **TF 效果是主要驅動力**：1h/7d → 4h/7d = **+1.53 SR**
+  - **長 lookback 反而傷害**：4h/7d → 4h/30d = **-0.85 SR**
+  - 4h+HTF lb=42 wins **7/7 non-BTC symbols** vs baseline（BTC 保持 lb=180，SR +0.41）
+  - 4h+HTF lb=42: **6/6 gates ALL PASS**（WFA 9.0%, DSR 3.11, PBO 25%）
+  - ⚠️ 注：HTF filter 的 4h/1d resample 仍有同樣 look-ahead pattern（baseline 和 4h 模式共享）
+- 重新生成 `docs/CLI_REFERENCE.md`、`docs/DATA_STRATEGY_CATALOG.md`
+- 全部 363 測試通過
+- **Handoff → Quant Researcher**: 4h+HTF Daily lb=42 需完整驗證 (WFA/CPCV/Cost Stress/Delay Stress)
+
+### 4h TSMOM TF Optimization EDA（Alpha Researcher）
+- **新增** `scripts/research_4h_tsmom_eda.py` → 歸檔至 `scripts/archive/`
+  - 1h vs 4h TSMOM IC/Rank IC 比較（8 symbols, 3 種 4h lookback variants）
+  - Yearly IC stability 分析 + ICIR 計算
+  - 策略收益相關性分析（1h raw / 1h+HTF / 4h pure）
+  - Turnover & cost impact 估算
+  - 4h lookback sensitivity sweep
+- **結果摘要**:
+  - Avg IC: 1h=0.0403, 4h=0.0448, Δ=+0.0045（6/8 symbols 4h IC 更優）
+  - Avg Gross SR: 1h+HTF=1.860 > 4h_pure=1.205（0/8 symbols 4h SR 更好）
+  - Avg corr(1h+HTF, 4h_pure) = **0.787**（高度冗餘，standalone 價值低）
+  - ICIR: 4/8 symbols 4h 更穩，4/8 1h 更穩（打平）
+  - Turnover ratio 4h/1h = **0.66x**，avg cost saving = **4.42pp/yr**
+- **Verdict**: 🟡 IC 略優但高度相關，不適合 standalone leg；成本節省顯著 → 值得 Quant Developer 做正式回測
+- **更新** `docs/ALPHA_RESEARCH_MAP.md`:
+  - 覆蓋地圖新增 #15 TF 優化維度（★★☆☆☆）
+  - 數據-信號圖譜 2A 新增 4h TSMOM TF 替換條目
+  - 研究前沿排序表新增 #8（已完成，score 3.6）
+  - 更新紀錄新增 EDA 條目
+- 重新生成 `docs/CLI_REFERENCE.md`
+
 ### 信號顯示修復 — 根因分析 + 防禦性修復（DevOps / Quant Developer）
 - **根因分析**：Telegram Bot `/signals` 顯示 RSI/ADX（fallback 指標）而非策略專屬指標（tsmom/carry/ema_trend/htf）
   - 原因 1：`tsmom_carry_v2` / `meta_blend` 未附帶 indicators → 前次 session 已修

@@ -1,4 +1,4 @@
-> **Last updated**: 2026-02-27 (Taker Vol EDA updated)
+> **Last updated**: 2026-02-27 (4h TSMOM TF Optimization EDA updated)
 
 # Alpha 研究地圖 (Alpha Research Map)
 
@@ -33,13 +33,14 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 12 | 清算瀑布精確化 | 清算數據 | `oi_liq_bounce`（部分使用） | ★★☆☆☆ 弱（CoinGlass 歷史有限） | 更豐富數據源 + 更精確入場 |
 | 13 | 多 TF 共振（獨立策略）| 多 TF 信號一致 | `multi_tf_resonance`（已實作） | ☆☆☆☆☆ 未驗證 | HTF Filter 已覆蓋部分功能 |
 | 14 | Order Book 不平衡 | Depth imbalance | `order_book.py`（僅數據模組） | ☆☆☆☆☆ 無信號 | 無歷史數據，需 live 收集 |
+| 15 | TF 優化（4h 替換 1h） | 4h TSMOM vs 1h+HTF | EDA 完成 (20260227) | ★★☆☆☆ 弱（IC +0.0045 但 SR 劣、corr=0.79） | IC 略優 + 成本節省 4.42pp/yr → 值得正式回測 |
 
 ### 維度覆蓋摘要
 
 - **已充分覆蓋（★★★★+）**：時序動量、HTF 趨勢、散戶擁擠、OI 事件
 - **部分覆蓋（★★-★★★）**：Carry、OI 確認、波動率、清算
 - **已確認無效**：截面動量 (XSMOM)
-- **已測試但弱（★★）**：微結構/訂單流（TVR 獨立但 IC 弱，CVD 不穩定）
+- **已測試但弱（★★）**：微結構/訂單流（TVR 獨立但 IC 弱，CVD 不穩定）、TF 優化（4h IC +0.0045 但 gross SR 劣，corr=0.79 高冗餘，成本節省顯著）
 - **未覆蓋（空白缺口）**：鏈上 regime、Order Book
 
 ---
@@ -61,6 +62,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | Daily K 線 | ADX regime 判斷 | ✅ 是 (20260226) | HTF Filter 組件 | HTF Filter v2（daily regime 腿） |
 | 5m/15m K 線 | 微結構入場時機 | ⚠️ 部分（EDA） | 高成本風險（12× turnover） | 無 |
 | 1h K 線 | 截面相對強弱 | ✅ 是 (20260227) | ❌ FAIL — avg SR=-0.50, 6 variants 全負 | `xsmom`（FAIL，已關閉） |
+| 4h K 線 | TSMOM TF 替換（1h→4h） | ✅ 是 (20260227 EDA) | 🟡 IC +0.0045 (6/8), gross SR 0/8, corr=0.79, 成本 -4.42pp/yr | 未獨立部署；值得正式回測（含 cost model） |
 
 ### 2B. 衍生品信號
 
@@ -134,9 +136,10 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 5 | Order Book depth 不平衡 | 訂單流 | Overlay | 5 | 1 | 3 | 2 | 3 | **3.0** | 無歷史數據是致命問題 |
 | 6 | Cross-symbol 擁擠偵測 | 系統風險 | Filter | 3 | 4 | 1 | 4 | 2 | **2.6** | 因果修正後幾乎無效 |
 | 7 | 5m/15m 微結構入場 overlay | 執行改善 | Overlay | 2 | 3 | 2 | 2 | 3 | **2.3** | 成本侵蝕太大，低於門檻 |
-| ~~8~~ | ~~截面動量 (XSMOM)~~ | — | — | — | — | — | — | — | ~~3.7~~ | **FAIL (20260227)**: avg SR=-0.50，已移至 Dead Ends |
-| ~~9~~ | ~~Taker Vol 不平衡 overlay~~ | — | — | — | — | — | — | — | ~~3.6~~ | **WEAK GO (20260227)**: IC弱(-0.006)但獨立, Δ SR+0.155, 建議作第4確認因子→Quant Dev |
-| ~~10~~ | ~~CVD divergence/momentum~~ | — | — | — | — | — | — | — | ~~3.2~~ | **FAIL (20260227)**: CVD momentum 傷害 TSMOM(Δ SR=-0.25), IC 年度翻轉, 背離信號邊際 |
+| ~~8~~ | ~~4h TSMOM TF 替換~~ | — | — | — | — | — | — | — | ~~3.6~~ | **🟡 EDA DONE (20260227)**: IC +0.0045, corr=0.79, cost -4.42pp/yr → Handoff Quant Dev 正式回測 |
+| ~~9~~ | ~~截面動量 (XSMOM)~~ | — | — | — | — | — | — | — | ~~3.7~~ | **FAIL (20260227)**: avg SR=-0.50，已移至 Dead Ends |
+| ~~10~~ | ~~Taker Vol 不平衡 overlay~~ | — | — | — | — | — | — | — | ~~3.6~~ | **WEAK GO (20260227)**: IC弱(-0.006)但獨立, Δ SR+0.155, 建議作第4確認因子→Quant Dev |
+| ~~11~~ | ~~CVD divergence/momentum~~ | — | — | — | — | — | — | — | ~~3.2~~ | **FAIL (20260227)**: CVD momentum 傷害 TSMOM(Δ SR=-0.25), IC 年度翻轉, 背離信號邊際 |
 
 ### 建議下一步研究（Top 3）
 
@@ -177,3 +180,4 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 2026-02-27 | 初版建立：覆蓋地圖 14 維度、數據-信號圖譜 40+ 條目、研究前沿 10 方向 | Quant Developer（從歷史研究記錄彙整） |
 | 2026-02-27 | XSMOM 正式回測 FAIL：avg SR=-0.50, 6 variants 全負。移至 Dead Ends。研究前沿重新排序 | Quant Developer |
 | 2026-02-27 | Taker Vol overlay 深入 EDA: TVR IC=-0.006(弱逆向,獨立), CVD momentum FAIL(Δ SR=-0.25), smooth24 TVR overlay Δ SR=+0.155。WEAK GO: 建議作 LSR overlay 第4確認因子。CVD direction/divergence 移至 Dead Ends | Alpha Researcher |
+| 2026-02-27 | 4h TSMOM TF Optimization EDA: IC Δ=+0.0045(6/8), gross SR 0/8 better, corr(prod,4h)=0.787, cost -4.42pp/yr。🟡 不適合 standalone 但成本節省值得正式回測 → Handoff Quant Dev | Alpha Researcher |

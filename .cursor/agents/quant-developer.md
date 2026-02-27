@@ -1,3 +1,7 @@
+---
+name: quant-developer
+model: fast
+---
 
 # Quant Developer — 量化策略開發者
 

@@ -71,6 +71,7 @@
 | `fetch_onchain_data.py` | 鏈上數據探索工具（DeFi Llama / CryptoQuant / Glassnode） |
 | `gen_data_strategy_catalog.py` | Auto-generate docs/DATA_STRATEGY_CATALOG.md by scanning src/qtrade/data/ and strategy/. |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
+| `research_4h_tsmom_eda.py` | 4h TSMOM 時間框架優化 — Alpha EDA |
 | `research_btc_htf_variants.py` | BTC HTF Filter 變體研究：為什麼 BTC 的 HTF filter 改善最小 (+0.04 SR)? |
 | `research_ic_deep_analysis.py` | IC Deep Analysis — Quant Researcher |
 | `research_overlay_4way.py` | ═══════════════════════════════════════════════════════════════ |
@@ -78,7 +79,7 @@
 | `research_strategy_blend.py` | ═══════════════════════════════════════════════════════════════ |
 | `trade_review.py` | 交易復盤工具 — 診斷信號與執行差異 |
 
-> **Archive**: 28 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
+> **Archive**: 29 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
 
 ---
 
@@ -113,6 +114,9 @@
 
 | Config | File |
 |--------|------|
+| `research_4h_tsmom_htf_daily.yaml` | `config/research_4h_tsmom_htf_daily.yaml` |
+| `research_4h_tsmom_htf_daily_lb42.yaml` | `config/research_4h_tsmom_htf_daily_lb42.yaml` |
+| `research_4h_tsmom_pure.yaml` | `config/research_4h_tsmom_pure.yaml` |
 | `research_htf_filter.yaml` | `config/research_htf_filter.yaml` |
 | `research_htf_lsr_oi_cascade.yaml` | `config/research_htf_lsr_oi_cascade.yaml` |
 | `research_htf_lsr_overlay.yaml` | `config/research_htf_lsr_overlay.yaml` |
@@ -217,7 +221,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
-| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-27 (Taker Vol EDA updated) |
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-27 (4h TSMOM TF Optimization EDA updated) |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |

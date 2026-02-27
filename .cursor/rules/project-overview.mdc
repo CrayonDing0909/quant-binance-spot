@@ -21,9 +21,10 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
   - **Routing**: BTC=breakout_vol_atr+tsmom_carry_v2/btc_enhanced+HTF_daily_dominant, ETH/SOL/AVAX/BNB/DOGE/ADA/LINK=tsmom_carry_v2+HTF_C_hard
   - **HTF Filter**: 4h EMA trend + daily ADX regime（從 1h 因果重採樣）
   - **LSR Overlay**: oi_vol+lsr_confirmatory D mode（boost=1.3, reduce=0.3, pctile=0.85, oi_confirm+fr_confirm）
-  - **Key metrics**: Portfolio SR=4.31, MDD=-3.73%, Calmar=11.54, 2x Cost SR=3.32
+  - **Key metrics**: Portfolio SR=3.77, MDD=-3.91%, Calmar=9.11 (post HTF look-ahead fix)
   - **Risk Audit**: APPROVED (2026-02-27), WFA 8/8 OOS+, CPCV PBO max 0.13, MC 4/4 PASS
   - **Bug fix (2026-02-27)**: overlay_params cross-contamination — 修正後指標大幅提升
+  - **Bug fix (2026-02-27)**: HTF filter intra-bar look-ahead — 4h/1d resample shift(1) 修正, SR 4.31→3.77
   - **Launched**: 2026-02-27 (replaced HTF Filter v2)
   - **Observation period**: → 2026-03-13, rollback if MDD > -10% or SR < 0 for 3 consecutive days
 

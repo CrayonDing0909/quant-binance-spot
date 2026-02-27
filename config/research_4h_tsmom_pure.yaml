@@ -1,57 +1,21 @@
 # ═══════════════════════════════════════════════════════════════
-# PRODUCTION CANDIDATE — HTF Filter v2 + LSR Confirmatory Overlay
+# RESEARCH — 4h Native TSMOM (Pure, no HTF filter)
 # ═══════════════════════════════════════════════════════════════
 # Created: 2026-02-27
-# Origin: config/research_htf_lsr_overlay.yaml (validated research config)
-# Baseline: config/prod_candidate_htf_filter.yaml (current production)
-# Lineage: tsmom_carry_v2 → meta_blend → HTF Filter v2 → HTF Filter v2 + LSR
+# Hypothesis: 4h TSMOM signal has slightly better IC (+0.0045) and
+#   34% lower turnover vs 1h. Testing if cost savings translate to
+#   better net Sharpe.
+# Ablation variant: 4h pure (no HTF filter)
+# Baseline: config/prod_candidate_htf_lsr.yaml (1h + HTF + LSR)
 #
-# CHANGE vs BASELINE (prod_candidate_htf_filter.yaml):
-#   Only change: overlay mode oi_vol → oi_vol+lsr_confirmatory
-#   + 7 LSR confirmatory params (boost=1.3, reduce=0.3, pctile=0.85)
-#   + 2 D mode params: oi_confirm_enabled=true, fr_confirm_enabled=true
-#   All strategy params, allocations, live settings IDENTICAL to baseline
+# TSMOM params (from EDA 20260227):
+#   Non-BTC: lookback=180 (30d in 4h bars), ema=20/50 — EDA IC-optimal
+#   BTC: lookback=180, ema=8/25 — matches /4 scaling of 1h BTC params
 #
-# STRATEGY SUMMARY:
-#   meta_blend 混合多個子策略信號，per-symbol 路由：
-#     BTC:   breakout_vol_atr(30%) + tsmom_carry_v2 btc_enhanced(70%) + HTF daily-dominant
-#     ETH:   100% tsmom_carry_v2 eth_enhanced (OI/FR/Basis) + HTF C_hard
-#     SOL/AVAX: 100% tsmom_carry_v2 tsmom_heavy (70/30) + HTF C_hard
-#     BNB/DOGE/ADA: 100% tsmom_carry_v2 default (50/50) + HTF C_hard
-#     LINK:  100% tsmom_carry_v2 tsmom_only + HTF C_hard
-#   Overlay chain: oi_vol (vol spike protection, OI disabled) → lsr_confirmatory (alpha timing)
-#
-# VALIDATION RESULTS (2026-02-27, post HTF filter look-ahead fix):
-#   ⚠️  HTF filter intra-bar look-ahead 已修正（4h/1d resample shift(1)）
-#   以下為完全修正後正確指標：
-#   Portfolio Sharpe:  3.77  (vs pre-fix: 4.31, Δ -0.54 from HTF look-ahead removal)
-#   Total Return:      +255.2%  (vs pre-fix: +343.7%)
-#   Max Drawdown:      -3.91% (vs pre-fix: -3.73%)
-#   Calmar:            9.11  (vs pre-fix: 11.54)
-#   Sortino:           6.38  (baseline: 3.80)
-#   2x Cost Sharpe:    3.32  → PASS
-#   WFA:               8/8 OOS+, max degradation 32.6% (LINK) — per-symbol, NOT affected by bug
-#   CPCV:              PBO max 0.13 (DOGE), rest 0.07 — per-symbol, NOT affected by bug
-#   DSR:               1.87 (p<0.001) → PASS
-#   Delay Stress:      +1 bar drop 3.1% → PASS
-#   Ablation:          +1.57 SR, +188pp Return vs HTF v2 baseline
-#   Overlay Consistency: 11 PASS / 3 WARN / 0 FAIL
-#   Researcher Verdict: GO_NEXT (Conditional, 2026-02-27) — bug fix 後 unconditional
-#
-# RISK AUDIT (2026-02-27, Risk Manager — based on bug-contaminated metrics):
-#   ⚠️  Risk audit used pre-fix metrics; corrected metrics are STRONGER.
-#   MC1 Return Bootstrap: 5th pct CAGR +158.6% → PASS
-#   MC2 Trade-Order Shuffle: 95th-worst MDD -17.4% (1.87x, <2x) → PASS
-#   MC3 Cost Perturbation: Median SR=4.91 → PASS
-#   MC4 Execution Jitter: decay 0.5% → PASS
-#   Portfolio VaR(95%): 1.25%, HHI: 0.1267, Top-2: 30.0% → PASS
-#   Risk Verdict: APPROVED (2026-02-27)
-#
-# DEPLOYMENT:
-#   Observation period: 2026-02-27 ~ 2026-03-13
-#   Replaces: prod_candidate_htf_filter.yaml in meta_blend_live tmux
-#   Rollback: Stop → restart with prod_candidate_htf_filter.yaml
-#   Monitor: actual trading cost (LSR overlay adds ~1% extra turnover)
+# KEY DIFFERENCE vs production:
+#   - tsmom_interval: "4h" (resample 1h→4h inside strategy)
+#   - htf_filter_enabled: false (no filter)
+#   - Overlay: oi_vol+lsr_confirmatory (same as production)
 # ═══════════════════════════════════════════════════════════════
 
 market:
@@ -77,16 +41,17 @@ futures:
 
 strategy:
   name: "meta_blend"
-  display_name: "HTF Filter v2 + LSR"
+  display_name: "4h TSMOM Pure"
   params:
-    # ── Default sub-strategy combo (BNB, DOGE, ADA) ──
+    # ── Default sub-strategy combo (BNB, DOGE, ADA) — 4h native ──
     sub_strategies:
       - name: "tsmom_carry_v2"
         weight: 1.0
         params:
           combination_mode: "confirmatory"
           tier: "default"
-          tsmom_lookback: 168
+          tsmom_interval: "4h"
+          tsmom_lookback: 180
           tsmom_vol_target: 0.15
           tsmom_ema_fast: 20
           tsmom_ema_slow: 50
@@ -108,10 +73,10 @@ strategy:
           composite_ema: 12
           position_step: 0.1
           min_change_threshold: 0.05
-          htf_filter_enabled: true
+          htf_filter_enabled: false
 
   symbol_overrides:
-    # ── BTC: breakout_vol_atr(30%) + tsmom_carry_v2(70%) + HTF daily-dominant ──
+    # ── BTC: breakout_vol_atr(30%) + tsmom_carry_v2 4h(70%) ──
     BTCUSDT:
       sub_strategies:
         - name: "breakout_vol_atr"
@@ -142,9 +107,10 @@ strategy:
           params:
             combination_mode: "confirmatory"
             tier: "btc_enhanced"
-            tsmom_lookback: 720
-            tsmom_ema_fast: 30
-            tsmom_ema_slow: 100
+            tsmom_interval: "4h"
+            tsmom_lookback: 180
+            tsmom_ema_fast: 8
+            tsmom_ema_slow: 25
             tsmom_vol_target: 0.15
             tsmom_agree_weight: 1.0
             tsmom_disagree_weight: 0.3
@@ -158,13 +124,9 @@ strategy:
             composite_ema: 12
             position_step: 0.1
             min_change_threshold: 0.05
-            htf_filter_enabled: true
-            htf_4h_ema_fast: 30
-            htf_4h_ema_slow: 100
-            htf_no_confirm: 0.7
-            htf_4h_only_confirm: 0.3
+            htf_filter_enabled: false
 
-    # ── ETH: 100% tsmom_carry_v2 (eth_enhanced with OI/FR/Basis) + HTF C_hard ──
+    # ── ETH: 100% tsmom_carry_v2 4h (eth_enhanced) ──
     ETHUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
@@ -172,7 +134,8 @@ strategy:
           params:
             combination_mode: "confirmatory"
             tier: "eth_enhanced"
-            tsmom_lookback: 168
+            tsmom_interval: "4h"
+            tsmom_lookback: 180
             tsmom_vol_target: 0.15
             tsmom_ema_fast: 20
             tsmom_ema_slow: 50
@@ -194,9 +157,9 @@ strategy:
             composite_ema: 12
             position_step: 0.1
             min_change_threshold: 0.05
-            htf_filter_enabled: true
+            htf_filter_enabled: false
 
-    # ── SOL: 100% tsmom_carry_v2 (tsmom_heavy: 70/30) + HTF C_hard ──
+    # ── SOL: 100% tsmom_carry_v2 4h (tsmom_heavy) ──
     SOLUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
@@ -204,7 +167,8 @@ strategy:
           params:
             combination_mode: "confirmatory"
             tier: "tsmom_heavy"
-            tsmom_lookback: 168
+            tsmom_interval: "4h"
+            tsmom_lookback: 180
             tsmom_vol_target: 0.15
             tsmom_ema_fast: 20
             tsmom_ema_slow: 50
@@ -225,9 +189,9 @@ strategy:
             composite_ema: 12
             position_step: 0.1
             min_change_threshold: 0.05
-            htf_filter_enabled: true
+            htf_filter_enabled: false
 
-    # ── AVAX: 100% tsmom_carry_v2 (tsmom_heavy: 70/30) + HTF C_hard ──
+    # ── AVAX: 100% tsmom_carry_v2 4h (tsmom_heavy) ──
     AVAXUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
@@ -235,7 +199,8 @@ strategy:
           params:
             combination_mode: "confirmatory"
             tier: "tsmom_heavy"
-            tsmom_lookback: 168
+            tsmom_interval: "4h"
+            tsmom_lookback: 180
             tsmom_vol_target: 0.15
             tsmom_ema_fast: 20
             tsmom_ema_slow: 50
@@ -256,16 +221,17 @@ strategy:
             composite_ema: 12
             position_step: 0.1
             min_change_threshold: 0.05
-            htf_filter_enabled: true
+            htf_filter_enabled: false
 
-    # ── LINK: 100% tsmom_carry_v2 (tsmom_only — carry IC unstable) + HTF C_hard ──
+    # ── LINK: 100% tsmom_carry_v2 4h (tsmom_only) ──
     LINKUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
           weight: 1.0
           params:
             tier: "tsmom_only"
-            tsmom_lookback: 168
+            tsmom_interval: "4h"
+            tsmom_lookback: 180
             tsmom_vol_target: 0.15
             tsmom_ema_fast: 20
             tsmom_ema_slow: 50
@@ -274,16 +240,13 @@ strategy:
             composite_ema: 12
             position_step: 0.1
             min_change_threshold: 0.05
-            htf_filter_enabled: true
+            htf_filter_enabled: false
 
-  # ── Overlay: oi_vol + lsr_confirmatory (compound chain) ──
-  # oi_vol: vol spike protection (OI component disabled via oi_extreme_z=999)
-  # lsr_confirmatory: LSR-based alpha timing (boost/reduce TSMOM position)
+  # ── Overlay: same as production (oi_vol+lsr_confirmatory) ──
   overlay:
     enabled: true
     mode: "oi_vol+lsr_confirmatory"
     params:
-      # oi_vol params (identical to HTF v2 baseline)
       oi_extreme_z: 999.0
       oi_reversal_window: 6
       reduce_pct: 0.5
@@ -294,7 +257,6 @@ strategy:
       trend_lookback: 20
       atr_period: 14
       vol_z_window: 168
-      # lsr_confirmatory params (optimized: reduce=0.3, pctile=0.85)
       lsr_type: "lsr"
       lsr_window: 168
       lsr_entry_pctile: 0.85
@@ -302,7 +264,6 @@ strategy:
       lsr_scale_reduce: 0.3
       lsr_min_coverage: 0.3
       lsr_pos_threshold: 0.05
-      # v2: OI + FR 確認層 (D_oi_fr_confirm mode)
       oi_confirm_enabled: true
       fr_confirm_enabled: true
 
@@ -338,74 +299,6 @@ portfolio:
     ADAUSDT: 0.35
     AVAXUSDT: 0.35
     LINKUSDT: 0.35
-
-live:
-  kline_cache: true
-  flip_confirmation: false
-  prefer_limit_order: true
-  limit_order_timeout_s: 10
-
-  rebalance_band:
-    enabled: true
-    threshold_pct: 0.03
-    apply_on_same_direction_only: true
-
-  symbol_governance:
-    enabled: true
-    review_frequency: "weekly"
-    warmup_days: 14
-    quarantine_min_days: 14
-    consecutive_reviews_for_quarantine: 2
-    consecutive_reviews_for_recovery: 2
-    artifacts_dir: "reports/symbol_governance"
-
-    thresholds:
-      edge_sharpe_deweight: 0.3
-      edge_sharpe_quarantine: 0.0
-      edge_sharpe_recover_active: 0.8
-      edge_sharpe_recover_from_quarantine: 0.5
-      edge_per_turnover_min: 0.0
-      slippage_ratio_deweight: 1.5
-      slippage_ratio_quarantine: 1.8
-      slippage_ratio_recover_active: 1.2
-      slippage_ratio_recover_from_quarantine: 1.3
-      consistency_min: 99.0
-      consistency_recover: 99.5
-      missed_signals_quarantine: 5.0
-      dd_quarantine_pct: 25.0
-
-    weights:
-      active_multiplier: 1.0
-      deweight_multiplier: 0.5
-      quarantine_multiplier: 0.0
-      min_weight: 0.03
-      max_weight: 0.20
-
-  watchdog:
-    enabled: true
-    interval_sec: 300
-    alert_cooldown_sec: 1800
-    startup_grace_sec: 300
-    runner_ready_grace_sec: 180
-    heartbeat_warn_sec: 90
-    heartbeat_critical_sec: 180
-    ws_msg_warn_sec: 180
-    ws_msg_critical_sec: 300
-    data_warn_age_sec:
-      "1h": 7200
-      "5m": 1800
-    data_critical_age_sec:
-      "1h": 14400
-      "5m": 3600
-    error_window_minutes: 15
-    error_warn_count: 5
-    error_critical_count: 12
-
-notification:
-  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
-  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
-  prefix: "🚀 [CANDIDATE-HTF-LSR]"
-  enabled: true
 
 output:
   report_dir: "./reports"
