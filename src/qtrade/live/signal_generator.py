@@ -285,6 +285,9 @@ def generate_signal(
                 except Exception as e:
                     logger.warning(f"  {symbol}: overlay FR (for LSR confirm) 載入失敗: {e}")
 
+        # 保存策略指標（overlay 操作會產生新 Series 丟失 attrs）
+        _saved_strategy_ind = getattr(positions, "attrs", {}).get("indicators")
+
         positions = apply_overlay_by_mode(
             position=positions,
             price_df=df,
@@ -293,6 +296,10 @@ def generate_signal(
             mode=overlay_mode,
         )
         logger.info(f"📊 Live overlay applied: mode={overlay_mode}")
+
+        # 恢復策略指標
+        if _saved_strategy_ind:
+            positions.attrs["indicators"] = _saved_strategy_ind
 
     # 取最後一根 K 線的信號
     latest_signal = float(positions.iloc[-1])

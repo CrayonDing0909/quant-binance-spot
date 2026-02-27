@@ -50,6 +50,9 @@ def register_strategy(name: str, *, auto_delay: bool = True):
             # ── 1. 呼叫原始策略函數 ──
             raw_pos = func(df, ctx, params)
 
+            # 保存策略附帶的 attrs（shift/clip 會產生新 Series 丟失 attrs）
+            saved_attrs = dict(raw_pos.attrs) if raw_pos.attrs else {}
+
             # ── 2. signal_delay shift（消除 look-ahead bias）──
             if auto_delay:
                 signal_delay = getattr(ctx, "signal_delay", 0)
@@ -62,6 +65,10 @@ def register_strategy(name: str, *, auto_delay: bool = True):
                     raw_pos = raw_pos.clip(lower=0.0)
                 if not ctx.can_long:
                     raw_pos = raw_pos.clip(upper=0.0)
+
+            # 恢復策略 attrs（如 indicators, exit_exec_prices）
+            if saved_attrs:
+                raw_pos.attrs.update(saved_attrs)
 
             return raw_pos
 
