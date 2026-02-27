@@ -10,6 +10,25 @@ Agent 在每次 session 結束時更新此檔案。保留最近 30 天的條目�
 
 ## 2026-02-27
 
+### 信號顯示修復 — 根因分析 + 防禦性修復（DevOps / Quant Developer）
+- **根因分析**：Telegram Bot `/signals` 顯示 RSI/ADX（fallback 指標）而非策略專屬指標（tsmom/carry/ema_trend/htf）
+  - 原因 1：`tsmom_carry_v2` / `meta_blend` 未附帶 indicators → 前次 session 已修
+  - 原因 2：WebSocket Runner 冷啟動延遲 — `last_signals.json` 僅在 K 線收盤時更新，重啟後最多 59 分鐘空窗期
+  - 原因 3：部署流程缺少「輸出正確性」驗證步驟
+- **修復 1** `src/qtrade/live/websocket_runner.py` — 新增 `_generate_startup_signals()` 方法
+  - WebSocket 連線成功後，立即從 K 線快取生成初始信號並寫入 `last_signals.json`
+  - 解決冷啟動空窗期：重啟後 <30 秒即有完整信號，不用等下一根 K 線收盤
+- **修復 2** `.cursor/agents/devops.md` — 新增 "Step 4: Post-Deploy Output Verification"
+  - 重啟 Runner 後必須：(1) grep 策略指標 log (2) 檢查 `last_signals.json` 時間戳 (3) Telegram `/signals` 驗證
+  - 教訓：「Runner 健康 ≠ 輸出正確」
+- **新增** `tests/test_indicator_pipeline.py` — 10 個整合測試
+  - `TestPandasAttrsBehavior`: pandas 2.x+ `.attrs` 保留驗證 (3 tests)
+  - `TestRegisterStrategyAttrsPreservation`: wrapper shift/clip 後 attrs 存活 (2 tests)
+  - `TestTsmomCarryV2Indicators`: 策略指標附帶 + wrapper 穿越 (2 tests)
+  - `TestMetaBlendIndicatorForwarding`: 子策略指標轉發 (1 test)
+  - `TestSignalGeneratorIndicatorPipeline`: 完整管線 + fallback 驗證 (2 tests)
+- 全部 363 測試通過（353 原有 + 10 新增）
+
 ### Taker Vol Overlay 深入 EDA（Alpha Researcher）
 - **新增** `notebooks/research/20260227_taker_vol_overlay_eda.ipynb` — Taker Volume / CVD overlay 深入探索
   - 14 種信號變體 IC 分析（TVR 6 種 + CVD 6 種 + 背離 1 種 + 組合 1 種）

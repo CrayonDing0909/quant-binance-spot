@@ -72,6 +72,32 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
   "tmux capture-pane -t r3c_e3_live -p | tail -10"
 ```
 
+### Step 4: Post-Deploy Output Verification（重啟 Runner 後必做）
+
+Runner 重啟後，**不能只看到 "✅ WebSocket 已連線" 就宣佈部署成功**。必須額外驗證 Runner 的**輸出正確性**。
+
+```bash
+# 1. 檢查 runner log 是否出現策略指標（而非 RSI/ADX fallback）
+ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
+  "tmux capture-pane -t meta_blend_live -p -S -100 | grep '📊'"
+# ✅ 應看到: 📊 ETHUSDT: signal=0.2, price=..., tsmom=..., carry=..., ema_trend=UP
+# ❌ 不應看到: 📊 ETHUSDT: signal=0.2, price=..., RSI=..., ADX=...
+
+# 2. 檢查 last_signals.json 已更新（時間戳應在重啟後）
+ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
+  "cat ~/quant-binance-spot/last_signals.json | python3 -m json.tool | head -30"
+# ✅ 應看到: 策略指標（tsmom, carry, ema_trend）
+# ❌ 不應看到: 只有 RSI/ADX（表示 cold-start 問題未解決）
+
+# 3. Telegram /signals 命令驗證（手動）
+# 在 Telegram 發送 /signals，確認顯示策略名稱和正確指標
+```
+
+**為什麼需要這一步？**
+2026-02-27 部署後發現 Runner 健康但 Telegram 顯示 RSI/ADX（策略指標未生效），
+根因是代碼修改（指標附帶）在第一次 commit 不完整 + WebSocket 冷啟動延遲。
+此步驟確保「健康 ≠ 正確」的教訓不再重演。
+
 ### 安全規則
 
 - **git commit 前**：一定要先 `git status` 讓用戶確認

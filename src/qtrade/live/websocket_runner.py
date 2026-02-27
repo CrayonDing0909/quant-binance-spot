@@ -367,6 +367,72 @@ class WebSocketRunner(BaseRunner):
         except Exception as e:
             self._log.debug(f"  保存信號快照失敗: {e}")
 
+    def _generate_startup_signals(self) -> None:
+        """
+        啟動時用快取 K 線為所有 symbol 生成一次信號快照。
+
+        目的：消除 WebSocket 冷啟動盲區。
+        Runner 重啟後最長需等到下一根 K 線收盤（最多 59 分鐘）才會寫
+        last_signals.json。在此期間 Telegram Bot /signals 會讀到上一個
+        runner 寫的過期檔案（可能含舊的 indicator 格式或過時的價格）。
+
+        此方法在 WebSocket 連線成功後、主迴圈之前呼叫，立即刷新信號快照。
+        注意：這裡只生成信號 + 寫 JSON，**不執行交易**（避免重啟即下單）。
+        """
+        self._log.info("📡 啟動信號快照：用快取 K 線生成初始信號...")
+        generated = 0
+
+        for symbol in self.symbols:
+            try:
+                df = self._kline_cache.get_cached(symbol)
+                if df is None or len(df) < 50:
+                    self._log.debug(
+                        f"  {symbol}: 數據不足 ({len(df) if df is not None else 0}/50)，跳過"
+                    )
+                    continue
+
+                sym_strategy, params = self._get_strategy_for_symbol(symbol)
+                direction = self.cfg.direction
+
+                # 組裝 auxiliary + derivatives（與 _run_strategy_for_symbol 一致）
+                auxiliary_data: Dict[str, "pd.DataFrame"] = {}
+                for aux_iv, aux_cache in self._aux_kline_caches.items():
+                    aux_df = aux_cache.get_cached(symbol)
+                    if aux_df is not None and len(aux_df) > 0:
+                        auxiliary_data[aux_iv] = aux_df
+
+                derivatives_data = getattr(self, "_derivatives_cache", None) or {}
+
+                if auxiliary_data:
+                    params = {**params, "_auxiliary_data": auxiliary_data}
+                if derivatives_data:
+                    params = {**params, "_derivatives_data": derivatives_data}
+
+                sig = generate_signal(
+                    symbol=symbol,
+                    strategy_name=sym_strategy,
+                    params=params,
+                    interval=self.interval,
+                    market_type=self.market_type,
+                    direction=direction,
+                    df=df,
+                    overlay_cfg=getattr(self.cfg, '_overlay_cfg', None),
+                )
+
+                self._latest_signals[symbol] = sig
+                generated += 1
+
+            except Exception as e:
+                self._log.warning(f"  {symbol} 啟動信號生成失敗: {e}")
+
+        if generated > 0:
+            self._save_last_signals()
+            self._log.info(
+                f"✅ 啟動信號快照完成: {generated}/{len(self.symbols)} symbols"
+            )
+        else:
+            self._log.warning("⚠️  啟動信號快照: 無法為任何 symbol 生成信號")
+
     # ══════════════════════════════════════════════════════════
     #  WebSocket 管理 + 心跳監控 + 自動重連
     # ══════════════════════════════════════════════════════════
@@ -617,6 +683,11 @@ class WebSocketRunner(BaseRunner):
         self.is_running = True
         self._last_ws_message_time = time.time()
         self._log.info("✅ WebSocket 已連線，等待 K 線事件...")
+
+        # ★ 啟動信號快照 — 用快取 K 線立即生成一次信號，消除冷啟動盲區
+        # 重啟後 last_signals.json 最長可能有 59 分鐘的陳舊資料，
+        # 這裡立即刷新，讓 Telegram Bot /signals 立刻顯示最新狀態
+        self._generate_startup_signals()
 
         # Phase 4B: 啟動衍生品 API 後台輪詢線程
         self._start_derivatives_bg_refresh()
