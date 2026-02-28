@@ -6,7 +6,7 @@
     如果當前 bar 不滿足過濾條件，不允許新開倉（但不強制平倉）。
 
 用法：
-    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter
+    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter, causal_resample_align
 
     raw_pos = my_indicator_logic(df, params)
     pos = trend_filter(df, raw_pos, min_adx=25)
@@ -15,12 +15,17 @@
     pos = htf_trend_filter(df, pos, htf_interval="4h")  # 高級時間框架趨勢
 """
 from __future__ import annotations
+from typing import Callable
+import logging
+import traceback
 import pandas as pd
 import numpy as np
 from ..indicators.adx import calculate_adx
 from ..indicators.atr import calculate_atr
 from ..indicators.volume import calculate_obv
 from ..indicators.moving_average import calculate_ema
+
+_logger = logging.getLogger(__name__)
 
 
 def trend_filter(
@@ -269,17 +274,35 @@ _RESAMPLE_MAP = {
 }
 
 
-def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+def _resample_ohlcv(df: pd.DataFrame, rule: str, *, _caller: str = "") -> pd.DataFrame:
     """
     將低級時間框架 K 線重採樣為高級時間框架
 
+    ⚠️ 注意：此函數不保證因果性。
+    resample 使用 pandas 預設 closed='left', label='left'，
+    HTF bar 的 label 在 bar 起始（例如 4h bar [00:00, 04:00) 標記在 00:00），
+    但 close 實際上 03:59 才可用。
+
+    如果要將結果映射回低級 TF（reindex + ffill），
+    必須先 shift(1) 延遲 1 個 HTF bar，否則會有 intra-bar look-ahead。
+    建議直接使用 causal_resample_align() 代替手動 resample + reindex。
+
     Args:
-        df:   低級 K 線數據（必須有 DatetimeIndex）
-        rule: pandas resample rule, e.g. "4h", "1D"
+        df:       低級 K 線數據（必須有 DatetimeIndex）
+        rule:     pandas resample rule, e.g. "4h", "1D"
+        _caller:  內部參數。causal_resample_align 傳 "causal" 以跳過警告。
 
     Returns:
         高級 K 線 DataFrame（OHLCV）
     """
+    # Runtime 防護：如果不是從 causal_resample_align 呼叫的，發出警告
+    if _caller != "causal":
+        caller_info = "".join(traceback.format_stack(limit=3)[:-1]).strip()
+        _logger.warning(
+            "⚠️  _resample_ohlcv() 被直接呼叫！如需將結果映射回低級 TF，"
+            "請使用 causal_resample_align() 避免 look-ahead。\n"
+            f"  呼叫位置:\n{caller_info}"
+        )
     return df.resample(rule).agg({
         "open": "first",
         "high": "max",
@@ -287,6 +310,54 @@ def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
         "close": "last",
         "volume": "sum",
     }).dropna()
+
+
+def causal_resample_align(
+    df: pd.DataFrame,
+    freq: str,
+    compute_fn: Callable[[pd.DataFrame], pd.Series | pd.DataFrame],
+    target_index: pd.DatetimeIndex,
+    fillna_value: float = 0.0,
+) -> pd.Series | pd.DataFrame:
+    """Resample df 到 freq，套用 compute_fn，shift(1)，再 reindex 到 target_index。
+
+    這是在低級 TF 策略中使用 HTF 特徵的**唯一正確方式**。
+    shift(1) 確保 HTF bar 的結果只在 bar **收盤後**才被使用，
+    避免 intra-bar look-ahead（例如 4h bar close 在 03:59 才可用，
+    但 label='left' 把它標記在 00:00）。
+
+    用法範例::
+
+        # 計算 4h EMA 趨勢並因果對齊到 1h
+        def compute_trend(htf_df):
+            ema_f = calculate_ema(htf_df["close"], 20)
+            ema_s = calculate_ema(htf_df["close"], 50)
+            trend = pd.Series(0.0, index=htf_df.index)
+            trend[ema_f > ema_s] = 1.0
+            trend[ema_f < ema_s] = -1.0
+            return trend
+
+        trend_1h = causal_resample_align(df, "4h", compute_trend, df.index)
+
+    Args:
+        df:           低級 K 線數據（必須有 OHLCV + DatetimeIndex）
+        freq:         目標 HTF 頻率，如 "4h", "1D"
+        compute_fn:   接收 HTF OHLCV DataFrame，回傳 Series 或 DataFrame
+        target_index: 要對齊回的低級 TF index
+        fillna_value: ffill 後的 NaN 填充值（預設 0.0）
+
+    Returns:
+        已因果對齊到 target_index 的 Series 或 DataFrame
+    """
+    htf_df = _resample_ohlcv(df, freq, _caller="causal")
+    result = compute_fn(htf_df)
+    result = result.shift(1)  # 等 bar 收盤後才用
+    if isinstance(result, pd.DataFrame):
+        return pd.DataFrame({
+            c: result[c].reindex(target_index, method="ffill").fillna(fillna_value)
+            for c in result.columns
+        })
+    return result.reindex(target_index, method="ffill").fillna(fillna_value)
 
 
 def htf_trend_filter(
@@ -331,24 +402,18 @@ def htf_trend_filter(
         # 無法重採樣，原樣返回
         return raw_pos
 
-    # 重採樣到高級時間框架
-    htf_df = _resample_ohlcv(df, resample_rule)
-    if len(htf_df) < ema_slow + 5:
-        # 數據不足以計算 EMA，原樣返回
-        return raw_pos
+    # 使用 causal_resample_align 避免 intra-bar look-ahead
+    def _compute_trend(htf_df: pd.DataFrame) -> pd.Series:
+        if len(htf_df) < ema_slow + 5:
+            return pd.Series(0.0, index=htf_df.index)
+        ema_f = calculate_ema(htf_df["close"], ema_fast)
+        ema_s = calculate_ema(htf_df["close"], ema_slow)
+        trend = pd.Series(0.0, index=htf_df.index)
+        trend[ema_f > ema_s] = 1.0
+        trend[ema_f < ema_s] = -1.0
+        return trend
 
-    # 在高級 TF 上計算 EMA
-    ema_f = calculate_ema(htf_df["close"], ema_fast)
-    ema_s = calculate_ema(htf_df["close"], ema_slow)
-
-    # 判斷趨勢方向
-    # +1 = 上升趨勢，-1 = 下降趨勢
-    htf_trend = pd.Series(0.0, index=htf_df.index)
-    htf_trend[ema_f > ema_s] = 1.0
-    htf_trend[ema_f < ema_s] = -1.0
-
-    # 將高級 TF 的信號映射回低級 TF
-    htf_trend_ltf = htf_trend.reindex(df.index, method="ffill").fillna(0.0)
+    htf_trend_ltf = causal_resample_align(df, resample_rule, _compute_trend, df.index)
 
     # 應用過濾邏輯
     raw = raw_pos.values.copy()
@@ -439,26 +504,18 @@ def htf_soft_trend_filter(
     if resample_rule is None:
         return raw_pos
 
-    # 重採樣到高級時間框架
-    htf_df = _resample_ohlcv(df, resample_rule)
-    if len(htf_df) < ema_slow + 5:
-        return raw_pos
+    # 使用 causal_resample_align 避免 intra-bar look-ahead
+    def _compute_trend(htf_df: pd.DataFrame) -> pd.Series:
+        if len(htf_df) < ema_slow + 5:
+            return pd.Series(0.0, index=htf_df.index)
+        ema_f = calculate_ema(htf_df["close"], ema_fast)
+        ema_s = calculate_ema(htf_df["close"], ema_slow)
+        trend = pd.Series(0.0, index=htf_df.index)
+        trend[ema_f > ema_s] = 1.0
+        trend[ema_f < ema_s] = -1.0
+        return trend
 
-    # 在高級 TF 上計算 EMA
-    ema_f = calculate_ema(htf_df["close"], ema_fast)
-    ema_s = calculate_ema(htf_df["close"], ema_slow)
-
-    # 計算趨勢強度（連續值，基於 EMA 間距）
-    # spread > 0 → 上升趨勢，spread < 0 → 下降趨勢
-    ema_spread = (ema_f - ema_s) / ema_s  # 正規化 spread
-
-    # 判斷離散趨勢方向（+1, 0, -1）
-    htf_trend = pd.Series(0.0, index=htf_df.index)
-    htf_trend[ema_f > ema_s] = 1.0
-    htf_trend[ema_f < ema_s] = -1.0
-
-    # 將趨勢映射回低級 TF
-    htf_trend_ltf = htf_trend.reindex(df.index, method="ffill").fillna(0.0)
+    htf_trend_ltf = causal_resample_align(df, resample_rule, _compute_trend, df.index)
 
     # 計算權重
     raw = raw_pos.values.copy()

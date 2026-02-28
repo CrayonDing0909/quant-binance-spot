@@ -355,27 +355,22 @@ def capacity_analysis(
 
         # 回測
         try:
-            # 構建執行價格（消除 SL/TP look-ahead bias）
-            exit_exec_prices = pos.attrs.get("exit_exec_prices") if hasattr(pos, "attrs") else None
-            if exit_exec_prices is not None:
-                cap_exec_price = df["open"].copy()
-                _sl_tp_mask = exit_exec_prices.notna()
-                cap_exec_price[_sl_tp_mask] = exit_exec_prices[_sl_tp_mask]
-            else:
-                cap_exec_price = df["open"]
+            from .run_backtest import safe_portfolio_from_orders
 
-            # NOTE: 此處直接構建 VBT Portfolio（繞過 run_symbol_backtest），
-            # 因為需要遍歷不同 capital_levels。不含 funding rate 成本模型。
-            pf = vbt.Portfolio.from_orders(
-                close=df["close"],
-                size=pos,
-                size_type="targetpercent",
-                price=cap_exec_price,
-                fees=fee,
+            exit_exec_prices = pos.attrs.get("exit_exec_prices") if hasattr(pos, "attrs") else None
+
+            # NOTE: 透過 safe_portfolio_from_orders 構建（強制 price=open）。
+            # 需要遍歷不同 capital_levels，因此不走 run_symbol_backtest。
+            # 不含 funding rate 成本模型。
+            pf = safe_portfolio_from_orders(
+                df=df,
+                pos=pos,
+                fee=fee,
                 slippage=slip_result.slippage_array,
                 init_cash=capital,
                 freq=cfg.get("interval", "1h"),
                 direction=vbt_direction,
+                exit_exec_prices=exit_exec_prices,
             )
 
             stats = pf.stats()

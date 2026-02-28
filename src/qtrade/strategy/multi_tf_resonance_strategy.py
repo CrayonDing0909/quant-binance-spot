@@ -191,7 +191,11 @@ def _resample_ohlcv(df: pd.DataFrame, freq: str) -> pd.DataFrame:
     """
     Resample 1h OHLCV 到更高 TF
 
-    使用 closed='left', label='left' 確保因果性（避免 look-ahead）
+    使用 closed='left', label='left' 進行資料彙總。
+
+    ⚠️ 注意：此函數不保證因果性。label='left' 把 HTF bar 標記在起始時間，
+    但 close 實際上要到 bar 結束才可用。reindex(ffill) 前必須 shift(1)。
+    建議使用 filters.causal_resample_align() 代替手動操作。
     """
     resampled = pd.DataFrame()
     resampled["open"] = df["open"].resample(freq, closed="left", label="left").first()
@@ -263,10 +267,12 @@ def multi_tf_resonance(
         # 使用已對齊的 4h 數據
         htf_4h_trend = _htf_trend(aux_4h, htf_ema_fast, htf_ema_slow)
     else:
-        # Fallback: 從 1h resample 到 4h
-        df_4h = _resample_ohlcv(df, "4h")
-        htf_4h_raw = _htf_trend(df_4h, htf_ema_fast, htf_ema_slow)
-        htf_4h_trend = htf_4h_raw.reindex(df.index, method="ffill").fillna(0)
+        # Fallback: 從 1h resample 到 4h（causal: shift(1) + ffill）
+        def _compute_4h_trend(df_4h: pd.DataFrame) -> pd.Series:
+            return _htf_trend(df_4h, htf_ema_fast, htf_ema_slow)
+
+        from .filters import causal_resample_align
+        htf_4h_trend = causal_resample_align(df, "4h", _compute_4h_trend, df.index)
 
     # ── 3. 取得 Daily 數據 ──
     adx_period = params.get("adx_period", 14)
@@ -277,12 +283,12 @@ def multi_tf_resonance(
     if aux_1d is not None:
         regime = _daily_regime(aux_1d, adx_period, adx_threshold, regime_ema)
     else:
-        df_1d = _resample_ohlcv(df, "1D")
-        regime_raw = _daily_regime(df_1d, adx_period, adx_threshold, regime_ema)
-        regime = pd.DataFrame({
-            c: regime_raw[c].reindex(df.index, method="ffill").fillna(0)
-            for c in regime_raw.columns
-        })
+        # Fallback: 從 1h resample 到 1D（causal: shift(1) + ffill）
+        def _compute_daily_regime(df_1d: pd.DataFrame) -> pd.DataFrame:
+            return _daily_regime(df_1d, adx_period, adx_threshold, regime_ema)
+
+        from .filters import causal_resample_align
+        regime = causal_resample_align(df, "1D", _compute_daily_regime, df.index)
 
     # ── 4. Multi-TF Confirmation ──
     full_w = params.get("full_confirm_weight", 1.0)

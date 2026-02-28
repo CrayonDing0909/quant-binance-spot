@@ -1,4 +1,4 @@
-> **Last updated**: 2026-02-27 (4h TSMOM TF Optimization EDA updated)
+> **Last updated**: 2026-02-28 (Tier Ablation 完成 — Config E simplified 反超 prod: SR 3.85>3.77, params -47%)
 
 # Alpha 研究地圖 (Alpha Research Map)
 
@@ -33,14 +33,14 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 12 | 清算瀑布精確化 | 清算數據 | `oi_liq_bounce`（部分使用） | ★★☆☆☆ 弱（CoinGlass 歷史有限） | 更豐富數據源 + 更精確入場 |
 | 13 | 多 TF 共振（獨立策略）| 多 TF 信號一致 | `multi_tf_resonance`（已實作） | ☆☆☆☆☆ 未驗證 | HTF Filter 已覆蓋部分功能 |
 | 14 | Order Book 不平衡 | Depth imbalance | `order_book.py`（僅數據模組） | ☆☆☆☆☆ 無信號 | 無歷史數據，需 live 收集 |
-| 15 | TF 優化（4h 替換 1h） | 4h TSMOM vs 1h+HTF | EDA 完成 (20260227) | ★★☆☆☆ 弱（IC +0.0045 但 SR 劣、corr=0.79） | IC 略優 + 成本節省 4.42pp/yr → 值得正式回測 |
+| 15 | TF 優化（4h 替換 1h） | 4h TSMOM vs 1h+HTF | EDA + 正式回測完成 (20260227) | ❌ **CLOSED** — 修正 look-ahead 後 Δ SR=+0.20, PBO 52-67% | HTF fix 後邊際消失，4h Pure SR 3.97 vs baseline 3.77，之前 +1.53 SR 來自 look-ahead bias |
 
 ### 維度覆蓋摘要
 
 - **已充分覆蓋（★★★★+）**：時序動量、HTF 趨勢、散戶擁擠、OI 事件
 - **部分覆蓋（★★-★★★）**：Carry、OI 確認、波動率、清算
-- **已確認無效**：截面動量 (XSMOM)
-- **已測試但弱（★★）**：微結構/訂單流（TVR 獨立但 IC 弱，CVD 不穩定）、TF 優化（4h IC +0.0045 但 gross SR 劣，corr=0.79 高冗餘，成本節省顯著）
+- **已確認無效**：截面動量 (XSMOM)、TF 優化（4h 替換 1h，修正 look-ahead 後 Δ SR 僅 +0.20, PBO 偏高）
+- **已測試但弱（★★）**：微結構/訂單流（TVR 獨立但 IC 弱，CVD 不穩定）
 - **未覆蓋（空白缺口）**：鏈上 regime、Order Book
 
 ---
@@ -56,13 +56,13 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 1h K 線 | EMA cross momentum | ✅ 是 | SR=2.87 (portfolio) | `tsmom_carry_v2` 核心 |
 | 1h K 線 | RSI + ADX + ATR | ✅ 是 | 早期策略，已被 TSMOM 取代 | `rsi_adx_atr`（retired） |
 | 1h K 線 | Bollinger Band MR | ✅ 是 (20260225) | ❌ FAIL — 8/8 gross PnL < 0 | 無（MR 在加密無效） |
-| 1h K 線 | Breakout + Vol expansion | ✅ 是 | BTC 專用，SR 適中 | `breakout_vol_atr`（BTC 30% blend） |
+| 1h K 線 | Breakout + Vol expansion | ✅ 是 (20260228 ablation) | **負貢獻** Δ SR=-0.03，20 params | ~~`breakout_vol_atr`~~ **REMOVED** |
 | 1h K 線 | NW Envelope regime | ✅ 是 | 已實作但未進生產 | `nw_envelope_regime`（archived） |
 | 4h K 線 | EMA 趨勢過濾 | ✅ 是 (20260226) | +0.485 SR 改善 | HTF Filter v2（4h 趨勢腿） |
 | Daily K 線 | ADX regime 判斷 | ✅ 是 (20260226) | HTF Filter 組件 | HTF Filter v2（daily regime 腿） |
 | 5m/15m K 線 | 微結構入場時機 | ⚠️ 部分（EDA） | 高成本風險（12× turnover） | 無 |
 | 1h K 線 | 截面相對強弱 | ✅ 是 (20260227) | ❌ FAIL — avg SR=-0.50, 6 variants 全負 | `xsmom`（FAIL，已關閉） |
-| 4h K 線 | TSMOM TF 替換（1h→4h） | ✅ 是 (20260227 EDA) | 🟡 IC +0.0045 (6/8), gross SR 0/8, corr=0.79, 成本 -4.42pp/yr | 未獨立部署；值得正式回測（含 cost model） |
+| 4h K 線 | TSMOM TF 替換（1h→4h） | ✅ 是 (20260227 EDA+正式回測) | ❌ **CLOSED** — 修正 HTF look-ahead 後 4h Pure SR 3.97 vs baseline 3.77 (Δ=+0.20), PBO 52-67%。之前 +1.53 SR 來自 look-ahead bias | 無（已關閉） |
 
 ### 2B. 衍生品信號
 
@@ -136,7 +136,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 5 | Order Book depth 不平衡 | 訂單流 | Overlay | 5 | 1 | 3 | 2 | 3 | **3.0** | 無歷史數據是致命問題 |
 | 6 | Cross-symbol 擁擠偵測 | 系統風險 | Filter | 3 | 4 | 1 | 4 | 2 | **2.6** | 因果修正後幾乎無效 |
 | 7 | 5m/15m 微結構入場 overlay | 執行改善 | Overlay | 2 | 3 | 2 | 2 | 3 | **2.3** | 成本侵蝕太大，低於門檻 |
-| ~~8~~ | ~~4h TSMOM TF 替換~~ | — | — | — | — | — | — | — | ~~3.6~~ | **🟡 EDA DONE (20260227)**: IC +0.0045, corr=0.79, cost -4.42pp/yr → Handoff Quant Dev 正式回測 |
+| ~~8~~ | ~~4h TSMOM TF 替換~~ | — | — | — | — | — | — | — | ~~3.6~~ | **CLOSED (20260227)**: 修正 HTF look-ahead 後 Δ SR 僅 +0.20, PBO 52-67%。已移至 Dead Ends |
 | ~~9~~ | ~~截面動量 (XSMOM)~~ | — | — | — | — | — | — | — | ~~3.7~~ | **FAIL (20260227)**: avg SR=-0.50，已移至 Dead Ends |
 | ~~10~~ | ~~Taker Vol 不平衡 overlay~~ | — | — | — | — | — | — | — | ~~3.6~~ | **WEAK GO (20260227)**: IC弱(-0.006)但獨立, Δ SR+0.155, 建議作第4確認因子→Quant Dev |
 | ~~11~~ | ~~CVD divergence/momentum~~ | — | — | — | — | — | — | — | ~~3.2~~ | **FAIL (20260227)**: CVD momentum 傷害 TSMOM(Δ SR=-0.25), IC 年度翻轉, 背離信號邊際 |
@@ -170,6 +170,9 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | XSMOM 截面動量 | 2026-02-27 | 8/8 幣種 avg SR=-0.50, 6 variants 全負。residual 去 BTC 是 rank-invariant（數學等價無殘差）。blend TSMOM 也只稀釋。corr=-0.11 但負 alpha 無意義 | `config/research_xsmom.yaml`, 回測報告 `reports/futures/xsmom/` | 加密截面動量因子結構性改變（極不可能） |
 | CVD momentum overlay | 2026-02-27 | CVD direction 直接 overlay 傷害 TSMOM（Δ SR=-0.251, 0/8 improved）。初步 EDA 的 IC=+0.019 不可復現（嚴格計算後 IC=+0.001）。CVD 是逆向信號而非動量信號。IC 年度翻轉（2022 負→2026 正） | `notebooks/research/20260227_taker_vol_overlay_eda.ipynb` | CVD IC 穩定化（極不可能） |
 | Price-CVD divergence | 2026-02-27 | Δ SR=+0.053（邊際），turnover 2.6x baseline。IC=-0.010 且不穩定 | `notebooks/research/20260227_taker_vol_overlay_eda.ipynb` | — |
+| 4h TSMOM TF 替換（1h→4h） | 2026-02-27 | 修正 HTF filter look-ahead 後，4h Pure SR 3.97 vs baseline 3.77（Δ=+0.20 僅邊際）。4h+HTF PBO 52-67%（偏高）。之前顯示的巨大改善（+1.53 SR）完全來自 HTF filter look-ahead bias。corr=0.79 高冗餘 | EDA: `scripts/archive/research_4h_tsmom_eda.py`; configs: `config/archive/research_4h_tsmom_*.yaml` | 發現新的低相關 4h 信號構造方式（極不可能，結構性冗餘） |
+| BTC breakout_vol_atr blend | 2026-02-28 | Tier Ablation 5-config 研究。BTC btc_enhanced only SR=2.02 vs +breakout SR=1.99 → **breakout 是負貢獻**（Δ=-0.03）。20 params 換來負 alpha，明確 overfitting 產物。移除後 Portfolio SR 3.85 > 3.77 | `config/research_simplified_prod_candidate.yaml`, ablation configs B/C/D | — (結構性無效) |
+| Tier routing phantom（tsmom_heavy ≠ default）| 2026-02-28 | confirmatory 模式下 `w_tsmom`/`w_basis_carry` 是 dead params。Config B (all default) = Config C (all tsmom_heavy)，SR 完全相同 3.57。5/8 symbols 的 tier routing 是幻象複雜度 | Ablation B vs C comparison | 改為 additive mode（但 additive 已證實較差） |
 
 ---
 
@@ -181,3 +184,5 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 2026-02-27 | XSMOM 正式回測 FAIL：avg SR=-0.50, 6 variants 全負。移至 Dead Ends。研究前沿重新排序 | Quant Developer |
 | 2026-02-27 | Taker Vol overlay 深入 EDA: TVR IC=-0.006(弱逆向,獨立), CVD momentum FAIL(Δ SR=-0.25), smooth24 TVR overlay Δ SR=+0.155。WEAK GO: 建議作 LSR overlay 第4確認因子。CVD direction/divergence 移至 Dead Ends | Alpha Researcher |
 | 2026-02-27 | 4h TSMOM TF Optimization EDA: IC Δ=+0.0045(6/8), gross SR 0/8 better, corr(prod,4h)=0.787, cost -4.42pp/yr。🟡 不適合 standalone 但成本節省值得正式回測 → Handoff Quant Dev | Alpha Researcher |
+| 2026-02-27 | **4h TF 維度 CLOSED**: 正式回測修正 HTF look-ahead 後 Δ SR 僅 +0.20（4h Pure 3.97 vs baseline 3.77），PBO 52-67% 偏高。之前 +1.53 SR 完全來自 bias。歸檔 3 configs + EDA script → Dead Ends | Alpha Researcher |
+| 2026-02-28 | **Tier Ablation 完成 + Config E 簡化候選**: 5-config ablation (A=prod, B=all default, C=all tsmom_heavy, D=BTC no breakout, E=simplified)。發現: (1) B=C 證實 w_tsmom dead param, (2) BTC breakout 是負貢獻 (SR -0.03), (3) Config E (SR 3.85) 反超 prod (SR 3.77), params -47%。BTC 720h lookback 價值 +0.38 SR。建議 Config E → 正式 validation → 替換生產 | Alpha Researcher |

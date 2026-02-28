@@ -166,6 +166,11 @@ def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
         → 4h bar 標記 00:00 包含 1h bars: 00:00, 01:00, 02:00, 03:00
         → close = 03:00 的 1h close
         → 此 bar 在 03:00 1h bar 收盤後完成
+
+    ⚠️ 注意：此函數不保證因果性。label='left' 把 HTF bar 標記在起始時間，
+    但 close 實際上要到 bar 結束才可用。
+    reindex(ffill) 前必須 shift(1)，否則 00:00 就會用到 03:59 的 close。
+    建議使用 filters.causal_resample_align() 代替手動操作。
     """
     return df.resample(rule, closed="left", label="left").agg({
         "open": "first",

@@ -45,7 +45,56 @@ Always use the shared `to_vbt_direction()` and `clip_positions_by_direction()` f
 - `_apply_position_sizing` clip range is `[-1, 1]` (not `[0, 1]`)
 - Spot negative signal clip happens in `runner.run_once()`, NOT in position_sizing
 
-## 5. Data Quality Gate
+## 5. HTF Resample + Reindex: 必須 shift(1)
+
+**這是最常見的 look-ahead 陷阱**。歷史上已造成至少 3 次 false-positive 回測。
+
+### 根因
+
+`_resample_ohlcv(df, "4h")` 使用 `label='left'`：4h bar [00:00, 04:00) 的 close 在 03:59 才可用，但 label 標記在 00:00。
+直接 `.reindex(target_index, method="ffill")` → 00:00 就用到 03:59 的 close → **提前 3 小時**。
+
+### 唯一正確方式
+
+使用 `causal_resample_align()`（在 `qtrade.strategy.filters` 中）：
+
+```python
+from qtrade.strategy.filters import causal_resample_align
+
+trend_1h = causal_resample_align(df, "4h", compute_fn, df.index)
+```
+
+此函數內部做了：
+1. `_resample_ohlcv(df, freq)` — 重採樣
+2. `compute_fn(htf_df)` — 計算指標
+3. `result.shift(1)` — **延遲 1 個 HTF bar**
+4. `result.reindex(target_index, method="ffill")` — 映射回低級 TF
+
+### 禁止模式（CI 自動偵測）
+
+```python
+# ❌ 禁止：resample 後直接 reindex
+htf_trend = _htf_trend(df_4h, ...)
+trend_1h = htf_trend.reindex(df.index, method="ffill")  # LOOK-AHEAD!
+
+# ✅ 正確：使用 causal_resample_align
+trend_1h = causal_resample_align(df, "4h", _htf_trend, df.index)
+
+# ✅ 正確：手動 shift(1)
+htf_trend = _htf_trend(df_4h, ...)
+htf_trend = htf_trend.shift(1)  # 等 bar 收盤後才用
+trend_1h = htf_trend.reindex(df.index, method="ffill")
+```
+
+### 例外（白名單）
+
+外部資料對齊（FR、OI、LSR 等）的 `reindex(ffill)` 是安全的：
+資料點有獨立的結算/發佈時間戳，不涉及 intra-bar 問題。
+
+`test_resample_shift_guard.py` 自動掃描所有 `.py` 檔，
+違反時 CI 會失敗。白名單在測試檔中維護。
+
+## 6. Data Quality Gate
 
 Before any signal uses a dataset:
 - Coverage threshold >= 70% (target >= 90%)

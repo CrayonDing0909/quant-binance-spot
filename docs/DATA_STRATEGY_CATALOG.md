@@ -1,6 +1,6 @@
 # Data & Strategy Catalog
 
-> **Auto-generated**: 2026-02-27 by `scripts/gen_data_strategy_catalog.py`
+> **Auto-generated**: 2026-02-28 by `scripts/gen_data_strategy_catalog.py`
 > **Do NOT edit by hand** — regenerate after adding data modules or strategies.
 >
 > ```bash

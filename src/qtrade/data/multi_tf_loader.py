@@ -98,7 +98,12 @@ class MultiTFLoader:
         """
         從低 TF resample 到高 TF (e.g. 1h → 4h)
 
-        使用標準 OHLCV resample 規則（嚴格因果）
+        使用 pandas 預設 resample（closed='left', label='left'）。
+
+        ⚠️ 注意：此函數不保證因果性。
+        如果結果要透過 reindex(ffill) 映射回低級 TF，
+        必須先 shift(1) 延遲 1 個 HTF bar，否則會有 intra-bar look-ahead。
+        建議使用 qtrade.strategy.filters.causal_resample_align() 代替手動操作。
         """
         freq = _RESAMPLE_FREQ.get(target_freq, target_freq)
 

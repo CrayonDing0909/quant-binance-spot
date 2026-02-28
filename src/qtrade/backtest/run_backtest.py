@@ -170,6 +170,24 @@ def validate_backtest_config(cfg: dict) -> None:
             "如需更精確的成本估算，設定 slippage_model.enabled=true。"
         )
 
+    # ── Signal Delay（Anti-Look-Ahead）──
+    # trade_on="next_open" 但 signal_delay=0 意味著信號在同根 bar 就被執行，
+    # 這在回測中相當於偷看當根 bar 的 close 然後用同根的 open 下單（look-ahead）。
+    trade_on = cfg.get("trade_on", "next_open")
+    signal_delay = cfg.get("signal_delay", None)
+    strategy_name = cfg.get("strategy", {}).get("name", "") if isinstance(cfg.get("strategy"), dict) else ""
+
+    # meta_blend 子策略各自處理 delay，不在外層檢查
+    if trade_on == "next_open" and strategy_name != "meta_blend":
+        if signal_delay is not None and signal_delay == 0:
+            warnings.warn(
+                "⚠️  trade_on='next_open' 但 signal_delay=0！"
+                "回測中信號會在同根 bar 執行（look-ahead）。"
+                "請設定 signal_delay: 1 或移除手動覆蓋。",
+                UserWarning,
+                stacklevel=3,
+            )
+
 
 # ══════════════════════════════════════════════════════════════
 # Shared constants — 所有回測相關模組共用
@@ -211,6 +229,72 @@ def clip_positions_by_direction(
 
 def _bps_to_pct(bps: float) -> float:
     return bps / 10_000.0
+
+
+# ══════════════════════════════════════════════════════════════
+# Anti-Look-Ahead: 安全的 VBT Portfolio 構建入口
+# ══════════════════════════════════════════════════════════════
+
+def safe_portfolio_from_orders(
+    df: pd.DataFrame,
+    pos: pd.Series,
+    *,
+    fee: float,
+    slippage: float | pd.Series | np.ndarray,
+    init_cash: float,
+    freq: str = "1h",
+    direction: str = "both",
+    exit_exec_prices: pd.Series | None = None,
+) -> vbt.Portfolio:
+    """
+    構建 VBT Portfolio 的唯一安全入口。
+
+    **硬性規則**：
+    - `price` 一律使用 `df['open']`（消除 signal look-ahead）
+    - SL/TP 觸發 bar 使用 `exit_exec_prices`（消除 exit look-ahead）
+    - 呼叫者不能傳入自定義 price（API 設計即防呆）
+
+    所有回測路徑（主回測 / Kelly / Capacity / 驗證）都應透過此函數。
+
+    Args:
+        df:                K 線 DataFrame（需含 open, close）
+        pos:               倉位序列 [-1, 1]
+        fee:               手續費比例（非 bps）
+        slippage:          滑點比例或 per-bar 滑點陣列
+        init_cash:         初始資金
+        freq:              K 線頻率
+        direction:         VBT direction ("both" / "longonly" / "shortonly")
+        exit_exec_prices:  SL/TP 觸發時的實際出場價（可選）
+
+    Returns:
+        vbt.Portfolio
+    """
+    open_ = df["open"]
+    close = df["close"]
+
+    # 構建執行價格：預設 = open，SL/TP bar = 實際出場價
+    if exit_exec_prices is not None:
+        exit_exec_prices = exit_exec_prices.reindex(pos.index)
+        exec_price = open_.copy()
+        sl_tp_mask = exit_exec_prices.notna()
+        exec_price[sl_tp_mask] = exit_exec_prices[sl_tp_mask]
+        logger.info(
+            f"🔧 SL/TP 出場價修正: {sl_tp_mask.sum()} bars 使用實際 SL/TP 價格"
+        )
+    else:
+        exec_price = open_
+
+    return vbt.Portfolio.from_orders(
+        close=close,
+        size=pos,
+        size_type="targetpercent",
+        price=exec_price,       # ← 硬編碼 open（不可被覆蓋）
+        fees=fee,
+        slippage=slippage,
+        init_cash=init_cash,
+        freq=freq,
+        direction=direction,
+    )
 
 
 def _resolve_backtest_params(cfg: dict, **kwargs) -> dict:
@@ -594,25 +678,10 @@ def run_symbol_backtest(
     # 現在截取 [start, end] 區間送入 VBT 回測
     df, pos = _apply_date_filter(df, pos, resolved.get("start"), resolved.get("end"))
 
-    close = df["close"]
-    open_ = df["open"]
     fee = _bps_to_pct(cfg["fee_bps"])
 
-    # ── 構建執行價格（消除 SL/TP look-ahead bias）──────
-    # exit_exec_prices: SL/TP 觸發時為實際出場價，其餘為 NaN
+    # ── SL/TP 出場價格 ──────────────────────────────
     exit_exec_prices = pos.attrs.get("exit_exec_prices")
-    if exit_exec_prices is not None:
-        # 對齊到日期過濾後的索引
-        exit_exec_prices = exit_exec_prices.reindex(pos.index)
-        # 自定義執行價格: SL/TP bar 使用出場價，其餘用 open
-        exec_price = open_.copy()
-        sl_tp_mask = exit_exec_prices.notna()
-        exec_price[sl_tp_mask] = exit_exec_prices[sl_tp_mask]
-        logger.info(
-            f"🔧 SL/TP 出場價修正: {sl_tp_mask.sum()} bars 使用實際 SL/TP 價格"
-        )
-    else:
-        exec_price = open_
 
     # ── 滑點模型 ──────────────────────────────────────
     sm_cfg = cfg.get("slippage_model", {})
@@ -641,19 +710,18 @@ def run_symbol_backtest(
     else:
         slippage = _bps_to_pct(cfg["slippage_bps"])
 
-    # ── 策略 Portfolio ─────────────────────────────
+    # ── 策略 Portfolio（透過 safe wrapper，強制 price=open）──
     vbt_direction = to_vbt_direction(dr)
-    
-    pf = vbt.Portfolio.from_orders(
-        close=close,
-        size=pos,
-        size_type="targetpercent",
-        price=exec_price,
-        fees=fee,
+
+    pf = safe_portfolio_from_orders(
+        df=df,
+        pos=pos,
+        fee=fee,
         slippage=slippage,
         init_cash=cfg["initial_cash"],
         freq=cfg.get("interval", "1h"),
         direction=vbt_direction,
+        exit_exec_prices=exit_exec_prices,
     )
 
     # ── Buy & Hold 基準 ────────────────────────────

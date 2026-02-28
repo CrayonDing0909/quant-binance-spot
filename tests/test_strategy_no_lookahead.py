@@ -360,6 +360,86 @@ def test_signal_range(strategy_name: str):
 
 
 # ══════════════════════════════════════════════════════════
+#  Test 6: Look-Ahead Suspicion Score
+#  （delay=0 vs delay=1 的 Sharpe 差距不應過大）
+# ══════════════════════════════════════════════════════════
+
+# 當 look-ahead 存在時，delay=0 的 Sharpe 會遠高於 delay=1。
+# 動量型策略在短合成數據上 ratio 可達 3-4x（正常，因為信號 = f(close) 本身與 return 相關）。
+# 真正的 look-ahead bug（如 HTF resample 沒 shift）通常 ratio > 6x。
+# 閾值設 6.0 避免動量策略假陽性，同時捕捉嚴重偏差。
+_SUSPICION_RATIO_THRESHOLD = 6.0
+
+@pytest.mark.parametrize("strategy_name", [
+    s for s in _ALL_STRATEGIES if s not in _MANUAL_DELAY_STRATEGIES
+])
+def test_lookahead_suspicion_score(strategy_name: str):
+    """
+    Look-Ahead 懷疑分數：比較 delay=0 vs delay=1 的 Sharpe ratio。
+
+    如果 delay=0 的 SR 遠高於 delay=1，代表策略從「即時執行」中
+    獲得了不合理的優勢 —— 強烈暗示 look-ahead bias。
+
+    此測試作為第四道防線，補充截斷/因果/靜態掃描測試：
+    - ratio < 4.0  → 正常（尤其是動量策略）
+    - ratio 4-6    → 值得人工審查但不阻塞 CI
+    - ratio > 6.0  → 失敗，幾乎肯定有 look-ahead
+    """
+    df = _make_fake_ohlcv(2000, seed=42)  # 較長數據減少噪音
+    params = _get_params(strategy_name)
+
+    # delay=0（不延遲）
+    ctx_0 = StrategyContext(
+        symbol="TEST", market_type="futures", direction="both",
+        signal_delay=0,
+    )
+    pos_0 = get_strategy(strategy_name)(df, ctx_0, params)
+
+    # delay=1（正常回測延遲）
+    ctx_1 = StrategyContext(
+        symbol="TEST", market_type="futures", direction="both",
+        signal_delay=1,
+    )
+    pos_1 = get_strategy(strategy_name)(df, ctx_1, params)
+
+    # 計算簡化版 Sharpe（ret / std * sqrt(N)）
+    def _simple_sharpe(pos_series: pd.Series) -> float:
+        # pos_series 已經包含了框架層的 delay（如果有的話），
+        # 直接乘以 close return 就是策略收益。
+        # 不需要額外 shift —— delay=1 的 pos 已經 shift(1) 過了。
+        close_ret = df["close"].pct_change().fillna(0.0)
+        strat_ret = pos_series * close_ret
+        strat_ret = strat_ret.iloc[20:]  # 跳過 warmup
+        if strat_ret.std() < 1e-12:
+            return 0.0
+        # 年化 Sharpe（假設 1h bars）
+        return float(strat_ret.mean() / strat_ret.std() * np.sqrt(8760))
+
+    sr_0 = _simple_sharpe(pos_0)
+    sr_1 = _simple_sharpe(pos_1)
+
+    # 只在 delay=0 有正 SR 且 delay=1 也有正 SR 時比較
+    # （避免分母為零或負 SR 策略誤報）
+    if sr_0 > 0.5 and sr_1 > 0.1:
+        ratio = sr_0 / sr_1
+        # ratio > 4.0 發出 warning（人工審查），ratio > 6.0 則失敗
+        if ratio > 4.0:
+            import warnings
+            warnings.warn(
+                f"⚠️  {strategy_name}: delay=0/delay=1 SR ratio = {ratio:.1f}x "
+                f"(delay=0 SR={sr_0:.2f}, delay=1 SR={sr_1:.2f}). "
+                f"建議人工確認是否有 look-ahead bias。",
+                UserWarning,
+            )
+        assert ratio < _SUSPICION_RATIO_THRESHOLD, (
+            f"❌ {strategy_name} LOOK-AHEAD SUSPICION!\n"
+            f"   delay=0 SR = {sr_0:.2f}, delay=1 SR = {sr_1:.2f}\n"
+            f"   ratio = {ratio:.1f}x (threshold = {_SUSPICION_RATIO_THRESHOLD}x)\n"
+            f"   策略從即時執行中獲得過大優勢，幾乎肯定有 look-ahead bias"
+        )
+
+
+# ══════════════════════════════════════════════════════════
 #  XSMOM 專用測試（需要 universe 數據 → 用 real parquet）
 # ══════════════════════════════════════════════════════════
 

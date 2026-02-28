@@ -417,30 +417,22 @@ def kelly_backtest_comparison(
         
         try:
             if scaled_pos is not None:
-                # 構建執行價格（消除 SL/TP look-ahead bias）
-                exit_exec_prices = base_pos.attrs.get("exit_exec_prices") if base_pos is not None else None
-                if exit_exec_prices is not None:
-                    exit_exec_prices = exit_exec_prices.reindex(close.index)
-                    kelly_exec_price = open_.copy()
-                    _sl_tp_mask = exit_exec_prices.notna()
-                    kelly_exec_price[_sl_tp_mask] = exit_exec_prices[_sl_tp_mask]
-                else:
-                    kelly_exec_price = open_
+                from .run_backtest import safe_portfolio_from_orders
 
-                # 使用縮放後的倉位執行回測
-                # NOTE: 此處直接構建 VBT Portfolio（繞過 run_symbol_backtest），
-                # 因此不包含 funding rate / volume slippage 成本模型。
+                exit_exec_prices = base_pos.attrs.get("exit_exec_prices") if base_pos is not None else None
+
+                # 透過 safe_portfolio_from_orders 構建（強制 price=open）。
+                # NOTE: 不含 funding rate / volume slippage 成本模型。
                 # Kelly 比較的是相對差異，絕對收益可能偏樂觀。
-                test_pf = vbt.Portfolio.from_orders(
-                    close=close,
-                    size=scaled_pos,
-                    size_type="targetpercent",
-                    price=kelly_exec_price,
-                    fees=fee,
+                test_pf = safe_portfolio_from_orders(
+                    df=df,
+                    pos=scaled_pos,
+                    fee=fee,
                     slippage=slippage,
                     init_cash=initial_cash,
                     freq=cfg.get("interval", "1h"),
                     direction=kelly_vbt_direction,
+                    exit_exec_prices=exit_exec_prices,
                 )
                 stats = test_pf.stats()
             else:

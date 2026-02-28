@@ -151,6 +151,9 @@ def _compute_daily_ema_trend(
         2. 計算 Daily EMA(ema_period)
         3. close > EMA → 上升趨勢（允許做多），反之不允許
 
+    使用 causal_resample_align() 確保因果性：
+    daily bar close 在 23:59 才可用，shift(1) 延遲到隔天才使用。
+
     Args:
         df: 1h K 線 DataFrame（需含 close）
         ema_period: EMA 週期（在 Daily 上），預設 50
@@ -158,30 +161,18 @@ def _compute_daily_ema_trend(
     Returns:
         1h 粒度的趨勢信號：1.0 = 上升趨勢，0.0 = 非上升趨勢
     """
-    # 重採樣到 Daily
-    daily_df = df.resample("1D").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
-    }).dropna()
+    from .filters import causal_resample_align
 
-    if len(daily_df) < ema_period + 5:
-        # 數據不足 → 不過濾（全部允許）
-        return pd.Series(1.0, index=df.index)
+    def _compute_trend(daily_df: pd.DataFrame) -> pd.Series:
+        if len(daily_df) < ema_period + 5:
+            # 數據不足 → 不過濾（全部允許）
+            return pd.Series(1.0, index=daily_df.index)
+        daily_ema = calculate_ema(daily_df["close"], ema_period)
+        trend = pd.Series(0.0, index=daily_df.index)
+        trend[daily_df["close"] > daily_ema] = 1.0
+        return trend
 
-    # Daily EMA
-    daily_ema = calculate_ema(daily_df["close"], ema_period)
-
-    # close > EMA → 上升趨勢
-    daily_trend = pd.Series(0.0, index=daily_df.index)
-    daily_trend[daily_df["close"] > daily_ema] = 1.0
-
-    # 映射回 1h（forward fill，不用未來數據）
-    trend_1h = daily_trend.reindex(df.index, method="ffill").fillna(0.0)
-
-    return trend_1h
+    return causal_resample_align(df, "1D", _compute_trend, df.index)
 
 
 def _compute_fr_change_zscore(
@@ -237,8 +228,8 @@ def _compute_daily_adx_regime(
         2. 計算 Daily ADX、+DI、-DI
         3. ADX > threshold AND +DI > -DI → 強上升趨勢（允許做多）
 
-    比 EMA50 更精確：EMA50 只看價位，ADX 判斷趨勢強度和方向。
-    適合避免 2025 年 BTC「價格在 EMA50 上方但無實質上升動能」的陷阱。
+    使用 causal_resample_align() 確保因果性：
+    daily bar close 在 23:59 才可用，shift(1) 延遲到隔天才使用。
 
     Args:
         df: 1h K 線 DataFrame
@@ -248,32 +239,20 @@ def _compute_daily_adx_regime(
     Returns:
         1h 粒度的趨勢信號：1.0 = 強上升趨勢，0.0 = 否
     """
-    # 重採樣到 Daily
-    daily_df = df.resample("1D").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
-    }).dropna()
+    from .filters import causal_resample_align
 
-    if len(daily_df) < adx_period + 10:
-        return pd.Series(1.0, index=df.index)
+    def _compute_regime(daily_df: pd.DataFrame) -> pd.Series:
+        if len(daily_df) < adx_period + 10:
+            return pd.Series(1.0, index=daily_df.index)
+        adx_data = calculate_adx(daily_df, adx_period)
+        adx = adx_data["ADX"]
+        plus_di = adx_data["+DI"]
+        minus_di = adx_data["-DI"]
+        regime = pd.Series(0.0, index=daily_df.index)
+        regime[(adx > adx_threshold) & (plus_di > minus_di)] = 1.0
+        return regime
 
-    # Daily ADX
-    adx_data = calculate_adx(daily_df, adx_period)
-    adx = adx_data["ADX"]
-    plus_di = adx_data["+DI"]
-    minus_di = adx_data["-DI"]
-
-    # 強上升趨勢: ADX > threshold AND +DI > -DI
-    daily_regime = pd.Series(0.0, index=daily_df.index)
-    daily_regime[(adx > adx_threshold) & (plus_di > minus_di)] = 1.0
-
-    # 映射回 1h（forward fill）
-    regime_1h = daily_regime.reindex(df.index, method="ffill").fillna(0.0)
-
-    return regime_1h
+    return causal_resample_align(df, "1D", _compute_regime, df.index)
 
 
 def _compute_volume_zscore(

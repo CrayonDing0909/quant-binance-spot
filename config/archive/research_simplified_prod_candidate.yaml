@@ -1,0 +1,226 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — Simplified Production Candidate (Config E)
+# ═══════════════════════════════════════════════════════════════
+# Purpose: 驗證簡化後的生產候選配置
+#   基於 Tier Ablation 研究結果：
+#     1. 移除 BTC breakout_vol_atr（20 params, Δ SR = +0.11 不值得）
+#     2. 保留 BTC btc_enhanced（720h, 30/100 — 學術支撐，僅 3 extra params）
+#     3. 保留 ETH eth_enhanced（獨立衍生品數據源，低 overfitting 風險）
+#     4. 保留 LINK tsmom_only（減少而非增加複雜度）
+#     5. 統一 SOL/AVAX/BNB/DOGE/ADA 為 default（confirmatory 模式下 w_tsmom 是 dead param）
+#     6. 移除所有 dead params（w_tsmom, w_basis_carry）
+#
+# Parameter count comparison:
+#   Prod (Config A): ~85 unique params (5 tiers + breakout)
+#   This (Config E):  ~45 unique params (3 meaningful tiers, no breakout)
+#   Reduction: ~47%
+#
+# Baseline: prod_candidate_htf_lsr.yaml (Portfolio SR=3.77)
+# Expected: SR ≈ 3.66-3.77 (BTC btc_enhanced should recover some of Config D's loss)
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - AVAXUSDT
+    - LINKUSDT
+  interval: "1h"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "meta_blend"
+  display_name: "Simplified Prod Candidate"
+  params:
+    # ── Default sub-strategy (SOL, AVAX, BNB, DOGE, ADA) ──
+    # confirmatory mode: w_tsmom / w_basis_carry are DEAD params (removed)
+    # tsmom_heavy == default in confirmatory mode (confirmed by ablation B=C)
+    sub_strategies:
+      - name: "tsmom_carry_v2"
+        weight: 1.0
+        params:
+          combination_mode: "confirmatory"
+          tier: "default"
+          tsmom_lookback: 168
+          tsmom_vol_target: 0.15
+          tsmom_ema_fast: 20
+          tsmom_ema_slow: 50
+          tsmom_agree_weight: 1.0
+          tsmom_disagree_weight: 0.3
+          basis_ema_fast: 24
+          basis_ema_slow: 168
+          basis_tanh_scale: 50.0
+          fr_rolling_window: 72
+          oi_z_window: 168
+          basis_carry_fr_weight: 0.7
+          basis_carry_basis_weight: 0.3
+          # w_tsmom / w_basis_carry REMOVED — dead in confirmatory mode
+          carry_agree_scale: 1.0
+          carry_disagree_scale: 0.7
+          carry_neutral_scale: 0.85
+          carry_confirm_smoothing: 24
+          composite_ema: 12
+          position_step: 0.1
+          min_change_threshold: 0.05
+          htf_filter_enabled: true
+
+  symbol_overrides:
+    # ── BTC: 100% tsmom_carry_v2 btc_enhanced (NO breakout) ──
+    # Kept: 720h lookback + 30/100 EMA (academic support for BTC long-trend cycles)
+    # Removed: breakout_vol_atr (20 params for 0.11 portfolio SR = poor efficiency)
+    BTCUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "btc_enhanced"
+            tsmom_lookback: 720
+            tsmom_ema_fast: 30
+            tsmom_ema_slow: 100
+            tsmom_vol_target: 0.15
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.6
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            htf_filter_enabled: true
+            htf_4h_ema_fast: 30
+            htf_4h_ema_slow: 100
+            htf_no_confirm: 0.7
+            htf_4h_only_confirm: 0.3
+
+    # ── ETH: 100% tsmom_carry_v2 eth_enhanced (OI/FR/Basis) ──
+    # Kept: uses independent derivatives data sources (low overfitting risk)
+    ETHUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            combination_mode: "confirmatory"
+            tier: "eth_enhanced"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            # w_tsmom/w_oi/w_fr/w_basis kept — used in multi_carry_confirmation_scale
+            w_tsmom: 0.40
+            w_oi: 0.25
+            w_fr: 0.15
+            w_basis: 0.20
+            basis_ema_fast: 24
+            basis_ema_slow: 168
+            basis_tanh_scale: 50.0
+            fr_rolling_window: 72
+            oi_z_window: 168
+            carry_agree_scale: 1.0
+            carry_disagree_scale: 0.7
+            carry_neutral_scale: 0.85
+            carry_confirm_smoothing: 24
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            htf_filter_enabled: true
+
+    # ── LINK: 100% tsmom_carry_v2 tsmom_only (reduces complexity) ──
+    # Kept: removing carry is regularization, not overfitting
+    LINKUSDT:
+      sub_strategies:
+        - name: "tsmom_carry_v2"
+          weight: 1.0
+          params:
+            tier: "tsmom_only"
+            tsmom_lookback: 168
+            tsmom_vol_target: 0.15
+            tsmom_ema_fast: 20
+            tsmom_ema_slow: 50
+            tsmom_agree_weight: 1.0
+            tsmom_disagree_weight: 0.3
+            composite_ema: 12
+            position_step: 0.1
+            min_change_threshold: 0.05
+            htf_filter_enabled: true
+
+    # SOL, AVAX, BNB, DOGE, ADA → inherit default (no overrides needed)
+
+  # ── Overlay: identical to prod ──
+  overlay:
+    enabled: true
+    mode: "oi_vol+lsr_confirmatory"
+    params:
+      oi_extreme_z: 999.0
+      oi_reversal_window: 6
+      reduce_pct: 0.5
+      oi_lookback: 24
+      oi_z_window: 168
+      vol_spike_z: 2.0
+      overlay_cooldown_bars: 12
+      trend_lookback: 20
+      atr_period: 14
+      vol_z_window: 168
+      lsr_type: "lsr"
+      lsr_window: 168
+      lsr_entry_pctile: 0.85
+      lsr_scale_boost: 1.3
+      lsr_scale_reduce: 0.3
+      lsr_min_coverage: 0.3
+      lsr_pos_threshold: 0.05
+      oi_confirm_enabled: true
+      fr_confirm_enabled: true
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.45
+    ETHUSDT: 0.45
+    SOLUSDT: 0.35
+    BNBUSDT: 0.35
+    DOGEUSDT: 0.35
+    ADAUSDT: 0.35
+    AVAXUSDT: 0.35
+    LINKUSDT: 0.35
+
+output:
+  report_dir: "./reports"

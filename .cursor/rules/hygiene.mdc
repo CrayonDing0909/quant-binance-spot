@@ -105,4 +105,7 @@ scripts/                   ← Active scripts only (~30)
 scripts/archive/           ← One-off research / migration scripts
 docs/                      ← Living documentation (~5 files)
 docs/archive/              ← Historical / superseded docs
+.cursor/agents/            ← 5 lean agent definitions (~70-130 lines each)
+.cursor/skills/            ← 18 skill files (alpha/dev/validation/risk/ops)
+.cursor/rules/             ← Always-apply rules (.mdc, alwaysApply: true)
 ```
