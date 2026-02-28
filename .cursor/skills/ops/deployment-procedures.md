@@ -20,7 +20,7 @@ bash scripts/setup_swap.sh
 tmux kill-session -t meta_blend_live 2>/dev/null
 tmux new -d -s meta_blend_live 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate && git pull &&
-  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_htf_lsr.yaml --real;
+  PYTHONPATH=src python scripts/run_websocket.py -c config/prod_candidate_simplified.yaml --real;
   echo "Runner exited, restarting in 10s..."; sleep 10;
 done'
 
@@ -37,8 +37,8 @@ git stash && git pull
 
 # Download new data if needed
 source .venv/bin/activate
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_htf_lsr.yaml
-PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_htf_lsr.yaml --funding-rate
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_simplified.yaml
+PYTHONPATH=src python scripts/download_data.py -c config/prod_candidate_simplified.yaml --funding-rate
 
 # Restart runner
 tmux send-keys -t meta_blend_live C-c

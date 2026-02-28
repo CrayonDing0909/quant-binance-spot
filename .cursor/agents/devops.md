@@ -79,17 +79,17 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 - 永不在 Oracle Cloud 上直接改 code
 - 需要 `required_permissions: ['all']`
 
-## 當前架構（2026-02-27）
+## 當前架構（2026-02-28）
 
 ```
 Server: Oracle Cloud (1GB RAM, x86_64)
 IP: 140.83.57.255
 tmux: meta_blend_live
-Config: config/prod_candidate_htf_lsr.yaml
-Strategy: meta_blend 8-Symbol + HTF Filter v2 + LSR Overlay, 3x ISOLATED
-Observation: 2026-02-27 ~ 2026-03-13
-Rollback L1: prod_candidate_htf_filter.yaml (SR=2.75)
-Rollback L2: prod_candidate_meta_blend.yaml (SR=2.265)
+Config: config/prod_candidate_simplified.yaml
+Strategy: meta_blend 8-Symbol + HTF Filter v2 + LSR (Simplified), 3x ISOLATED
+Observation: 2026-02-28 ~ 2026-03-14
+Rollback L1: prod_candidate_htf_lsr.yaml (SR=3.77)
+Rollback L2: prod_candidate_htf_filter.yaml (SR=2.75)
 ```
 
 ## 監控指令
@@ -97,10 +97,10 @@ Rollback L2: prod_candidate_meta_blend.yaml (SR=2.265)
 | 用途 | 指令 |
 |------|------|
 | Runner 日誌 | `tmux attach -t meta_blend_live` |
-| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_htf_lsr.yaml --real --notify` |
-| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_htf_lsr.yaml` |
-| 交易查詢 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_lsr.yaml summary` |
-| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_htf_lsr.yaml` |
+| 健康檢查 | `PYTHONPATH=src python scripts/health_check.py -c config/prod_candidate_simplified.yaml --real --notify` |
+| 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_simplified.yaml` |
+| 交易查詢 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_simplified.yaml summary` |
+| Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_simplified.yaml` |
 
 ### 查看持倉
 

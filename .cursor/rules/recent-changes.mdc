@@ -44,7 +44,13 @@ Agent 在每次 session 結束時更新此檔案。保留最近 7 天的條目�
 - meta_blend: auto_delay=False ✅, no double-delay, concentration OK
 - 所有變更為簡化操作（移除負 alpha + dead params），風險降低
 - **Verdict: APPROVED**，14-day observation period → 2026-03-14
-- 待 DevOps 部署 `prod_candidate_simplified.yaml` 替換 `prod_candidate_htf_lsr.yaml`
+
+### Simplified 策略部署到 Oracle Cloud（DevOps）
+- Config `prod_candidate_simplified.yaml` 替換 `prod_candidate_htf_lsr.yaml`
+- 重建 `meta_blend_live` tmux session
+- Post-deploy 驗證: 8/8 symbols ✅, tier routing 正確, overlay ON, 無 breakout
+- Observation period: 2026-02-28 ~ 2026-03-14
+- Rollback L1: `prod_candidate_htf_lsr.yaml` (SR=3.77)
 
 ### 系統性 Look-Ahead 根因修復 + CI 防護（Quant Developer）
 - 新增 `causal_resample_align()` 共用函數（`src/qtrade/strategy/filters.py`）
