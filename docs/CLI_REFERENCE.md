@@ -64,6 +64,7 @@
 
 | Script | Description |
 |--------|-------------|
+| `_pbo_data_audit.py` | PBO 修正 + 數據擴展審計 |
 | `cleanup_data.py` | 數據清理工具 — 釋放磁碟空間 |
 | `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
 | `fetch_derivatives_data.py` | Binance 衍生品數據下載工具（LSR, Taker Vol, CVD） |
@@ -92,6 +93,7 @@
 | `prod_candidate_htf_filter.yaml` | `config/prod_candidate_htf_filter.yaml` |
 | `prod_candidate_htf_lsr.yaml` | `config/prod_candidate_htf_lsr.yaml` |
 | `prod_candidate_meta_blend.yaml` | `config/prod_candidate_meta_blend.yaml` |
+| `prod_candidate_simplified.yaml` | `config/prod_candidate_simplified.yaml` |
 | `prod_live_R3C_E3.yaml` | `config/prod_live_R3C_E3.yaml` |
 | `prod_live_oi_liq_bounce.yaml` | `config/prod_live_oi_liq_bounce.yaml` |
 | `prod_scale_rules_R3C_universe.yaml` | `config/prod_scale_rules_R3C_universe.yaml` |
@@ -139,7 +141,7 @@
 |--------|------|
 | `dual_momentum.yaml` | `config/dual_momentum.yaml` |
 
-> **Archive**: 58 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
+> **Archive**: 65 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
 
 ---
 
@@ -217,7 +219,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
-| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-27 (4h TF optimization CLOSED — marginal +0.20 SR, PBO 偏高) |
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-28 (OI Regime Filter Ablation → **FAIL**: incremental SR +4.66% < 5% threshold. OI standalone SR=4.12 > HTF SR=3.86, but stacking over-filters) |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |

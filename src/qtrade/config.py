@@ -392,6 +392,40 @@ class AppConfig:
         base = Path(self.output.report_dir)
         return base / self.market_type_str / self.strategy.name / run_type
 
+    def resolve_kline_path(self, symbol: str) -> Path:
+        """
+        取得指定 symbol 的 K 線數據路徑。
+        
+        統一路徑格式：``data_dir / "binance" / market_type / interval / "{symbol}.parquet"``
+        
+        Args:
+            symbol: 交易對，例如 ``"BTCUSDT"``
+        
+        Returns:
+            Path 物件
+        """
+        return (
+            self.data_dir
+            / "binance"
+            / self.market_type_str
+            / self.market.interval
+            / f"{symbol}.parquet"
+        )
+
+    def resolve_kline_paths(self) -> dict[str, Path]:
+        """
+        批量取得所有配置中 symbols 的 K 線數據路徑。
+        
+        Returns:
+            ``{symbol: Path}`` 映射（僅包含檔案存在的 symbol）
+        """
+        paths: dict[str, Path] = {}
+        for symbol in self.market.symbols:
+            p = self.resolve_kline_path(symbol)
+            if p.exists():
+                paths[symbol] = p
+        return paths
+
     def to_backtest_dict(self, symbol: str | None = None) -> dict:
         """
         產生標準回測配置 dict（供 run_symbol_backtest / validation / optimize 使用）

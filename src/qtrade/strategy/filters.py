@@ -6,13 +6,14 @@
     如果當前 bar 不滿足過濾條件，不允許新開倉（但不強制平倉）。
 
 用法：
-    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter, causal_resample_align
+    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter, oi_regime_filter, onchain_regime_filter, causal_resample_align
 
     raw_pos = my_indicator_logic(df, params)
     pos = trend_filter(df, raw_pos, min_adx=25)
     pos = volume_filter(df, pos, min_volume_ratio=1.2)
     pos = volatility_filter(df, pos, min_atr_ratio=0.005)  # 波動率過濾
     pos = htf_trend_filter(df, pos, htf_interval="4h")  # 高級時間框架趨勢
+    pos = onchain_regime_filter(pos, tvl_sc_ratio_mom_30d_series)  # 鏈上 regime 過濾
 """
 from __future__ import annotations
 from typing import Callable
@@ -814,6 +815,159 @@ def volatility_regime_scaler(
             result[i] = raw[i] * low_vol_weight
         else:
             result[i] = raw[i]
+
+    return pd.Series(result, index=raw_pos.index)
+
+
+def oi_regime_filter(
+    raw_pos: pd.Series,
+    oi_series: pd.Series,
+    lookback: int = 720,
+    min_pctrank: float = 0.3,
+) -> pd.Series:
+    """
+    OI Regime 過濾器：在 OI 水位過低時禁止新開倉
+
+    根據 Alpha Researcher 2026-02-28 EDA 結果：
+      - OI pctrank_720 < 0.3 → OI 在近 720 bar 的低位，市場參與度不足
+      - F5 (pctrank > 0.3) filter: Δ SR +0.317, 8/8 symbols improved, freq loss 29.8%
+      - Raw IC = -0.006 (弱)，但 quintile spread Q5-Q1 = -1.31 Sharpe (強條件效應)
+      - 方向交互: Long+FallingOI SR=1.50 vs Short+FallingOI SR=0.01
+
+    機制假說：
+      低 OI → 低市場參與度 → 假突破多，動量信號不可靠。
+      OI 是外部數據 (獨立結算時間戳)，reindex+ffill 是安全的（無 intra-bar look-ahead）。
+
+    規則：
+      - OI 的 rolling pctrank (0~1) < min_pctrank → 禁止新開倉
+      - 已有持倉不受影響（不強制平倉）
+      - OI 數據缺失時保持原有信號（不阻擋）
+
+    Args:
+        raw_pos:      原始持倉信號 [-1, 1]
+        oi_series:    OI 值序列（已對齊到 kline index，forward-fill）
+        lookback:     pctrank 回看窗口（預設 720 bars = 30 天 @ 1h）
+        min_pctrank:  最低百分位排名閾值（預設 0.3）
+
+    Returns:
+        過濾後的持倉序列
+    """
+    if oi_series is None or oi_series.empty:
+        return raw_pos
+
+    # 計算 rolling pctrank (0~1)
+    oi_pctrank = oi_series.rolling(lookback, min_periods=max(lookback // 2, 1)).rank(pct=True)
+
+    raw = raw_pos.values.copy()
+    pctrank = oi_pctrank.reindex(raw_pos.index, method="ffill").fillna(1.0).values
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0  # 0=flat, 1=long, -1=short
+
+    for i in range(len(raw)):
+        oi_ok = pctrank[i] >= min_pctrank
+
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                result[i] = raw[i]  # 已有多倉 → 保持
+            elif oi_ok:
+                result[i] = raw[i]  # OI 水位夠 → 允許新開多
+                position_state = 1
+            else:
+                result[i] = 0.0     # OI 水位低 → 擋掉
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                result[i] = raw[i]  # 已有空倉 → 保持
+            elif oi_ok:
+                result[i] = raw[i]  # OI 水位夠 → 允許新開空
+                position_state = -1
+            else:
+                result[i] = 0.0     # OI 水位低 → 擋掉
+        else:
+            result[i] = 0.0
+            position_state = 0
+
+    return pd.Series(result, index=raw_pos.index)
+
+
+def onchain_regime_filter(
+    raw_pos: pd.Series,
+    indicator_series: pd.Series,
+    lookback: int = 720,
+    min_pctrank: float = 0.3,
+) -> pd.Series:
+    """
+    On-Chain Regime 過濾器：在鏈上 regime 指標低位時禁止新開倉
+
+    根據 Alpha Researcher 2026-02-28 On-Chain Regime Overlay EDA：
+      - 最佳指標: tvl_sc_ratio_mom_30d（TVL/穩定幣比率的 30d 動量）
+      - IC = 0.065（>10× OI 的 IC=0.006）
+      - Quintile spread +4.69（monotonic）
+      - Filter ≥P30: 8/8 symbols improved, avg Δ SR = +0.409, freq loss ~30%
+      - Risk-On vs Risk-Off: avg Δ SR = +1.454
+      - Quality Gates: 6/6 PASS → GO
+
+    機制假說：
+      TVL/穩定幣比率上升 → DeFi 效率提高 → risk-on 環境 → 趨勢信號更可靠
+      TVL/穩定幣比率下降 → 資金外流 → risk-off → 假突破增多
+
+    鏈上數據特性：
+      - Daily 頻率，1-24h 延遲（取決於 DeFi Llama 更新週期）
+      - 外部數據（獨立時間戳），reindex+ffill 不存在 intra-bar look-ahead
+      - 但必須 shift(1) 延遲 1 天確保因果性（當天 TVL 收盤時才可用）
+
+    規則：
+      - indicator_series 的 rolling pctrank (0~1) < min_pctrank → 禁止新開倉
+      - 已有持倉不受影響（不強制平倉）
+      - 數據缺失時保持原有信號（不阻擋）
+
+    Args:
+        raw_pos:          原始持倉信號 [-1, 1]
+        indicator_series: 鏈上 regime 指標（已對齊到 kline index，forward-fill）
+                          預期為 tvl_sc_ratio_mom_30d
+        lookback:         pctrank 回看窗口（預設 720 bars = 30 天 @ 1h）
+                          注意：indicator_series 已 reindex 到 1h，所以單位是 1h bars
+        min_pctrank:      最低百分位排名閾值（預設 0.3 = P30）
+
+    Returns:
+        過濾後的持倉序列
+    """
+    if indicator_series is None or indicator_series.empty:
+        return raw_pos
+
+    # 計算 rolling pctrank (0~1)
+    pctrank = indicator_series.rolling(
+        lookback, min_periods=max(lookback // 2, 1)
+    ).rank(pct=True)
+
+    # 對齊到 raw_pos index (ffill for daily → 1h)
+    pctrank_aligned = pctrank.reindex(raw_pos.index, method="ffill").fillna(1.0).values
+
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0  # 0=flat, 1=long, -1=short
+
+    for i in range(len(raw)):
+        oc_ok = pctrank_aligned[i] >= min_pctrank
+
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                result[i] = raw[i]  # 已有多倉 → 保持
+            elif oc_ok:
+                result[i] = raw[i]  # regime 良好 → 允許新開多
+                position_state = 1
+            else:
+                result[i] = 0.0     # regime 低迷 → 擋掉
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                result[i] = raw[i]  # 已有空倉 → 保持
+            elif oc_ok:
+                result[i] = raw[i]  # regime 良好 → 允許新開空
+                position_state = -1
+            else:
+                result[i] = 0.0     # regime 低迷 → 擋掉
+        else:
+            result[i] = 0.0
+            position_state = 0
 
     return pd.Series(result, index=raw_pos.index)
 

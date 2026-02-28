@@ -195,7 +195,7 @@ def fetch_defillama_stablecoins() -> pd.DataFrame:
             mcap = record.get("totalCirculating", {}).get("peggedUSD", 0)
             if ts is not None:
                 rows.append({
-                    "timestamp": pd.Timestamp(ts, unit="s", tz="UTC"),
+                    "timestamp": pd.Timestamp(int(ts), unit="s", tz="UTC"),
                     f"mcap_{sc_name}": float(mcap),
                 })
 

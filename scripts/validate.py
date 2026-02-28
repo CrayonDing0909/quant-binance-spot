@@ -129,6 +129,7 @@ def run_walk_forward(
     cfg: dict,
     n_splits: int,
     report_dir: Path,
+    data_dir: Optional[Path] = None,
 ) -> Dict[str, pd.DataFrame]:
     """執行 Walk-Forward 分析"""
     from qtrade.validation import walk_forward_analysis
@@ -151,6 +152,7 @@ def run_walk_forward(
                 data_path=data_paths[symbol],
                 cfg=cfg,
                 n_splits=n_splits,
+                data_dir=data_dir,
             )
             results[symbol] = wf_result
             
@@ -182,6 +184,7 @@ def run_monte_carlo(
     n_simulations: int,
     confidence_levels: List[float],
     report_dir: Path,
+    data_dir: Optional[Path] = None,
 ) -> Dict:
     """執行 Monte Carlo 模擬"""
     from qtrade.risk.monte_carlo import MonteCarloSimulator, MonteCarloConfig
@@ -201,7 +204,8 @@ def run_monte_carlo(
         try:
             # 執行回測獲取收益率
             bt_result = run_symbol_backtest(
-                symbol, data_paths[symbol], cfg, cfg.get("strategy_name")
+                symbol, data_paths[symbol], cfg, cfg.get("strategy_name"),
+                data_dir=data_dir,
             )
             
             # 從 Portfolio 物件提取收益率
@@ -252,6 +256,7 @@ def run_cross_asset(
     run_correlation: bool,
     run_regime: bool,
     report_dir: Path,
+    data_dir: Optional[Path] = None,
 ) -> Dict:
     """執行 Cross-Asset 驗證"""
     from qtrade.validation import (
@@ -275,6 +280,7 @@ def run_cross_asset(
                 symbols=symbols,
                 data_paths=data_paths,
                 cfg=cfg,
+                data_dir=data_dir,
             )
             results["loao"] = loao_result
             
@@ -300,6 +306,7 @@ def run_cross_asset(
                 data_paths=data_paths,
                 cfg=cfg,
                 indicator="volatility",
+                data_dir=data_dir,
             )
             results["regime"] = regime_results
             
@@ -329,12 +336,14 @@ def run_prado_methods(
     pbo_enabled: bool,
     pbo_threshold: float,
     report_dir: Path,
+    data_paths: Optional[Dict[str, Path]] = None,
+    data_dir: Optional[Path] = None,
 ) -> Dict:
-    """執行 Prado 方法（DSR, PBO）"""
+    """執行 Prado 方法（DSR, PBO via CPCV）"""
     from qtrade.validation import (
         deflated_sharpe_ratio,
-        probability_of_backtest_overfitting,
     )
+    from qtrade.validation.prado_methods import combinatorial_purged_cv
     
     print("\n" + "=" * 72)
     print("  🔬 Advanced Validation（Marcos López de Prado 方法）")
@@ -343,7 +352,7 @@ def run_prado_methods(
     
     results = {}
     
-    # 收集所有 walk-forward 結果
+    # 收集所有 walk-forward 結果（供 DSR 使用）
     all_train_sharpes = []
     all_test_sharpes = []
     
@@ -374,28 +383,67 @@ def run_prado_methods(
         except Exception as e:
             print(f"    ❌ 失敗: {e}")
     
-    # Probability of Backtest Overfitting
-    if pbo_enabled and len(all_train_sharpes) >= 2:
-        print("\n  📌 Probability of Backtest Overfitting (PBO):")
-        try:
-            pbo_result = probability_of_backtest_overfitting(
-                in_sample_sharpes=np.array(all_train_sharpes),
-                out_of_sample_sharpes=np.array(all_test_sharpes),
-                threshold=pbo_threshold,
-            )
-            results["pbo"] = pbo_result
-            
-            print(f"    PBO: {pbo_result.pbo:.2%}")
-            print(f"    排名相關性: {pbo_result.rank_correlation:.4f}")
-            print(f"    績效衰退: {pbo_result.performance_degradation:.1%}")
-            
-            if pbo_result.is_likely_overfitted:
-                print(f"    ⚠️  可能過擬合 (PBO > {pbo_threshold:.0%})")
-            else:
-                print(f"    ✅ 過擬合風險可接受")
+    # Probability of Backtest Overfitting — 使用真正的 CPCV
+    if pbo_enabled and data_paths:
+        print("\n  📌 Probability of Backtest Overfitting (PBO via CPCV):")
+        print("     使用 Combinatorial Purged Cross-Validation (10 splits, 2 test)")
+        
+        strategy_name = cfg.get("strategy_name", "")
+        cpcv_pbos = []
+        cpcv_degradations = []
+        
+        for symbol in symbols:
+            if symbol not in data_paths:
+                continue
+            try:
+                print(f"\n  {symbol}:")
+                cpcv_result = combinatorial_purged_cv(
+                    symbol=symbol,
+                    data_path=data_paths[symbol],
+                    cfg=cfg,
+                    strategy_name=strategy_name,
+                    n_splits=10,
+                    n_test_splits=2,
+                    purge_bars=10,
+                    embargo_bars=10,
+                    data_dir=data_dir,
+                )
+                cpcv_pbos.append(cpcv_result.pbo)
+                cpcv_degradations.append(cpcv_result.sharpe_degradation)
                 
-        except Exception as e:
-            print(f"    ❌ 失敗: {e}")
+                print(f"    Train SR: {cpcv_result.mean_train_sharpe:.2f} ± {cpcv_result.std_train_sharpe:.2f}")
+                print(f"    Test SR:  {cpcv_result.mean_test_sharpe:.2f} ± {cpcv_result.std_test_sharpe:.2f}")
+                print(f"    PBO: {cpcv_result.pbo:.1%}, 衰退: {cpcv_result.sharpe_degradation:.1%}")
+                print(f"    組合數: {cpcv_result.n_combinations}")
+                
+            except Exception as e:
+                print(f"    ❌ 失敗: {e}")
+        
+        if cpcv_pbos:
+            from qtrade.validation.prado_methods import PBOResult
+            avg_pbo = np.mean(cpcv_pbos)
+            max_pbo = np.max(cpcv_pbos)
+            avg_deg = np.mean(cpcv_degradations)
+            
+            print(f"\n  ── CPCV PBO 彙總 ──")
+            print(f"    平均 PBO: {avg_pbo:.1%}")
+            print(f"    最大 PBO: {max_pbo:.1%}")
+            print(f"    平均衰退: {avg_deg:.1%}")
+            
+            if max_pbo < pbo_threshold:
+                print(f"    ✅ 所有幣種 PBO < {pbo_threshold:.0%}，過擬合風險可接受")
+            else:
+                print(f"    ⚠️  部分幣種 PBO > {pbo_threshold:.0%}")
+            
+            # 建立與舊介面相容的 PBOResult
+            results["pbo"] = PBOResult(
+                pbo=avg_pbo,
+                logits=np.array(cpcv_pbos),
+                performance_degradation=avg_deg,
+                rank_correlation=0.0,  # CPCV 不使用此欄位
+                n_combinations=len(cpcv_pbos),
+                is_likely_overfitted=max_pbo > pbo_threshold,
+            )
     
     return results
 
@@ -406,6 +454,7 @@ def run_kelly_validation(
     cfg: dict,
     kelly_fractions: List[float],
     report_dir: Path,
+    data_dir: Optional[Path] = None,
 ) -> Dict:
     """執行 Kelly 公式驗證"""
     from qtrade.backtest.kelly_validation import (
@@ -435,6 +484,7 @@ def run_kelly_validation(
                 cfg=cfg,
                 kelly_fractions=kelly_fractions,
                 strategy_name=cfg.get("strategy_name"),
+                data_dir=data_dir,
             )
             
             results[symbol] = report
@@ -933,6 +983,7 @@ def main():
             cfg=backtest_cfg,
             n_splits=val_cfg.walk_forward_splits,
             report_dir=report_dir,
+            data_dir=cfg.data_dir,
         )
     
     # 2. Monte Carlo
@@ -944,6 +995,7 @@ def main():
             n_simulations=val_cfg.monte_carlo_simulations,
             confidence_levels=val_cfg.monte_carlo_confidence,
             report_dir=report_dir,
+            data_dir=cfg.data_dir,
         )
     
     # 3. Cross-Asset
@@ -960,13 +1012,14 @@ def main():
             run_correlation=run_correlation,
             run_regime=run_regime,
             report_dir=report_dir,
+            data_dir=cfg.data_dir,
         )
     
     # 4. Prado Methods (需要 walk-forward 結果)
     run_dsr = should_run("dsr", val_cfg.dsr_enabled)
     run_pbo = should_run("pbo", val_cfg.pbo_enabled)
     
-    if (run_dsr or run_pbo) and walk_forward_results:
+    if run_dsr or run_pbo:
         prado_results = run_prado_methods(
             symbols=symbols,
             walk_forward_results=walk_forward_results,
@@ -976,6 +1029,8 @@ def main():
             pbo_enabled=run_pbo,
             pbo_threshold=val_cfg.pbo_threshold,
             report_dir=report_dir,
+            data_paths=data_paths,
+            data_dir=cfg.data_dir,
         )
     
     # 5. Kelly Validation
@@ -986,6 +1041,7 @@ def main():
             cfg=backtest_cfg,
             kelly_fractions=val_cfg.kelly_fractions,
             report_dir=report_dir,
+            data_dir=cfg.data_dir,
         )
     
     # 6. Consistency Check (需要 Paper Trading 運行中)

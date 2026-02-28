@@ -79,15 +79,8 @@ BLEND_WEIGHTS = [0.10, 0.15, 0.20]
 # ══════════════════════════════════════════════════════════════
 
 def _get_data_path(cfg, symbol: str) -> Path:
-    """Resolve data path for a symbol."""
-    mt = cfg.market_type_str
-    interval = cfg.market.interval
-    # Try standard klines path first
-    p = cfg.data_dir / "binance" / mt / "klines" / f"{symbol}.parquet"
-    if p.exists():
-        return p
-    # Try interval-based path
-    p = cfg.data_dir / "binance" / mt / interval / f"{symbol}.parquet"
+    """Resolve data path for a symbol — 使用統一的路徑函數。"""
+    p = cfg.resolve_kline_path(symbol)
     if p.exists():
         return p
     raise FileNotFoundError(f"Data not found for {symbol} at {p}")
@@ -606,9 +599,7 @@ def run_phase_4(output_dir: Path, v2_overrides: dict | None = None) -> dict:
     cfg_r2 = load_config(R2_CONFIG)
 
     # Run R2 baseline (BTC only for fair comparison)
-    data_path_1h = cfg_r2.data_dir / "binance" / "futures" / "klines" / f"{SYMBOL}.parquet"
-    if not data_path_1h.exists():
-        data_path_1h = cfg_r2.data_dir / "binance" / "futures" / "1h" / f"{SYMBOL}.parquet"
+    data_path_1h = cfg_r2.resolve_kline_path(SYMBOL)
 
     # R2 BTC-only backtest
     print("\n  Running R2 baseline (BTC-only)...")

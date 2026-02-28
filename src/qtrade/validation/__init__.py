@@ -25,7 +25,6 @@
         
         # Advanced (Prado methods)
         deflated_sharpe_ratio,
-        probability_of_backtest_overfitting,
         combinatorial_purged_cv,
         
         # Consistency
@@ -72,7 +71,6 @@ from .cross_asset import (
 # Advanced Methods (López de Prado)
 from .prado_methods import (
     deflated_sharpe_ratio,
-    probability_of_backtest_overfitting,
     combinatorial_purged_cv,
     DeflatedSharpeResult,
     PBOResult,
@@ -125,7 +123,6 @@ __all__ = [
     "market_regime_validation",
     # Advanced (Prado Methods)
     "deflated_sharpe_ratio",
-    "probability_of_backtest_overfitting",
     "combinatorial_purged_cv",
     "DeflatedSharpeResult",
     "PBOResult",

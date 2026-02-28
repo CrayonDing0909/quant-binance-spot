@@ -38,6 +38,7 @@ class BacktestFunction(Protocol):
         data_path: Path,
         cfg: dict,
         strategy_name: str | None = None,
+        data_dir: Path | None = None,
     ) -> object:
         """
         執行單一資產回測
@@ -214,16 +215,19 @@ class BaseValidator(ABC):
         backtest_func: BacktestFunction,
         data_loader: DataLoader,
         config: CrossAssetValidationConfig | None = None,
+        data_dir: Path | None = None,
     ):
         """
         Args:
             backtest_func: 回測函數
             data_loader: 數據載入函數
             config: 驗證配置
+            data_dir: 數據根目錄（用於載入 funding rate 等輔助數據）
         """
         self._backtest_func = backtest_func
         self._data_loader = data_loader
         self._config = config or CrossAssetValidationConfig()
+        self._data_dir = data_dir
     
     @abstractmethod
     def validate(
@@ -263,6 +267,7 @@ class BaseValidator(ABC):
                 data_path,
                 cfg,
                 cfg.get("strategy_name"),
+                data_dir=self._data_dir,
             )
         except Exception as e:
             warnings.warn(f"回測失敗 {symbol}: {e}")
@@ -531,8 +536,9 @@ class CorrelationStratifiedValidator(BaseValidator):
         data_loader: DataLoader,
         config: CrossAssetValidationConfig | None = None,
         stratified_config: CorrelationStratifiedConfig | None = None,
+        data_dir: Path | None = None,
     ):
-        super().__init__(backtest_func, data_loader, config)
+        super().__init__(backtest_func, data_loader, config, data_dir=data_dir)
         self._stratified_config = stratified_config or CorrelationStratifiedConfig()
     
     def validate(
@@ -754,8 +760,9 @@ class MarketRegimeValidator(BaseValidator):
         data_loader: DataLoader,
         config: CrossAssetValidationConfig | None = None,
         regime_config: MarketRegimeConfig | None = None,
+        data_dir: Path | None = None,
     ):
-        super().__init__(backtest_func, data_loader, config)
+        super().__init__(backtest_func, data_loader, config, data_dir=data_dir)
         self._regime_config = regime_config or MarketRegimeConfig()
     
     def validate(
@@ -937,6 +944,7 @@ def leave_one_asset_out(
     backtest_func: BacktestFunction | None = None,
     data_loader: DataLoader | None = None,
     parallel: bool = True,
+    data_dir: Path | None = None,
 ) -> CrossAssetValidationResult:
     """
     Leave-One-Asset-Out 驗證便捷函數
@@ -948,6 +956,7 @@ def leave_one_asset_out(
         backtest_func: 回測函數（默認使用 run_symbol_backtest）
         data_loader: 數據載入函數（默認使用 load_klines）
         parallel: 是否並行執行
+        data_dir: 數據根目錄（用於載入 funding rate 等輔助數據）
     
     Returns:
         CrossAssetValidationResult
@@ -969,7 +978,7 @@ def leave_one_asset_out(
         data_loader = load_klines
     
     config = CrossAssetValidationConfig(parallel=parallel)
-    validator = LeaveOneAssetOutValidator(backtest_func, data_loader, config)
+    validator = LeaveOneAssetOutValidator(backtest_func, data_loader, config, data_dir=data_dir)
     
     return validator.validate(symbols, data_paths, cfg)
 
@@ -981,6 +990,7 @@ def correlation_stratified_validation(
     n_groups: int = 3,
     backtest_func: BacktestFunction | None = None,
     data_loader: DataLoader | None = None,
+    data_dir: Path | None = None,
 ) -> CrossAssetValidationResult:
     """
     相關性分層驗證便捷函數
@@ -992,6 +1002,7 @@ def correlation_stratified_validation(
         n_groups: 分組數量
         backtest_func: 回測函數
         data_loader: 數據載入函數
+        data_dir: 數據根目錄（用於載入 funding rate 等輔助數據）
     
     Returns:
         CrossAssetValidationResult
@@ -1009,6 +1020,7 @@ def correlation_stratified_validation(
         backtest_func,
         data_loader,
         stratified_config=stratified_config,
+        data_dir=data_dir,
     )
     
     return validator.validate(symbols, data_paths, cfg)
@@ -1021,6 +1033,7 @@ def market_regime_validation(
     indicator: str = "volatility",
     backtest_func: BacktestFunction | None = None,
     data_loader: DataLoader | None = None,
+    data_dir: Path | None = None,
 ) -> Tuple[List[MarketRegimeResult], pd.DataFrame]:
     """
     市場狀態驗證便捷函數
@@ -1032,6 +1045,7 @@ def market_regime_validation(
         indicator: 市場狀態指標 ("volatility", "trend", "momentum")
         backtest_func: 回測函數
         data_loader: 數據載入函數
+        data_dir: 數據根目錄（用於載入 funding rate 等輔助數據）
     
     Returns:
         (MarketRegimeResult 列表, 摘要 DataFrame)
@@ -1050,6 +1064,7 @@ def market_regime_validation(
         backtest_func,
         data_loader,
         regime_config=regime_config,
+        data_dir=data_dir,
     )
     
     return validator.validate(symbols, data_paths, cfg)

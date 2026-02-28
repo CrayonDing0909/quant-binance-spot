@@ -10,6 +10,17 @@ Agent 在每次 session 結束時更新此檔案。保留最近 7 天的條目�
 
 ## 2026-02-28
 
+### 工具鏈健康審計 + 修復（Quant Developer）
+- **BUG 修復**: `validate.py` WFA/MC/Kelly/LOAO 全部加入 `data_dir` 穿透（之前缺失導致 funding rate 未計算）
+- **BUG 修復**: `cross_asset.py` `BacktestFunction` protocol + `BaseValidator` + 所有便捷函數加入 `data_dir`
+- **BUG 修復**: `kelly_validation.py` `kelly_backtest_comparison()` 加入 `data_dir`
+- **棄用**: `probability_of_backtest_overfitting()` 改名 `_simplified_pbo_estimate()` 並從 `__init__.py` exports 移除
+- **標準化**: `AppConfig.resolve_kline_path()` / `resolve_kline_paths()` 共用函數，統一數據路徑
+- **修復**: `run_walk_forward.py` / `run_oi_bb_rv_research.py` 移除 `"klines"` 回退邏輯，改用 `resolve_kline_path()`
+- **測試**: 新增 `test_validation_pipeline.py`（12 tests）+ `test_data_dir_propagation.py`（8 tests）
+- **Skill**: 新增 `.cursor/skills/dev/toolchain-integrity-checklist.md`
+- 全部 407 測試通過
+
 ### Agent 架構瘦身（全域）
 - 5 個 agent `.md` 全面重構：抽取 18 個 skill 檔到 `.cursor/skills/{alpha,dev,validation,risk,ops}/`
 - Agent 核心 `.md` 精簡至 ~70-115 行（原 185-750 行），只保留身份+核心規則+skills 索引
@@ -59,6 +70,52 @@ Agent 在每次 session 結束時更新此檔案。保留最近 7 天的條目�
 - 新增 CI 防護 `tests/test_resample_shift_guard.py`（3 tests）
 - 更新 anti-bias.mdc §5「HTF Resample + Reindex: 必須 shift(1)」
 - 366 測試通過
+
+### OI Regime Filter EDA — WEAK GO（Alpha Researcher）
+- 13 OI regime indicators × 8 symbols，2022-2026，coverage 99.9%
+- 所有 IC 負值（higher OI → lower returns），最強 IC=-0.006 < 0.01 (A5 WARN)
+- Quintile spread: Q5-Q1 = -1.31 Sharpe（強條件效應）
+- F5 filter (pctrank_720 > 0.3): Δ SR +0.317, 8/8 symbols improved, freq loss 29.8%
+- 方向交互發現: Long+FallingOI SR=1.50(BEST) vs Short+FallingOI SR=0.01(DEAD)
+- Quality Gates: 4 PASS + 2 WARN (G1 IC弱, G3 confounding partial)
+- **Verdict: WEAK GO → Filter**, handoff @quant-developer with ablation requirement
+- 更新 `docs/ALPHA_RESEARCH_MAP.md`（覆蓋地圖 +#16, 圖譜更新, 前沿排序 #2 → WEAK GO）
+
+### On-Chain Regime Overlay EDA — **GO**（Alpha Researcher）
+- 數據: DeFi Llama TVL + 穩定幣市值（12 on-chain series, 2017-2026, 免費）
+- 18 regime indicators × 8 symbols，coverage ≥70% (13/16 metrics pass)
+- **tvl_mom_30d IC=0.065**（>10× OI 的 IC=0.006），A1-A5 全 PASS
+  - A1: 5+/2- years ✅, A2: shift impact 5.2% ✅, A3: 8/8 same sign ✅, A5: IC≥0.01 ✅
+- **tvl_sc_ratio_mom_30d quintile spread +4.69 (monotonic!)**
+- Filter ≥P30: **8/8 symbols improved, avg Δ SR = +0.409**, freq loss ~30%
+- Risk-On vs Risk-Off: 8/8 symbols Risk-On better, avg Δ SR = +1.454
+- G6: avg |corr| = 0.302 with BTC price momentum（部分獨立信息）
+- **Quality Gates: 6/6 PASS → GO**
+- 修正 stablecoin 下載腳本 timestamp parsing bug（`int(ts)` cast）
+- Handoff: @quant-developer 實作 `onchain_regime_filter()` in `filters.py`
+  - 必須 ablation: (A) HTF only, (B) On-chain only, (C) HTF + On-chain
+- Notebook: `notebooks/research/20260228_onchain_regime_overlay_eda.ipynb`
+
+### On-Chain Regime Filter — 實作 + Ablation + Validation（Quant Developer + Quant Researcher）
+- **BUG 修復**: `onchain_regime_filter()` lookback 365→720（1h bars，365=15天而非30天）
+- 同步修正 `tsmom_carry_v2_strategy.py` fallback + 2 ablation configs
+- **BUG 修復**: `prado_methods.py` CPCV 呼叫 `probability_of_backtest_overfitting` → `_simplified_pbo_estimate`
+- 3-config ablation: A(HTF only)=SR 3.80, B(On-chain only)=SR 4.00, C(HTF+On-chain)=SR 3.88
+- B standalone +5.3% SR, MDD -3.49%（best），但 C 疊加退化（同 OI 模式）
+- Full validation on Config B: WFA 8/8 PASS (avg deg -3.2%), CPCV PBO max 0.13, DSR 2.28 p<0.001
+- **Verdict: KEEP_BASELINE** — 增量 borderline(+5.3%), 觀察期內不替換, 2/8 symbols 退化
+- Code preserved, configs 保留供 3/14 後重評估
+
+### OI Regime Filter Ablation — FAIL（Quant Developer）
+- 新增 `oi_regime_filter()` 到 `src/qtrade/strategy/filters.py`（gate pattern, pctrank_720 < 0.3 block）
+- 整合到 `tsmom_carry_v2_strategy.py`（HTF filter 之後、turnover control 之前）
+- 3-config ablation: A(HTF only)=SR 3.86, B(OI only)=SR 4.12, C(HTF+OI)=SR 4.04
+- **Incremental SR = +4.66% < 5% threshold → FAIL**
+- Key findings: OI standalone (+6.74%) 實際上比 HTF 更強，但疊加造成 over-filter (5/8 symbols SR 下降)
+- C 的 MDD 最佳 (-3.14%) 但 return 最低 (+215%)
+- Code preserved, 3 ablation configs archived to `config/archive/`
+- 更新 `docs/ALPHA_RESEARCH_MAP.md`（#16 FAIL, 覆蓋地圖, 研究日誌）
+- Notebook: `notebooks/research/20260228_oi_regime_filter_eda.ipynb`
 
 ## 2026-02-27
 

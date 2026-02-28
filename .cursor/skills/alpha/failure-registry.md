@@ -18,6 +18,7 @@ alwaysApply: false
 | **Taker Vol Over-Exploration** | 2026-02-27 | When base signal is too weak (IC=-0.006), exploring 14 variants has diminishing returns | If strongest raw signal IC < 0.01, stop exploring variants, declare alpha source too weak | Alpha Research ~6h |
 | **BB Mean Reversion** | 2026-02-25 | IC positive (+0.02~0.05) but gross PnL all negative (PF 0.83-0.88) because IC cannot capture payoff asymmetry | MR strategies must first simulate gross PnL/trade with TP/SL, not just IC | Alpha Research ~2h |
 | **FR Carry** | 2026-02-25 | Funding Rate unstable across coins (SOL/BNB 2yr FR < 0), not a reliable carry source | Carry strategies need premium verified positive across all target symbols in all 2-year windows | Alpha Research ~2h |
+| **OI Regime Filter (stacking)** | 2026-02-28 | OI standalone SR=4.12 > HTF=3.86, but stacking HTF+OI=4.04 (incremental +4.66% < 5%). Two regime filters on same signal both gate low-conviction bars → over-filter (5/8 symbols SR dropped). Redundancy: OI and HTF both remove similar weak-signal bars | When stacking two regime filters, check overlap ratio first. If filter A and B gate >50% of the same bars, stacking won't help. Test replacement (A→B) before addition (A+B) | Quant Dev ~3h |
 
 ## Maintenance Rules
 

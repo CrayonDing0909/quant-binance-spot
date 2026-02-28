@@ -149,16 +149,18 @@ class PBOResult:
     is_likely_overfitted: bool      # 是否可能過擬合
 
 
-def probability_of_backtest_overfitting(
+def _simplified_pbo_estimate(
     in_sample_sharpes: np.ndarray,
     out_of_sample_sharpes: np.ndarray,
     threshold: float = 0.5,
 ) -> PBOResult:
     """
-    計算 Probability of Backtest Overfitting (PBO)
+    簡化版 PBO 估計（僅供內部使用）
     
-    PBO 衡量的是：在 in-sample 選出的最佳策略，
-    在 out-of-sample 表現低於中位數的機率。
+    ⚠️ 此函數使用 oos_rank / n 作為 PBO 近似值，**不是** Bailey et al. (2017)
+    定義的真正 CPCV-based PBO。結果通常偏高且具誤導性。
+    
+    正確做法：使用 ``combinatorial_purged_cv()`` 獲取真正的 PBO。
     
     Args:
         in_sample_sharpes: 各策略的 in-sample Sharpe 陣列
@@ -167,9 +169,6 @@ def probability_of_backtest_overfitting(
     
     Returns:
         PBOResult
-    
-    Reference:
-        Bailey et al. (2017) "Probability of Backtest Overfitting"
     """
     n = len(in_sample_sharpes)
     if n < 2:
@@ -361,7 +360,7 @@ def combinatorial_purged_cv(
     degradation = (mean_train - mean_test) / max(abs(mean_train), 0.01)
 
     # 基於 CPCV 的 PBO
-    pbo_result = probability_of_backtest_overfitting(
+    pbo_result = _simplified_pbo_estimate(
         np.array(train_sharpes),
         np.array(test_sharpes),
     )
@@ -419,9 +418,9 @@ def run_all_advanced_validation(
     )
     results["deflated_sharpe"] = dsr_result
     
-    # 2. PBO (if data provided)
+    # 2. PBO (if data provided) — 使用簡化估計（僅供快速參考）
     if in_sample_sharpes is not None and out_of_sample_sharpes is not None:
-        pbo_result = probability_of_backtest_overfitting(
+        pbo_result = _simplified_pbo_estimate(
             in_sample_sharpes,
             out_of_sample_sharpes,
         )

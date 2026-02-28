@@ -45,7 +45,7 @@ from qtrade.validation import (
 @pytest.fixture
 def mock_backtest_func():
     """模擬回測函數"""
-    def _backtest(symbol: str, data_path: Path, cfg: dict, strategy_name=None):
+    def _backtest(symbol: str, data_path: Path, cfg: dict, strategy_name=None, data_dir=None):
         # 根據 symbol 返回不同結果，模擬真實情況
         sharpe_map = {
             "BTCUSDT": 1.5,

@@ -339,6 +339,7 @@ def kelly_backtest_comparison(
     cfg: dict,
     kelly_fractions: List[float] = [0.0, 0.25, 0.5, 0.75, 1.0],
     strategy_name: Optional[str] = None,
+    data_dir: Optional[Path] = None,
 ) -> KellyValidationReport:
     """
     比較不同 Kelly fraction 的回測表現
@@ -349,6 +350,7 @@ def kelly_backtest_comparison(
         cfg: 回測配置
         kelly_fractions: 要比較的 Kelly fractions
         strategy_name: 策略名稱
+        data_dir: 數據根目錄（用於載入 funding rate 等輔助數據）
         
     Returns:
         KellyValidationReport
@@ -361,7 +363,7 @@ def kelly_backtest_comparison(
     
     # 先跑一次基礎回測，獲取交易紀錄和 position 訊號
     # run_symbol_backtest 內部會做日期過濾，返回的 df/pos 是已過濾的
-    base_result = run_symbol_backtest(symbol, data_path, cfg, strategy_name)
+    base_result = run_symbol_backtest(symbol, data_path, cfg, strategy_name, data_dir=data_dir)
     
     # 使用基礎回測返回的 df（已日期過濾），確保長度與 pos 一致
     df = base_result.df

@@ -44,7 +44,7 @@ cd ~/quant-binance-spot && source .venv/bin/activate && git pull
 tmux new -d -s tg_bot 'while true; do
   cd ~/quant-binance-spot && source .venv/bin/activate &&
   PYTHONPATH=src python scripts/run_telegram_bot.py \
-    -c config/prod_candidate_htf_lsr.yaml \
+    -c config/prod_candidate_simplified.yaml \
     --real;
   echo "TG Bot exited, restarting in 10s..."; sleep 10;
 done'

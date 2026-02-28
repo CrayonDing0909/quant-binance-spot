@@ -1,4 +1,4 @@
-> **Last updated**: 2026-02-28 (Tier Ablation 完成 — Config E simplified 反超 prod: SR 3.85>3.77, params -47%)
+> **Last updated**: 2026-02-28 (On-Chain Regime Filter ablation + validation → **KEEP_BASELINE**: B(On-chain only) SR=4.00 vs A(HTF) SR=3.80, Δ=+5.3% borderline, 全 gate PASS but 觀察期內不替換)
 
 # Alpha 研究地圖 (Alpha Research Map)
 
@@ -23,13 +23,14 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 2 | Carry / 收益率 | FR proxy（價格估算） | `tsmom_carry_v2` carry 腿 | ★★★☆☆ 中（proxy，非真實 FR） | 真實 FR 數據可能改善 carry 腿品質 |
 | 3 | HTF 趨勢確認 | 4h EMA + Daily ADX regime | HTF Filter v2（`_apply_htf_filter`） | ★★★★★ 強（8/8 改善） | 已飽和 |
 | 4 | 散戶擁擠（LSR） | LSR percentile rank | LSR Confirmatory Overlay（boost/reduce） | ★★★★☆ 強（overlay） | standalone potential 受限於 2026 IC 翻轉 |
-| 5 | OI 確認層 | OI 24h pct_change | LSR Overlay v2（`oi_confirm`） | ★★★☆☆ 中（overlay 組件） | OI 作為獨立 regime 信號未探索 |
+| 5 | OI 確認層 | OI 24h pct_change | LSR Overlay v2（`oi_confirm`） | ★★★☆☆ 中（overlay 組件） | OI regime filter **WEAK GO** (20260228): IC=0.006 弱但 F5 Δ SR +0.317, 8/8 improved |
+| 16 | OI Regime Gate | OI pctrank_720 level filter | ablation 完成 → **FAIL** | ★★☆☆☆ 弱 → FAIL | Ablation: A(HTF)=3.86, B(OI)=4.12, C(HTF+OI)=4.04。Incremental SR +4.66% < 5% → FAIL。OI standalone 強但與 HTF 疊加 over-filter |
 | 6 | FR 擁擠確認 | FR pctrank + LSR 同向 | LSR Overlay v2（`fr_confirm`） | ★★★☆☆ 中（overlay 組件） | — |
 | 7 | OI 事件驅動 | OI drop + price drop → bounce | `oi_cascade` overlay + `oi_liq_bounce`（SHELVED） | ★★★☆☆ 中（overlay 研究中） | 獨立策略效益低（TIM=4.2%），已轉 overlay；BTC 空頭抵消需調優 |
 | 8 | 波動率 regime | ATR percentile | `vol_pause` overlay | ★★★☆☆ 中（僅退出用） | 方向性波動率信號未探索 |
 | 9 | 截面動量 (XSMOM) | 相對強弱排名 | `xsmom`（已實作，**FAIL**） | ❌ 無效（SR=-0.50, 6 variants 全負） | 加密截面動量不存在（高相關性 + rank-invariant residual） |
 | 10 | 微結構/訂單流 | Taker vol, CVD | `derivatives_micro_overlay`（已實作） | ★★☆☆☆ 弱（WEAK GO） | TVR IC=-0.006(弱但獨立), CVD 不穩定, 建議作為 LSR overlay 第4確認因子 |
-| 11 | 鏈上 regime | TVL, 穩定幣流量 | `onchain.py`（僅數據模組） | ☆☆☆☆☆ 無信號 | 需建構 risk-on/off 信號 |
+| 11 | 鏈上 regime | TVL/穩定幣 momentum | EDA GO → Ablation+Validation → **KEEP_BASELINE** (20260228) | ★★★★☆ 強 | IC=0.065, B(On-chain only) SR=4.00 vs A(HTF) SR=3.80, Δ=+5.3% borderline。WFA 8/8 PASS, CPCV PBO max 0.13, DSR 2.28。Code preserved, 觀察期後(3/14)重評估 |
 | 12 | 清算瀑布精確化 | 清算數據 | `oi_liq_bounce`（部分使用） | ★★☆☆☆ 弱（CoinGlass 歷史有限） | 更豐富數據源 + 更精確入場 |
 | 13 | 多 TF 共振（獨立策略）| 多 TF 信號一致 | `multi_tf_resonance`（已實作） | ☆☆☆☆☆ 未驗證 | HTF Filter 已覆蓋部分功能 |
 | 14 | Order Book 不平衡 | Depth imbalance | `order_book.py`（僅數據模組） | ☆☆☆☆☆ 無信號 | 無歷史數據，需 live 收集 |
@@ -40,8 +41,10 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 - **已充分覆蓋（★★★★+）**：時序動量、HTF 趨勢、散戶擁擠、OI 事件
 - **部分覆蓋（★★-★★★）**：Carry、OI 確認、波動率、清算
 - **已確認無效**：截面動量 (XSMOM)、TF 優化（4h 替換 1h，修正 look-ahead 後 Δ SR 僅 +0.20, PBO 偏高）
-- **已測試但弱（★★）**：微結構/訂單流（TVR 獨立但 IC 弱，CVD 不穩定）
-- **未覆蓋（空白缺口）**：鏈上 regime、Order Book
+- **已測試 WEAK GO（★★）**：微結構/訂單流（TVR 獨立但 IC 弱）
+- **已測試 FAIL**：OI Regime Gate（standalone SR=4.12 > HTF=3.86，但 incremental +4.66% < 5%，與 HTF 疊加 over-filter）
+- **已測試 KEEP_BASELINE（★★★★）**：鏈上 regime（On-chain only SR=4.00 > HTF SR=3.80, 全 gate PASS，但增量 borderline +5.3%，觀察期內不替換。Code preserved 供 3/14 後重評估）
+- **未覆蓋（空白缺口）**：Order Book
 
 ---
 
@@ -80,7 +83,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | CVD | 價格-CVD 背離 | ✅ 是 (20260227 EDA) | Δ SR=+0.053(邊際), turnover 2.6x | ❌ 不值得複雜度 |
 | OI | Drop + bounce 事件 | ✅ 是（v4.2 完整驗證） | SR=2.49 standalone, +0.11 SR as overlay | `oi_liq_bounce`（SHELVED）→ `oi_cascade` overlay |
 | OI | Rising 確認（24h pct_change） | ✅ 是 (20260227) | overlay 組件，邊際改善小 | LSR Overlay v2 `oi_confirm` |
-| OI | Regime 指標（high/low OI） | ❌ 否 | — | — |
+| OI | Regime 指標（pctrank level filter） | ✅ 是 (20260228 EDA + ablation) | **FAIL (incremental)**: Standalone SR=4.12 > HTF=3.86 (+6.7%), 但 HTF+OI SR=4.04 incremental 僅 +4.66% < 5%。OI 與 HTF 部分冗餘，疊加 over-filter (5/8 symbols SR 下降) | **FAIL** — 不加入生產。Code preserved in `filters.py` |
 | OI | Crowding 逆向 | ⚠️ 部分（EDA 20260227） | Cross-symbol crowding 因果修正後無效 | 無 |
 | Funding Rate | 直接 carry 策略 | ✅ 是 (20260225) | ❌ FAIL — portfolio SR=-0.63（SOL/BNB FR < 0） | 無（standalone 不可行） |
 | Funding Rate | Proxy carry（價格估算） | ✅ 是 | 作為 tsmom 輔助因子有效 | `tsmom_carry_v2` carry 腿 |
@@ -93,8 +96,9 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 | 數據源 | 信號類型 | 已測試？ | 結果 | 當前用途 |
 |--------|---------|---------|------|---------|
-| DeFi Llama TVL | Risk-on/off regime | ❌ 否 | — | — |
-| 穩定幣市值 | 流動性 regime | ❌ 否 | — | — |
+| DeFi Llama TVL | TVL momentum regime filter | ✅ 是 (20260228 EDA) | **GO**: tvl_mom_30d IC=0.065, 8/8 same sign, A1 5+/2-, quintile spread +4.35 | → Handoff Quant Dev as Filter |
+| DeFi Llama TVL | TVL/SC ratio momentum | ✅ 是 (20260228 EDA) | **GO**: monotonic quintile spread +4.69, 8/8 improved at P30 Δ SR +0.41 | → Handoff Quant Dev as Filter |
+| 穩定幣市值 | SC momentum regime | ✅ 是 (20260228 EDA) | **GO**: sc_mom_30d IC=0.053, 8/8 same sign, A1 5+/2- | → Handoff as secondary indicator |
 | DeFi Llama Yields | 跨市場套利 | ❌ 否 | — | — |
 | Order Book Depth | Bid/Ask 不平衡 | ❌ 否（模組已建） | — | 無歷史數據 |
 
@@ -125,13 +129,14 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 **門檻**：總分 < 2.5 不啟動深入研究。最高候選分數 < 3.0 時，「本週期不研究」是合理選項。
 
-### 當前排序（2026-02-27）
+### 當前排序（2026-02-28）
 
 | # | 研究方向 | 目標缺口 | 整合模式 | 分散化 | 數據 | Alpha | 複雜度 | 文獻 | **總分** | 備註 |
 |---|---------|---------|---------|:------:|:----:|:-----:|:------:|:----:|:--------:|------|
-| 1 | 鏈上 regime overlay（TVL/穩定幣） | 鏈上 regime | Overlay/Filter | 5 | 3 | 2 | 4 | 2 | **3.4** | 與現有策略正交，但 alpha 不確定 |
-| 2 | OI regime（high/low OI 環境分類） | OI 確認 | Filter | 3 | 5 | 3 | 5 | 2 | **3.4** | 數據已有，簡單實作 |
+| ~~1~~ | ~~鏈上 regime overlay（TVL/穩定幣）~~ | — | — | — | — | — | — | — | ~~3.4~~ | **KEEP_BASELINE (20260228)**: IC=0.065, B(On-chain) SR=4.00 > A(HTF) SR=3.80, 全 gate PASS 但 Δ=+5.3% borderline。觀察期後(3/14)可重評估 |
+| ~~2~~ | ~~OI regime（high/low OI 環境分類）~~ | — | — | — | — | — | — | — | ~~3.4~~ | **FAIL (20260228)**: Ablation incremental +4.66% < 5%。→ Dead Ends |
 | 3 | retail_vs_top LSR standalone | 散戶擁擠 | Standalone | 4 | 4 | 3 | 3 | 2 | **3.3** | 2026 IC 翻轉 + 高換手率待解決 |
+| 12 | OI 替代 HTF（架構級變更） | HTF 趨勢確認 | Filter（替換） | 2 | 5 | 4 | 2 | 2 | **3.0** | **BACKLOG**: OI standalone SR=4.12 > HTF=3.86 (+6.7%)，但為架構級替換需獨立 WFA+CPCV 全流程驗證。風險高，非緊急 |
 | 4 | 真實 FR carry 改進 | Carry 品質 | 策略內部升級 | 1 | 5 | 2 | 5 | 3 | **2.7** | corr 高（改善同一策略），但簡單 |
 | 5 | Order Book depth 不平衡 | 訂單流 | Overlay | 5 | 1 | 3 | 2 | 3 | **3.0** | 無歷史數據是致命問題 |
 | 6 | Cross-symbol 擁擠偵測 | 系統風險 | Filter | 3 | 4 | 1 | 4 | 2 | **2.6** | 因果修正後幾乎無效 |
@@ -141,14 +146,30 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | ~~10~~ | ~~Taker Vol 不平衡 overlay~~ | — | — | — | — | — | — | — | ~~3.6~~ | **WEAK GO (20260227)**: IC弱(-0.006)但獨立, Δ SR+0.155, 建議作第4確認因子→Quant Dev |
 | ~~11~~ | ~~CVD divergence/momentum~~ | — | — | — | — | — | — | — | ~~3.2~~ | **FAIL (20260227)**: CVD momentum 傷害 TSMOM(Δ SR=-0.25), IC 年度翻轉, 背離信號邊際 |
 
-### 建議下一步研究（Top 3）
+### 建議下一步研究（Top 2）
 
-1. **鏈上 regime overlay**（#1, 3.4 分）— 與現有策略正交，分散化效果最好。需先做 TVL/穩定幣數據 EDA。
-2. **OI regime filter**（#2, 3.4 分）— 數據最成熟（已有完整 OI），簡單實作。
-3. **retail_vs_top LSR standalone**（#3, 3.3 分）— IC 最強但需解決 2026 翻轉 + 換手率。
+1. **retail_vs_top LSR standalone**（#3, 3.3 分）— IC 最強但需解決 2026 翻轉 + 換手率。
+2. **真實 FR carry 改進**（#4, 2.7 分）— 低分散化但實作簡單。
 
-### 已完成但邊際的方向（可選 Handoff → Quant Developer）
+### 未來 Backlog（非緊急）
 
+- **OI 替代 HTF**（#12, 3.0 分）— OI standalone SR=4.12 > HTF=3.86，作為 HTF 的完全替代品有潛力。但這是架構級變更（移除已驗證的 HTF filter），需要獨立的 WFA+CPCV+DSR 全流程驗證 + 生產切換計劃。維持生產穩定優先，待更充分的驗證動機出現再啟動。
+
+### 已完成 Ablation + Validation 的方向
+
+- **On-Chain Regime Filter**（#1, KEEP_BASELINE）→ **統計驗證全 PASS 但增量 borderline**
+  - **Ablation 結果**: A(HTF)=SR 3.80, B(On-chain)=SR 4.00, C(HTF+On-chain)=SR 3.88
+  - **B standalone**: SR +5.3%, MDD -3.49% (best), Calmar 10.46
+  - **Validation**: WFA 8/8 PASS (avg deg -3.2%, 5/8 OOS>IS), CPCV PBO max 0.13, DSR 2.28 p<0.001
+  - **Verdict**: KEEP_BASELINE — 增量 borderline(+5.3%), 觀察期(→3/14)內不替換, 2/8 symbols 退化(SOL/LINK)
+  - **保留決策**: Code preserved (`onchain_regime_filter()` in `filters.py`), configs 保留
+  - **重評估條件**: 3/14 觀察期結束後如果 production HTF SR 衰退，可重啟 On-chain 替換流程
+  - **Notebook**: `notebooks/research/20260228_onchain_regime_overlay_eda.ipynb`
+
+- ~~**OI Regime Filter**（#2, FAIL）~~ → Ablation 結果: incremental SR +4.66% < 5% threshold。
+  OI standalone (SR=4.12) 實際上比 HTF (3.86) 更強，但疊加 HTF+OI (4.04) 造成 over-filter (5/8 symbols SR 下降)。
+  **不加入生產。** Code preserved in `filters.py`。
+  Configs archived: `config/archive/research_oi_ablation_*.yaml`
 - **Taker Vol (Smooth24) overlay** → 作為 LSR overlay 第4確認因子（`tvr_confirm_enabled`）。
   預期邊際改善 Δ SR ≈ +0.05~0.10（含成本）。低風險低收益，開發者決定是否值得實作。
 
@@ -186,3 +207,8 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 2026-02-27 | 4h TSMOM TF Optimization EDA: IC Δ=+0.0045(6/8), gross SR 0/8 better, corr(prod,4h)=0.787, cost -4.42pp/yr。🟡 不適合 standalone 但成本節省值得正式回測 → Handoff Quant Dev | Alpha Researcher |
 | 2026-02-27 | **4h TF 維度 CLOSED**: 正式回測修正 HTF look-ahead 後 Δ SR 僅 +0.20（4h Pure 3.97 vs baseline 3.77），PBO 52-67% 偏高。之前 +1.53 SR 完全來自 bias。歸檔 3 configs + EDA script → Dead Ends | Alpha Researcher |
 | 2026-02-28 | **Tier Ablation 完成 + Config E 簡化候選**: 5-config ablation (A=prod, B=all default, C=all tsmom_heavy, D=BTC no breakout, E=simplified)。發現: (1) B=C 證實 w_tsmom dead param, (2) BTC breakout 是負貢獻 (SR -0.03), (3) Config E (SR 3.85) 反超 prod (SR 3.77), params -47%。BTC 720h lookback 價值 +0.38 SR。建議 Config E → 正式 validation → 替換生產 | Alpha Researcher |
+| 2026-02-28 | **OI Regime Filter EDA (WEAK GO)**: 13 indicators, 8 symbols, 2022-2026。所有 IC 負值（higher OI → lower ret）。最強 IC=-0.006 < 0.01 (A5 WARN)，但 quintile spread -1.31 Sharpe（強條件效應）。F5(pctrank_720>0.3) Δ SR +0.317, 8/8 improved, freq loss 29.8%。方向交互: Long+FallingOI SR=1.50(BEST) vs Short+FallingOI SR=0.01(DEAD)。G1 FAIL, G3 PARTIAL, 其餘 PASS → WEAK GO Filter handoff | Alpha Researcher |
+| 2026-02-28 | **OI Regime Filter Ablation (FAIL)**: 3-way ablation A(HTF)=3.86, B(OI)=4.12, C(HTF+OI)=4.04。Incremental SR +4.66% < 5% threshold → FAIL。Key findings: (1) OI standalone (4.12) 實際上比 HTF (3.86) 更強 (+6.74%), (2) 但 HTF+OI 疊加造成 over-filter, 5/8 symbols SR 下降, (3) C 的 MDD (-3.14%) 最佳但 return 最低。OI 與 HTF 部分冗餘（兩者都過濾低conviction信號）。Code preserved, configs archived | Quant Developer |
+| 2026-02-28 | **OI 替代 HTF → BACKLOG #12**: 用戶決策維持生產穩定（Option C），OI 替代 HTF 為架構級變更，記為未來 backlog（需獨立 WFA+CPCV 全流程驗證）。研究前沿 #2 標記 FAIL，新增 #12 BACKLOG 項目 | Alpha Researcher |
+| 2026-02-28 | **On-Chain Regime Overlay EDA (GO)**: 18 indicators (TVL/穩定幣), 8 symbols, 2020-2026。tvl_mom_30d IC=0.065 (>10× OI), A1-A5 全 PASS (8/8 same sign, 5+/2-)。tvl_sc_ratio_mom_30d quintile spread +4.69 (monotonic!)。Filter ≥P30: 8/8 improved, avg Δ SR=+0.409。Risk-On/Off: 8/8 Risk-On better, avg Δ=+1.454。G6: avg |corr|=0.302 (partially independent)。**6/6 G gates PASS → GO** → Handoff Quant Dev with mandatory ablation | Alpha Researcher |
+| 2026-02-28 | **On-Chain Regime Filter Ablation + Validation (KEEP_BASELINE)**: lookback bug 修正(365→720)。3-way ablation: A(HTF)=3.80, B(On-chain)=4.00(+5.3%), C(HTF+On-chain)=3.88。B 全 validation PASS: WFA 8/8 (avg deg -3.2%, 5/8 OOS>IS), CPCV PBO max 0.13, DSR 2.28 p<0.001。prado_methods.py CPCV bug 修正(probability_of_backtest_overfitting→_simplified_pbo_estimate)。**Verdict: KEEP_BASELINE** — 增量 borderline, 觀察期內不替換, code preserved 供 3/14 後重評估 | Quant Developer + Quant Researcher |

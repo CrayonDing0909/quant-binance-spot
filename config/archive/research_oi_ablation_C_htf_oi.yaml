@@ -1,56 +1,15 @@
 # ═══════════════════════════════════════════════════════════════
-# PRODUCTION CANDIDATE — Simplified (HTF Filter v2 + LSR, No Breakout)
+# OI REGIME FILTER ABLATION — Config C: HTF + OI (Both Enabled)
 # ═══════════════════════════════════════════════════════════════
 # Created: 2026-02-28
-# Origin: config/research_simplified_prod_candidate.yaml (Config E)
-# Baseline: config/prod_candidate_htf_lsr.yaml (current production, SR=3.77)
-# Lineage: tsmom_carry_v2 → meta_blend → HTF Filter v2 → HTF Filter v2 + LSR → Simplified
+# Purpose: Ablation study — HTF Filter + OI Regime Filter BOTH enabled
+# Base: prod_candidate_simplified.yaml (current production, SR=3.85)
 #
-# CHANGE vs BASELINE (prod_candidate_htf_lsr.yaml):
-#   1. REMOVED: BTC breakout_vol_atr (20 params, negative contribution Δ SR=-0.03)
-#   2. REMOVED: dead params (w_tsmom, w_basis_carry) — confirmatory mode doesn't read them
-#   3. UNIFIED: SOL/AVAX from tsmom_heavy → default (identical in confirmatory mode)
-#   4. KEPT: BTC btc_enhanced (720h, 30/100) — academic support, +0.38 per-sym SR
-#   5. KEPT: ETH eth_enhanced (OI/FR/Basis) — independent data sources
-#   6. KEPT: LINK tsmom_only — regularization (removes unstable carry)
-#   Parameter reduction: ~85 → ~45 (47% fewer)
+# htf_filter_enabled: true (all symbols)
+# oi_regime_filter_enabled: true (all symbols)
+# oi_regime_lookback: 720, oi_regime_min_pctrank: 0.3
 #
-# STRATEGY SUMMARY:
-#   meta_blend, per-symbol routing (3 meaningful tiers):
-#     BTC:   100% tsmom_carry_v2 btc_enhanced (720h, 30/100) + HTF daily-dominant
-#     ETH:   100% tsmom_carry_v2 eth_enhanced (OI/FR/Basis) + HTF C_hard
-#     SOL/AVAX/BNB/DOGE/ADA: 100% tsmom_carry_v2 default + HTF C_hard
-#     LINK:  100% tsmom_carry_v2 tsmom_only + HTF C_hard
-#   Overlay chain: oi_vol (vol spike protection) → lsr_confirmatory (alpha timing)
-#
-# VALIDATION RESULTS (2026-02-28, extended data 2020-10-01):
-#   Portfolio Sharpe:  3.80  (5.4yr, 7/7 years positive)
-#   Total Return:      +387.1%
-#   CAGR:              +34.0%
-#   Max Drawdown:      -5.0%
-#   Calmar:            6.80
-#   WFA:               8/8 OOS+, avg degradation 27.9%, max 45.2% (LINK)
-#   CPCV (10-split):   PBO avg 3.6%, max 7% — ALL 8/8 PASS
-#                      6/8 symbols have NEGATIVE degradation (OOS > IS)
-#   DSR:               1.42 (p<0.001) → PASS
-#   Cross-Asset LOAO:  robust, avg degradation -0.9%
-#   Monte Carlo:       avg VaR95% = 0.19%
-#   Pre-Deploy:        11 PASS / 3 WARN / 0 FAIL
-#   Kelly:             8/8 PASS, all recommend 25% Kelly
-#
-# ABLATION EVIDENCE (2026-02-28, 5-config study):
-#   A (prod, 5 tiers + breakout):  SR 3.77
-#   B (all default):               SR 3.57 (Δ -0.20)
-#   C (all tsmom_heavy):           SR 3.57 = B (confirms dead params)
-#   D (BTC no breakout, default):  SR 3.66 (Δ -0.11)
-#   E (this config):               SR 3.85 (Δ +0.08) ← BEST
-#   Key finding: BTC breakout is negative alpha (SR 2.02→1.99 when added)
-#   Key finding: BTC 720h lookback is real alpha (+0.38 per-sym SR)
-#
-# DEPLOYMENT:
-#   Replaces: prod_candidate_htf_lsr.yaml in meta_blend_live tmux
-#   Rollback L1: prod_candidate_htf_lsr.yaml (SR=3.77)
-#   Rollback L2: prod_candidate_htf_filter.yaml (SR=2.75)
+# Filter chain: TSMOM signal → HTF filter → OI regime filter → turnover control
 # ═══════════════════════════════════════════════════════════════
 
 market:
@@ -64,7 +23,7 @@ market:
     - AVAXUSDT
     - LINKUSDT
   interval: "1h"
-  start: "2020-10-01"
+  start: "2022-01-01"
   end: null
   market_type: "futures"
 
@@ -107,6 +66,9 @@ strategy:
           position_step: 0.1
           min_change_threshold: 0.05
           htf_filter_enabled: true
+          oi_regime_filter_enabled: true
+          oi_regime_lookback: 720
+          oi_regime_min_pctrank: 0.3
 
   symbol_overrides:
     # ── BTC: 100% tsmom_carry_v2 btc_enhanced (720h, 30/100) + HTF daily-dominant ──
@@ -140,6 +102,9 @@ strategy:
             htf_4h_ema_slow: 100
             htf_no_confirm: 0.7
             htf_4h_only_confirm: 0.3
+            oi_regime_filter_enabled: true
+            oi_regime_lookback: 720
+            oi_regime_min_pctrank: 0.3
 
     # ── ETH: 100% tsmom_carry_v2 eth_enhanced (OI/FR/Basis) + HTF C_hard ──
     # Uses independent derivatives data sources (low overfitting risk)
@@ -173,6 +138,9 @@ strategy:
             position_step: 0.1
             min_change_threshold: 0.05
             htf_filter_enabled: true
+            oi_regime_filter_enabled: true
+            oi_regime_lookback: 720
+            oi_regime_min_pctrank: 0.3
 
     # ── LINK: 100% tsmom_carry_v2 tsmom_only (carry IC unstable) + HTF C_hard ──
     # Removing carry is regularization, not overfitting
@@ -192,6 +160,9 @@ strategy:
             position_step: 0.1
             min_change_threshold: 0.05
             htf_filter_enabled: true
+            oi_regime_filter_enabled: true
+            oi_regime_lookback: 720
+            oi_regime_min_pctrank: 0.3
 
     # SOL, AVAX, BNB, DOGE, ADA → inherit default (no overrides needed)
 

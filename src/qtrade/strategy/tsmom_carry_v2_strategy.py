@@ -371,6 +371,93 @@ def _load_and_align_fr(
         return None
 
 
+def _load_and_align_onchain_indicator(
+    kline_index: pd.DatetimeIndex,
+    data_dir: str | Path = "data",
+    indicator_name: str = "tvl_sc_ratio_mom_30d",
+    mom_window: int = 30,
+) -> Optional[pd.Series]:
+    """
+    載入鏈上 regime 指標並對齊到 kline index（causal forward-fill + shift(1)）
+
+    計算流程：
+    1. 載入 tvl_total + stablecoin_mcap (daily parquet from DeFi Llama)
+    2. 計算 tvl_sc_ratio = tvl / stablecoin_total_mcap
+    3. 計算 mom_30d = tvl_sc_ratio.pct_change(30)
+    4. shift(1) 延遲 1 天（確保因果性：當天數據隔天才用）
+    5. reindex to kline_index with ffill（daily → 1h）
+
+    Args:
+        kline_index: K 線時間索引
+        data_dir: 數據根目錄
+        indicator_name: 指標名（目前支援 tvl_sc_ratio_mom_30d）
+        mom_window: 動量回看天數（預設 30）
+
+    Returns:
+        已對齊到 kline index 的指標 Series，或 None
+    """
+    onchain_dir = Path(data_dir) / "onchain" / "defillama"
+
+    try:
+        # 1. Load TVL total
+        tvl_path = onchain_dir / "tvl_total.parquet"
+        if not tvl_path.exists():
+            logger.warning("onchain_regime: tvl_total.parquet 不存在")
+            return None
+        tvl_df = pd.read_parquet(tvl_path)
+        tvl = tvl_df.iloc[:, 0] if isinstance(tvl_df, pd.DataFrame) else tvl_df
+
+        # 2. Load Stablecoin mcap
+        sc_path = onchain_dir / "stablecoin_mcap.parquet"
+        if not sc_path.exists():
+            logger.warning("onchain_regime: stablecoin_mcap.parquet 不存在")
+            return None
+        sc_df = pd.read_parquet(sc_path)
+        sc_total = sc_df.sum(axis=1)
+
+        # Timezone alignment
+        if tvl.index.tz is None:
+            tvl.index = tvl.index.tz_localize("UTC")
+        if sc_total.index.tz is None:
+            sc_total.index = sc_total.index.tz_localize("UTC")
+
+        # 3. Compute tvl/sc ratio
+        tvl_aligned = tvl.reindex(sc_total.index, method="ffill")
+        ratio = tvl_aligned / sc_total.replace(0, np.nan)
+        ratio = ratio.dropna()
+
+        # 4. Compute momentum
+        indicator = ratio.pct_change(mom_window).dropna()
+
+        if indicator.empty:
+            logger.warning("onchain_regime: indicator is empty after computation")
+            return None
+
+        # 5. shift(1) 延遲 1 天 — 確保因果性
+        # 當天 TVL close 只在當天結束時可用，shift(1) 讓隔天才能用
+        indicator = indicator.shift(1)
+
+        # Timezone alignment with kline_index
+        if kline_index.tz is not None and indicator.index.tz is None:
+            indicator.index = indicator.index.tz_localize(kline_index.tz)
+        elif kline_index.tz is None and indicator.index.tz is not None:
+            indicator.index = indicator.index.tz_localize(None)
+
+        # 6. reindex to kline_index with ffill (daily → 1h, safe for external data)
+        aligned = indicator.reindex(kline_index, method="ffill")
+
+        n_valid = aligned.notna().sum()
+        logger.info(
+            f"onchain_regime: loaded {indicator_name}, "
+            f"{n_valid}/{len(aligned)} valid ({n_valid/len(aligned)*100:.1f}%)"
+        )
+        return aligned
+
+    except Exception as e:
+        logger.warning(f"onchain_regime: 載入失敗: {e}")
+        return None
+
+
 def _load_and_align_oi(
     symbol: str,
     kline_index: pd.DatetimeIndex,
@@ -577,6 +664,62 @@ def generate_tsmom_carry_v2(
         )
 
     # ══════════════════════════════════════════════════
+    # OI Regime Filter (opt-in, default disabled)
+    # Source: Alpha Researcher EDA (2026-02-28)
+    # Result: WEAK GO — F5 (pctrank_720 > 0.3), Δ SR +0.317, 8/8 improved
+    # ══════════════════════════════════════════════════
+    oi_regime_filter_enabled = params.get("oi_regime_filter_enabled", False)
+    if oi_regime_filter_enabled:
+        from .filters import oi_regime_filter
+        oi_series = _load_and_align_oi(ctx.symbol, df.index, data_dir)
+        if oi_series is not None:
+            oi_lookback = int(params.get("oi_regime_lookback", 720))
+            oi_min_pctrank = float(params.get("oi_regime_min_pctrank", 0.3))
+            raw_pos = oi_regime_filter(
+                raw_pos, oi_series,
+                lookback=oi_lookback,
+                min_pctrank=oi_min_pctrank,
+            )
+            logger.info(
+                f"  OI regime filter [{ctx.symbol}]: lookback={oi_lookback}, "
+                f"min_pctrank={oi_min_pctrank}"
+            )
+        else:
+            logger.warning(
+                f"  OI regime filter [{ctx.symbol}]: OI 數據不可用，跳過過濾"
+            )
+
+    # ══════════════════════════════════════════════════
+    # On-Chain Regime Filter (opt-in, default disabled)
+    # Source: Alpha Researcher On-Chain EDA (2026-02-28)
+    # Result: GO — tvl_sc_ratio_mom_30d ≥P30, Δ SR +0.409, 8/8 improved
+    # ══════════════════════════════════════════════════
+    onchain_regime_filter_enabled = params.get("onchain_regime_filter_enabled", False)
+    if onchain_regime_filter_enabled:
+        from .filters import onchain_regime_filter
+        onchain_indicator = _load_and_align_onchain_indicator(
+            df.index, data_dir,
+            indicator_name="tvl_sc_ratio_mom_30d",
+            mom_window=int(params.get("onchain_mom_window", 30)),
+        )
+        if onchain_indicator is not None:
+            onchain_lookback = int(params.get("onchain_pctrank_lookback", 720))
+            onchain_min_pctrank = float(params.get("onchain_min_pctrank", 0.3))
+            raw_pos = onchain_regime_filter(
+                raw_pos, onchain_indicator,
+                lookback=onchain_lookback,
+                min_pctrank=onchain_min_pctrank,
+            )
+            logger.info(
+                f"  On-chain regime filter [{ctx.symbol}]: "
+                f"lookback={onchain_lookback}, min_pctrank={onchain_min_pctrank}"
+            )
+        else:
+            logger.warning(
+                f"  On-chain regime filter [{ctx.symbol}]: 數據不可用，跳過過濾"
+            )
+
+    # ══════════════════════════════════════════════════
     # Turnover 控制
     # ══════════════════════════════════════════════════
     pos = _apply_turnover_control(
@@ -618,6 +761,18 @@ def generate_tsmom_carry_v2(
             _ind["htf"] = "ON" + ("(daily)" if htf_daily_only else "")
         else:
             _ind["htf"] = "OFF"
+
+        # OI regime filter 狀態
+        if oi_regime_filter_enabled:
+            _ind["oi_regime"] = "ON"
+        else:
+            _ind["oi_regime"] = "OFF"
+
+        # On-chain regime filter 狀態
+        if onchain_regime_filter_enabled:
+            _ind["onchain_regime"] = "ON"
+        else:
+            _ind["onchain_regime"] = "OFF"
 
         result.attrs["indicators"] = _ind
     except Exception:

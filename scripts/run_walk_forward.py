@@ -67,17 +67,8 @@ def main():
         else:
             print(f"\nAnalyzing {symbol} [{sym_strategy_name}]...")
         
-        # Resolve data path
-        # Try exact path first (standard structure: data_dir/binance/market_type/interval/symbol.parquet)
-        data_path = Path(cfg.data_dir) / "binance" / cfg.market_type_str / "klines" / f"{symbol}.parquet"
-        if not data_path.exists():
-             # Try without 'klines' (some setups might use interval directly)
-             data_path = Path(cfg.data_dir) / "binance" / cfg.market_type_str / cfg.market.interval / f"{symbol}.parquet"
-        
-        if not data_path.exists():
-             # Fallback: try without binance prefix (legacy?)
-             data_path = Path(cfg.data_dir) / cfg.market_type_str / "klines" / f"{symbol}.parquet"
-
+        # Resolve data path — 使用統一的路徑函數
+        data_path = cfg.resolve_kline_path(symbol)
         
         if not data_path.exists():
             print(f"❌ Data file not found: {data_path}")
