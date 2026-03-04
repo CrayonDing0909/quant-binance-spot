@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-03-03 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-03-04 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >

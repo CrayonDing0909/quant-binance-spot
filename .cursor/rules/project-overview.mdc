@@ -14,12 +14,14 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
 
 ## Production Strategy
 
-- **Active**: HTF Filter v2 + LSR (Simplified) — Meta-Blend 8-Symbol, 3x leverage
+- **Active**: HTF Filter v2 + LSR (Simplified v2) — Meta-Blend **6-Symbol**, 3x leverage
   - **Config**: `config/prod_candidate_simplified.yaml`
+  - **Symbols**: BTC, ETH, SOL, DOGE, AVAX, LINK (removed: ADA, BNB — no IC)
   - **Deployment**: Oracle Cloud, tmux `meta_blend_live`
-  - **Key metrics**: Portfolio SR=3.85, MDD=-3.67%, Calmar=9.39, params -47%
-  - **Launched**: 2026-02-28, observation → 2026-03-14
-- **Rollback**: L1=`prod_candidate_htf_lsr.yaml` (SR=3.77), L2=`prod_candidate_htf_filter.yaml` (SR=2.75)
+  - **Key metrics**: Portfolio SR=3.17 (with vol slippage), Return=+288%, MDD=-4.40%, Calmar=6.48
+  - **Cost model**: funding rate (historical) + volume-based slippage (square-root impact)
+  - **Launched**: 2026-03-04, observation → 2026-03-18
+- **Rollback**: L1=git revert to 8-symbol (SR=3.80), L2=`prod_candidate_htf_lsr.yaml` (SR=3.77)
 - **Shelved**: OI Liq Bounce (Time-in-market=4.2%, code preserved)
 
 ## Signal Convention
