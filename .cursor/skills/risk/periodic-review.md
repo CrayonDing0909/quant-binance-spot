@@ -91,3 +91,38 @@ PYTHONPATH=src python scripts/prod_report.py
 >
 > **Alpha Decay ownership**: Researcher OWNS methodology (formula, thresholds). Risk OWNS action (reduce/flatten). Developer implements.
 > See `.cursor/skills/validation/alpha-decay-governance.md` for full spec.
+
+## Architecture Gap Scan (Monthly)
+
+> **Purpose**: Catch ownerless modules, stale thresholds, and misconfigured gates before they cause production incidents.
+> **Registry**: `.cursor/skills/dev/feature-ownership-registry.md`
+
+### Procedure
+
+Open the Feature Ownership Registry and check **every row** against these conditions:
+
+| Condition | Severity | Action |
+|-----------|----------|--------|
+| Module has no Owner or Owner is "TBD" | **HIGH** | Escalate to user — assign owner before next review |
+| `Last Calibrated` is >60 days ago | **MEDIUM** | Notify the Owner to recalibrate; if no response, escalate to user |
+| A threshold looks unreasonable and no calibration rationale exists | **MEDIUM** | Notify Researcher to validate; document finding |
+| A validation gate always PASS across all symbols and all periods | **LOW** | Likely too lenient — flag for Researcher review |
+| A validation gate always FAIL across all symbols | **HIGH** | Likely misconfigured (alpha decay incident pattern) — escalate immediately |
+| New module exists in code but is not in the registry | **HIGH** | Notify Developer to add it; block next deploy until registered |
+
+### Output Format
+
+In the monthly report, add a section:
+
+```
+## Architecture Gap Scan
+- ARCHITECTURE_GAP [HIGH]: <module> has no owner — assign before next review
+- ARCHITECTURE_GAP [MEDIUM]: <module> last calibrated 75 days ago — notify owner
+- No gaps found ✓
+```
+
+### Escalation
+
+- **HIGH** gaps: Tag the user directly — these are architecture decisions no agent can make alone.
+- **MEDIUM** gaps: Notify the responsible Owner; if unresolved after 1 week, escalate to HIGH.
+- **LOW** gaps: Log in report for awareness; address in next relevant session.
