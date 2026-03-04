@@ -26,7 +26,21 @@ class RedFlag:
     explanation: str  # 可能原因
 
 
-def check_red_flags(stats: Dict) -> List[RedFlag]:
+# ── Default thresholds (overridable via validation.yaml -> red_flags) ──
+DEFAULT_RED_FLAG_THRESHOLDS: Dict[str, float] = {
+    "max_sharpe": 4.0,
+    "min_mdd_pct": 3.0,
+    "max_win_rate": 70.0,
+    "max_profit_factor": 5.0,
+    "min_trades": 30,
+    "max_calmar": 20.0,
+}
+
+
+def check_red_flags(
+    stats: Dict,
+    thresholds: Optional[Dict[str, float]] = None,
+) -> List[RedFlag]:
     """
     檢查回測統計中的紅旗。
 
@@ -41,11 +55,14 @@ def check_red_flags(stats: Dict) -> List[RedFlag]:
             - "Profit Factor" or "profit_factor"
             - "Total Trades" or "total_trades"
             - "Total Return [%]" or "total_return_pct"
+        thresholds: 可選紅旗閾值 dict（來自 validation.yaml -> red_flags）。
+            缺少的 key 自動回退到 DEFAULT_RED_FLAG_THRESHOLDS。
 
     Returns:
         紅旗列表（可能為空 = 無異常）
     """
     flags: List[RedFlag] = []
+    t = {**DEFAULT_RED_FLAG_THRESHOLDS, **(thresholds or {})}
 
     # ── Helper: 取值（支援多種 key 名稱）──
     def _get(primary: str, *alternates: str, default: Optional[float] = None) -> Optional[float]:
@@ -58,74 +75,74 @@ def check_red_flags(stats: Dict) -> List[RedFlag]:
                 return float(v)
         return default
 
-    # ── 1. Sharpe > 4.0 ──
+    # ── 1. Sharpe too high ──
     sharpe = _get("Sharpe Ratio", "sharpe")
-    if sharpe is not None and sharpe > 4.0:
+    if sharpe is not None and sharpe > t["max_sharpe"]:
         flags.append(RedFlag(
             emoji="🚩",
             metric="Sharpe Ratio",
             value=sharpe,
-            threshold="> 4.0",
+            threshold=f"> {t['max_sharpe']}",
             explanation="可能存在 look-ahead bias 或過擬合。"
                         "真實多空策略長期 SR > 4 極為罕見。",
         ))
 
-    # ── 2. MDD < 3% ──
+    # ── 2. MDD too small ──
     max_dd = _get("Max Drawdown [%]", "max_dd_pct")
-    if max_dd is not None and abs(max_dd) < 3.0:
+    if max_dd is not None and abs(max_dd) < t["min_mdd_pct"]:
         flags.append(RedFlag(
             emoji="🚩",
             metric="Max Drawdown",
             value=abs(max_dd),
-            threshold="< 3%",
+            threshold=f"< {t['min_mdd_pct']}%",
             explanation="可能存在 look-ahead bias。"
                         "加密市場波動大，MDD < 3% 極度異常。",
         ))
 
-    # ── 3. Win Rate > 70% ──
+    # ── 3. Win Rate too high ──
     win_rate = _get("Win Rate [%]", "win_rate")
-    if win_rate is not None and win_rate > 70.0:
+    if win_rate is not None and win_rate > t["max_win_rate"]:
         flags.append(RedFlag(
             emoji="🚩",
             metric="Win Rate",
             value=win_rate,
-            threshold="> 70%",
+            threshold=f"> {t['max_win_rate']}%",
             explanation="可能存在信號泄漏或 look-ahead bias。"
                         "趨勢跟蹤策略典型勝率 35-55%。",
         ))
 
-    # ── 4. Profit Factor > 5.0 ──
+    # ── 4. Profit Factor too high ──
     pf = _get("Profit Factor", "profit_factor")
-    if pf is not None and pf > 5.0:
+    if pf is not None and pf > t["max_profit_factor"]:
         flags.append(RedFlag(
             emoji="🚩",
             metric="Profit Factor",
             value=pf,
-            threshold="> 5.0",
+            threshold=f"> {t['max_profit_factor']}",
             explanation="過於完美，可能存在數據問題或過擬合。"
                         "健康策略 PF 通常在 1.2-3.0。",
         ))
 
-    # ── 5. Total Trades < 30（補充：樣本太小） ──
+    # ── 5. Too few trades ──
     trades = _get("Total Trades", "total_trades")
-    if trades is not None and trades < 30:
+    if trades is not None and trades < t["min_trades"]:
         flags.append(RedFlag(
             emoji="⚠️",
             metric="Total Trades",
             value=trades,
-            threshold="< 30",
+            threshold=f"< {int(t['min_trades'])}",
             explanation="交易次數過少，統計推斷不可靠。"
                         "至少需要 30+ trades 才有意義。",
         ))
 
-    # ── 6. Calmar Ratio > 20（補充：異常高 risk-adj return） ──
+    # ── 6. Calmar too high ──
     calmar = _get("Calmar Ratio", "calmar")
-    if calmar is not None and calmar > 20.0:
+    if calmar is not None and calmar > t["max_calmar"]:
         flags.append(RedFlag(
             emoji="🚩",
             metric="Calmar Ratio",
             value=calmar,
-            threshold="> 20",
+            threshold=f"> {t['max_calmar']}",
             explanation="Calmar Ratio 異常高，可能存在 look-ahead bias。"
                         "生產級策略 Calmar 通常 < 10。",
         ))

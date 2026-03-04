@@ -3,7 +3,7 @@
 > **Last updated**: 2026-03-03 (修正歸檔腳本 ghost references)
 
 本文件定義多策略組合的治理規則：新策略如何納入、何時替換、如何決定 meta_blend vs. 獨立 Runner。
-與 `R3C_SYMBOL_GOVERNANCE_SPEC.md`（幣種層級治理）互補，本文件聚焦**策略層級**治理。
+與幣種層級治理互補（原 `R3C_SYMBOL_GOVERNANCE_SPEC.md` 已歸檔至 `docs/archive/`，當前 symbol governance 由 Feature Ownership Registry 管理），本文件聚焦**策略層級**治理。
 
 ---
 

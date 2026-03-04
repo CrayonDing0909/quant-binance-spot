@@ -52,7 +52,11 @@ prado_methods:
 # Consistency Check
 # ══════════════════════════════════════════════════════════════════════════════
 consistency:
-  enabled: false  # 預設關閉（需要 live 交易紀錄）
+  # disabled pre-deployment: 此檢查需要 live 交易紀錄，僅在部署後 14+ 天有 live data 時才啟用。
+  # 在 observation period review 時手動啟用：
+  #   PYTHONPATH=src python scripts/validate_live_consistency.py -c config/prod_candidate_simplified.yaml -v
+  # 參見 .cursor/skills/validation/pipeline.md Step 9
+  enabled: false
   days: 7         # 回看天數
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -138,6 +142,19 @@ alpha_decay:
   max_decay_pct: 0.6          # Gate B: 60% decay 上限（小分母模式用絕對差）
   max_critical_alerts: 2      # Gate C: 容許 2 個幣種有暫時性問題
   min_ic_denominator: 0.01    # 小分母保護：|historical_ic| < 此值時改用絕對差
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Red Flags（回測異常指標檢測）
+# ══════════════════════════════════════════════════════════════════════════════
+# 觸發時不代表策略一定有問題，但需要深入審查。
+# Owner: Quant Researcher（定義門檻） → Developer（實作） → Researcher（審查）
+red_flags:
+  max_sharpe: 4.0           # SR > 4.0 → 極度可疑（look-ahead / overfitting）
+  min_mdd_pct: 3.0          # MDD < 3% → 可能 look-ahead bias
+  max_win_rate: 70.0        # 勝率 > 70% → 可能信號洩漏
+  max_profit_factor: 5.0    # PF > 5.0 → 過於完美
+  min_trades: 30            # 交易 < 30 → 統計推斷不可靠
+  max_calmar: 20.0          # Calmar > 20 → 異常高 risk-adj return
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Thresholds (驗證閾值)

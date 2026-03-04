@@ -101,3 +101,20 @@ When auditing a `meta_blend` strategy:
 | **Ablation validation** | Pure A, Pure B, A+B comparison | Blend Sharpe >= max(Pure A, Pure B) or MDD significantly improved |
 
 > **Double-delay is the most common fatal issue**: BTC Sharpe once dropped from 1.18 to 0.50 due to this. Always verify `auto_delay` setting.
+
+## Step 6: Observation Period Contract
+
+Before any deployment, the Risk Manager MUST define:
+
+1. **Observation duration** (default: 14 days)
+2. **PASS/FAIL criteria** (see Periodic Review → Observation Period Gate for standard metrics)
+3. **Rollback plan** (L1 and L2 fallback configs)
+4. **Review date** (explicit calendar date)
+
+Record these in:
+- The config file header (human-readable comment)
+- `project-overview.mdc` (Production Strategy section)
+
+Without a pre-defined observation contract, the deployment is NOT approved.
+
+> See `.cursor/skills/risk/periodic-review.md` → "Observation Period Gate" for the full PASS/FAIL table and procedures.

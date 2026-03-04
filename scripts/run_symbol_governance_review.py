@@ -15,7 +15,8 @@ Usage:
     # Inject metrics from JSON file (for testing / backfill)
     python scripts/run_symbol_governance_review.py -c config/prod_candidate_R3C_universe.yaml --metrics-file metrics.json --dry-run
 
-Spec: docs/R3C_SYMBOL_GOVERNANCE_SPEC.md
+Spec: docs/archive/R3C_SYMBOL_GOVERNANCE_SPEC.md (archived — R3C retired)
+Current symbol governance: manual IC analysis, tracked in Feature Ownership Registry
 """
 from __future__ import annotations
 

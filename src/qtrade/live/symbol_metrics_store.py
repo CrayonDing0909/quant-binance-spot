@@ -20,7 +20,7 @@ class SymbolMetrics:
     """
     某 symbol 在 4 週滾動窗口的治理指標
 
-    所有欄位定義見 R3C_SYMBOL_GOVERNANCE_SPEC.md §4-5
+    所有欄位定義見 docs/archive/R3C_SYMBOL_GOVERNANCE_SPEC.md §4-5 (archived)
     """
     symbol: str
 

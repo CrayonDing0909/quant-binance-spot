@@ -54,12 +54,18 @@ PYTHONPATH=src python scripts/validate.py -c config/<cfg>.yaml --full
 - Overlay mode + params consistent across config, backtest path, live path?
 - If component claims to replace overlay → require 3-way ablation data
 
-### 9. Pre-Deploy Consistency Check (MANDATORY gate)
+### 9. Pre-Deploy Consistency Check (MANDATORY — **post-deployment**)
+
+> **Note**: This check requires live trade records, which only exist after deployment.
+> It is NOT a pre-deployment gate — it becomes mandatory **after the observation period warmup** (14+ days of live data).
+> During pre-deployment validation, this step is skipped (`consistency.enabled: false` in `validation.yaml`).
+
 ```bash
-PYTHONPATH=src python scripts/validate_live_consistency.py -c config/research_<name>.yaml
+# Run after 14+ days of live data:
+PYTHONPATH=src python scripts/validate_live_consistency.py -c config/prod_candidate_simplified.yaml -v
 ```
 - Backtest/live path consistency: config passthrough, strategy context, signal consistency, overlay consistency
-- **Must PASS before GO_NEXT — no exceptions**
+- **Must PASS during observation period review** — if FAIL, investigate signal mismatch before promoting to production
 
 ### 10. Alpha Decay Check (V10)
 

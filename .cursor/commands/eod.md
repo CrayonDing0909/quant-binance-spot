@@ -52,7 +52,7 @@ PYTHONPATH=src python scripts/gen_data_strategy_catalog.py
 |---------|--------------|
 | 策略程式碼 (`src/qtrade/strategy/`) | `docs/R3C_STRATEGY_OVERVIEW.md` |
 | 驗證/回測流程 (`src/qtrade/validation/`, `src/qtrade/backtest/`) | `docs/STRATEGY_DEV_PLAYBOOK_R2_1.md` |
-| Symbol governance (`src/qtrade/live/symbol_governance.py`) | `docs/R3C_SYMBOL_GOVERNANCE_SPEC.md` |
+| Symbol governance (`src/qtrade/live/symbol_governance.py`) | `docs/archive/R3C_SYMBOL_GOVERNANCE_SPEC.md` (archived; current governance in Feature Ownership Registry) |
 | 策略組合工具 (`scripts/compare_strategies.py`, `scripts/generate_blend_config.py`) | `docs/STRATEGY_PORTFOLIO_GOVERNANCE.md` |
 | Agent 定義 (`.cursor/agents/`) 或 handoff 流程 | `docs/CURSOR_WORKFLOW.md` |
 | 新增 `docs/` 下的 living doc | `.cursor/rules/hygiene.mdc` 的 Living docs 表 |

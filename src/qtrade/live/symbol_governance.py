@@ -1,7 +1,8 @@
 """
 Symbol Governance — Negative Edge Filter with Kill-List / Quarantine
 
-Spec: docs/R3C_SYMBOL_GOVERNANCE_SPEC.md
+Spec: docs/archive/R3C_SYMBOL_GOVERNANCE_SPEC.md (archived — R3C retired)
+Current symbol governance: manual IC analysis, tracked in Feature Ownership Registry
 
 State machine:
     active  ─(degrade)──▶  deweighted  ─(persist)──▶  quarantined

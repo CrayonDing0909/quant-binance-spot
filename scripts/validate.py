@@ -106,6 +106,9 @@ class ValidationConfig:
     alpha_decay_max_critical_alerts: int = 2
     alpha_decay_min_ic_denominator: float = 0.01
 
+    # Red Flags thresholds (from validation.yaml -> red_flags)
+    red_flags_thresholds: Optional[Dict[str, float]] = None
+
     # Market Regimes (for regime analysis)
     market_regimes: List[dict] = None
 
@@ -145,6 +148,7 @@ def load_validation_config(config_path: Optional[str]) -> ValidationConfig:
         holdout = data.get("holdout_oos", {})
         alpha_decay = data.get("alpha_decay", {})
         embargo_raw = data.get("data_embargo", {})
+        red_flags_raw = data.get("red_flags", {})
         
         # DSR n_trials: 優先使用 trial_registry.cumulative_n_trials（真實多重測試數）
         trial_reg = data.get("trial_registry", {})
@@ -190,6 +194,7 @@ def load_validation_config(config_path: Optional[str]) -> ValidationConfig:
             alpha_decay_max_decay_pct=alpha_decay.get("max_decay_pct", 0.6),
             alpha_decay_max_critical_alerts=alpha_decay.get("max_critical_alerts", 2),
             alpha_decay_min_ic_denominator=alpha_decay.get("min_ic_denominator", 0.01),
+            red_flags_thresholds=red_flags_raw if red_flags_raw else None,
             market_regimes=data.get("market_regimes", []),
             embargo_holdout_enabled=embargo_holdout_enabled,
             embargo_holdout_max_degradation=embargo_temporal.get("max_degradation", 0.5),
@@ -1961,7 +1966,7 @@ def main():
                     cfg.strategy.name, data_dir=cfg.data_dir,
                 )
                 stats = bt_res.pf.stats()
-                flags = check_red_flags(stats)
+                flags = check_red_flags(stats, thresholds=val_cfg.red_flags_thresholds)
                 if flags:
                     print(f"\n  {symbol}:")
                     for flag in flags:

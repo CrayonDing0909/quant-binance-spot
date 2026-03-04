@@ -202,9 +202,8 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |
 | [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
-| [`R3C_SYMBOL_GOVERNANCE_SPEC.md`](docs/R3C_SYMBOL_GOVERNANCE_SPEC.md) | R3C Symbol Governance Spec |
 | [`RESEARCH_LITERATURE.md`](docs/RESEARCH_LITERATURE.md) | > **Last updated**: 2026-03-02 |
 | [`STRATEGY_DEV_PLAYBOOK_R2_1.md`](docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) | Strategy Development Playbook (R2.1) |
 | [`STRATEGY_PORTFOLIO_GOVERNANCE.md`](docs/STRATEGY_PORTFOLIO_GOVERNANCE.md) | 策略組合治理規範 (Strategy Portfolio Governance) |
 
-> **Archive**: 4 historical docs in `docs/archive/`.
+> **Archive**: 5 historical docs in `docs/archive/`.

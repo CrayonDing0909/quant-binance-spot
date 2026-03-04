@@ -40,6 +40,21 @@ PYTHONPATH=src python scripts/validate_live_consistency.py \
   -c config/prod_candidate_simplified.yaml -v
 ```
 
+### Step 6: Live vs Backtest Drift Check (after 14+ days of live data)
+
+```bash
+# Compare live PnL against same-period backtest replay
+# Threshold: live SR / backtest SR < 0.30 → trigger strategy review
+# Reference: STRATEGY_PORTFOLIO_GOVERNANCE.md R2
+PYTHONPATH=src python scripts/trade_review.py \
+  -c config/prod_candidate_simplified.yaml --days 28 --with-replay
+```
+
+If deviation exceeds threshold, escalate per governance doc:
+1. Risk Manager flags WARNING
+2. Quant Researcher re-runs validation with latest data
+3. Decision: KEEP / REDUCE_WEIGHT / RETIRE
+
 ### Weekly Warning Thresholds
 
 | Metric | Warning Line | Action |
@@ -126,3 +141,61 @@ In the monthly report, add a section:
 - **HIGH** gaps: Tag the user directly — these are architecture decisions no agent can make alone.
 - **MEDIUM** gaps: Notify the responsible Owner; if unresolved after 1 week, escalate to HIGH.
 - **LOW** gaps: Log in report for awareness; address in next relevant session.
+
+## Observation Period Gate
+
+> **Purpose**: Every new deployment has an observation period with pre-defined PASS/FAIL criteria.
+> Without this, the "promote or rollback" decision becomes subjective.
+
+### When to Run
+
+At the end of every observation period (typically 14 days after deployment). The observation end date is recorded in `project-overview.mdc` and the config header.
+
+### PASS/FAIL Criteria
+
+| Metric | PASS | FAIL |
+|--------|------|------|
+| Live cumulative PnL | >= -5% (tolerate small loss during ramp) | < -5% |
+| Live vs backtest signal consistency | >= 90% match rate | < 90% |
+| Runner uptime | >= 95% | < 95% |
+| Circuit breaker triggered | 0 times | >= 1 time |
+| Critical exceptions (order failures, data gaps) | < 5 total | >= 5 |
+
+### How to Check
+
+```bash
+source .venv/bin/activate
+
+# 1. Live PnL — check Binance account or paper broker state
+PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_simplified.yaml trades
+
+# 2. Signal consistency — replay last 14 days
+PYTHONPATH=src python scripts/validate_live_consistency.py \
+  -c config/prod_candidate_simplified.yaml -v
+
+# 3. Runner uptime + exceptions — check health reports
+PYTHONPATH=src python scripts/health_check.py \
+  -c config/prod_candidate_simplified.yaml --real
+
+# 4. After 14+ days of live data, run full consistency check (Pipeline Step 9)
+#    This is MANDATORY post-deployment — not a pre-deployment gate.
+#    If FAIL → investigate signal mismatch before promoting to production.
+PYTHONPATH=src python scripts/validate_live_consistency.py \
+  -c config/prod_candidate_simplified.yaml -v --days 14
+```
+
+### Decision
+
+- **All PASS**: Promote to production. Update `project-overview.mdc` status.
+- **Any FAIL**: Rollback. Levels:
+  - L1: git revert to previous config (e.g., 8-symbol baseline)
+  - L2: fallback config (e.g., `prod_candidate_htf_lsr.yaml`)
+- **Borderline (1 metric barely FAIL)**: Extend observation by 7 days, then re-check.
+
+### Current Observation
+
+- **Config**: `prod_candidate_simplified.yaml` (6-symbol, 3x leverage)
+- **Start**: 2026-03-04
+- **End**: 2026-03-18
+- **Rollback L1**: git revert to 8-symbol (SR=3.80)
+- **Rollback L2**: `prod_candidate_htf_lsr.yaml` (SR=3.77)

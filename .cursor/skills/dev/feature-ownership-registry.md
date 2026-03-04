@@ -30,7 +30,7 @@ alwaysApply: false
 | Cost Stress Test | Quant Researcher | Quant Developer | Researcher: evaluate cost sensitivity | — | `validation.yaml` → `cost_stress` | Per validation run | 2026-03-02 |
 | Delay Stress Test | Quant Researcher | Quant Developer | Researcher: evaluate timing fragility | — | `validation.yaml` → `delay_stress` | Per validation run | 2026-03-02 |
 | Holdout OOS Test | Quant Researcher | Quant Developer | Researcher: check IS/OOS degradation | — | `validation.yaml` → `holdout_oos` | Per validation run | 2026-03-02 |
-| Red Flags | Quant Researcher | Quant Developer | Researcher: deep investigation required | — | Hardcoded in `src/qtrade/validation/red_flags.py` | Per validation run | 2026-03-02 |
+| Red Flags | Quant Researcher | Quant Developer | Researcher: deep investigation required | — | `validation.yaml` → `red_flags` (fallback: defaults in `red_flags.py`) | Per validation run | 2026-03-04 |
 | Regime Analysis | Quant Researcher | Quant Developer | Researcher: check bear/bull/sideways split | — | `validation.yaml` → `market_regimes` | Per validation run | 2026-03-02 |
 | Data Embargo | Quant Researcher | Quant Developer | Block research run if embargo violated | — | `validation.yaml` → `data_embargo` | Monthly (update cutoff) | 2026-03-02 |
 
