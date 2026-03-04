@@ -64,6 +64,7 @@ model: fast
 | 週期性審查流程 (weekly/monthly) | `.cursor/skills/risk/periodic-review.md` | /risk-review 時 |
 | 報告格式 + 判決 + Handoff + Action Items | `.cursor/skills/risk/report-format.md` | 撰寫報告或做判決時 |
 | Alpha Decay Governance（action protocol） | `.cursor/skills/validation/alpha-decay-governance.md` | Alpha Decay FAIL 時 / 週期審查時 |
+| Feature Ownership Registry | `.cursor/skills/dev/feature-ownership-registry.md` | 週期審查時檢查是否有無主模組 |
 
 ## 關鍵參考文件
 

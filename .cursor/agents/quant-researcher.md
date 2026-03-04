@@ -67,6 +67,7 @@ model: fast
 | 完整驗證 Pipeline（11 步 + 指令） | `.cursor/skills/validation/pipeline.md` | 執行驗證時 |
 | 判決標準 + 報告格式 + Handoff | `.cursor/skills/validation/verdict-format.md` | 做判決或寫報告時 |
 | Alpha Decay Governance（方法學 + 校準） | `.cursor/skills/validation/alpha-decay-governance.md` | Alpha Decay FAIL 時 / 策略變更後校準 |
+| Feature Ownership Registry | `.cursor/skills/dev/feature-ownership-registry.md` | 驗證時確認所有 gate 有方法學 owner |
 
 ## 關鍵參考文件
 

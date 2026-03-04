@@ -70,6 +70,7 @@
 | Binance API 注意事項 | `.cursor/skills/dev/binance-api-gotchas.md` | 修改 broker/API 代碼時 |
 | 工具鏈完整性 | `.cursor/skills/dev/toolchain-integrity-checklist.md` | 回測/驗證前自查 |
 | Alpha Decay Governance | `.cursor/skills/validation/alpha-decay-governance.md` | 修改 ic_monitor / validate.py alpha_decay 時 |
+| Feature Ownership Registry | `.cursor/skills/dev/feature-ownership-registry.md` | 新增模組時，必須加入 registry 才算完成 |
 
 ## Config 凍結（Research → Production）
 
