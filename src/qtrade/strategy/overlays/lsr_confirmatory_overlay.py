@@ -94,7 +94,7 @@ def _compute_oi_confirm(
         return np.zeros(n, dtype=float)
 
     oi_aligned = oi_series.reindex(index, method="ffill")
-    oi_rising = oi_aligned.pct_change(oi_change_window) > 0
+    oi_rising = oi_aligned.pct_change(oi_change_window, fill_method=None) > 0
     # NaN → 0（不確認）
     return oi_rising.fillna(False).astype(float).values
 

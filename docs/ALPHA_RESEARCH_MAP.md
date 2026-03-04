@@ -1,4 +1,4 @@
-> **Last updated**: 2026-03-02 (Orderflow Composite standalone **FAIL**: taker_vol_ratio proxy 1h IC=+0.003 太弱, pre-cost SR=0.378, avg MDD=-55.5%. 但 corr(TSMOM)=-0.023 極低 → 如有更強 OFI signal 仍有組合潛力)
+> **Last updated**: 2026-03-05 (Production 6-Symbol deploy 2026-03-04, observation → 2026-03-18. ADA/BNB removed (no IC), ETH simplified, vol-based slippage enabled. Portfolio SR=3.17 realistic cost)
 
 # Alpha 研究地圖 (Alpha Research Map)
 
@@ -14,7 +14,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 當前生產組合已捕捉的 alpha 維度、覆蓋品質、以及尚未填補的缺口。
 
-**生產策略**：HTF Filter v2 + LSR — Meta-Blend 8-Symbol + HTF Filter + LSR Confirmatory Overlay, 3x leverage
+**生產策略**：HTF Filter v2 + LSR (Simplified v2) — Meta-Blend **6-Symbol** (BTC, ETH, SOL, DOGE, AVAX, LINK) + HTF Filter + LSR Confirmatory Overlay, 3x leverage
 **Satellite 策略**：無（OI Liq Bounce v4.2 已 SHELVED 2026-02-27，insight 轉為 oi_cascade overlay）
 
 | # | Alpha 維度 | 信號來源 | 生產策略/組件 | 覆蓋品質 | 缺口/機會 |
@@ -40,6 +40,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 19 | Macro Cross-Market Regime | GLD/VIX/DXY daily (yfinance) | EDA GO → Ablation **KEEP_BASELINE** (20260301) | ★★★★☆ 強 | **KEEP_BASELINE**: B(Macro only) SR=2.525 > A(HTF) SR=2.413 (+4.6%, 7/8✅), C(HTF+Macro) SR=2.177 (-9.8%, 0/8✅)。Standalone borderline (+4.6% < 5%), stacking severely degrades。同 OI/On-chain 的 over-filter 模式。Code preserved, 觀察期後(3/14)可評估 HTF 替換 |
 | 20 | Entropy Regime (PE/SE/ApEn) | 1h OHLCV close (已有數據) | ✅ EDA → **FAIL** (20260302) | ❌ 無效 | 7/7 entropy 全通過 confounding (|corr(vol)|<0.2)，但所有 IC<0.01 (A5 FAIL)。最強 pe_720 avg IC=-0.0024。Binary filter 3/8 improved。加密 1h 序列 entropy 無預測力。方向關閉 |
 | 21 | Orderflow Composite Standalone | taker_vol_ratio → OFI+VPIN+CVD | ✅ EDA+Backtest → **FAIL** (20260302) | ❌ 無效 | **首次獨立策略嘗試（非 filter/overlay）**。corr(TSMOM)=-0.023（極低，最佳分散化候選）。但 IC(24h)=+0.003 太弱，pre-cost SR=0.378, MDD=-55.5%。Post-cost SR 深度負值（年交易成本 ~143% >> 回報 ~5.7%）。taker_vol_ratio 1h proxy 不含足夠 alpha 支撐獨立策略 |
+| 22 | Tick-level Avg Trade Size | aggTrades → total_vol/num_trades | ✅ EDA → **WEAK GO** (20260305) | ★★★☆☆ 中 | **avg_trade_size IC=-0.030** (7/8 same sign, A5 PASS)。corr(TSMOM)=0.04, corr(ATR)=0.25（正交）。A1 4/7 FAIL（2022/2025/2026 弱正）。Alpha 不在 OFI 方向而在 trade SIZE（whale distribution）。OFI 衍生特徵全 FAIL (IC<0.01) → Handoff Quant Dev ablation |
 
 ### 維度覆蓋摘要
 
@@ -51,7 +52,8 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 - **已測試 KEEP_BASELINE（★★★★）**：鏈上 regime（On-chain only SR=4.00 > HTF SR=3.80, 全 gate PASS，但增量 borderline +5.3%，觀察期內不替換）、Macro Cross-Market Regime（B(Macro) SR=2.525 > A(HTF) SR=2.413 +4.6% 7/8✅，但 C(HTF+Macro) SR=2.177 -9.8%。Standalone borderline, stacking over-filters）
 - **已確認 VP 全線無效**：傳統 VP S/R（POC dist, VA pos, VP skew）IC<0.01。唯一有效信號 va_width_pct 本質是 vol regime proxy，ablation 確認無超越 vol 的增量。整個 VP 研究方向關閉
 - **已確認 Entropy 無效（★☆☆☆☆）**：PE/SE/ApEn 3 種 entropy × 3 lookbacks = 9 指標。Confounding OK (|corr(vol)|<0.2)，但所有 IC<0.01。加密 1h 序列太接近 random walk，entropy 微小波動不含有用信息
-- **已確認 Orderflow Composite 獨立策略無效（★☆☆☆☆）**：taker_vol_ratio 1h proxy → OFI+VPIN+CVD 組合。corr(TSMOM)=-0.023（歷來最佳分散化），但 IC=+0.003 太弱，pre-cost SR=0.378，交易成本遠超 alpha。taker_vol_ratio proxy 解析度不足，需真正的 aggTrades OFI 或更高頻數據
+- **已確認 Orderflow Composite 獨立策略無效（★☆☆☆☆）**：taker_vol_ratio 1h proxy → OFI+VPIN+CVD 組合。corr(TSMOM)=-0.023（歷來最佳分散化），但 IC=+0.003 太弱，pre-cost SR=0.378，交易成本遠超 alpha。taker_vol_ratio proxy 解析度不足
+- **Tick OFI direction 確認無效，但 avg_trade_size WEAK GO（★★★）**：tick-level OFI IC=-0.011（僅 2x proxy），所有 OFI 衍生特徵 IC<0.01。但 avg_trade_size IC=-0.030（5x proxy），corr(TSMOM)=0.04（完全正交），7/8 same sign → 鯨魚交易行為是真正的 microstructure alpha
 - **已測試 KEEP_BASELINE（★★★）**：VPIN regime（B(VPIN only) SR 3.98 +3.5% **7/8**✅ — 歷史第二強 standalone。C(HTF+VPIN) SR 3.80 -1.2% 4/8 — 正交性減輕 over-filter 但仍無法克服。Code preserved, pipeline 已建）
 - **未覆蓋（空白缺口）**：Order Book
 
@@ -115,7 +117,8 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 1h OHLCV | Volume Profile va_width_pct (VA 寬度) | ✅ 是 (EDA 20260228 + Ablation 20260301) | ❌ **FAIL**: IC=+0.024 但 corr(vol)=0.71。Ablation: VP gate SR=3.23 > Vol gate SR=2.92 (7/8 wins) 但兩者都劣於 baseline SR=3.62。VP 是 vol proxy，無增量 alpha | 方向關閉 |
 | 1h OHLCV close | Entropy regime (PE/SE/ApEn) | ✅ 是 (20260302 EDA) | ❌ **FAIL**: 全部 IC<0.01, confounding OK (|corr(vol)|<0.2) 但無預測力 | 方向關閉 |
 | aggTrades (tick) | VPIN (Volume-Sync Probability Informed Trading) | ✅ 是 (EDA+Ablation 20260302) | **KEEP_BASELINE**: EDA IC=0.005, corr(ATR)=0.025 (完全正交!)。Ablation: B(VPIN only) SR 3.98 +3.5% 7/8✅, C(HTF+VPIN) SR 3.80 -1.2% 4/8。正交性減輕 over-filter(-1.2% vs macro -9.8%) 但仍不足 | Pipeline built: `agg_trades.py`. Code preserved (`vpin_regime_filter()` in `filters.py`) |
-| aggTrades (tick) | OFI (Order Flow Imbalance) — tick-level 版 | ⚠️ 數據已就緒（未 EDA） | — | Cont et al. 2014。數據已在 `aggtrades_agg/*_ofi.parquet`。taker_vol_ratio proxy 版 OFI 已測試 FAIL（IC=+0.003），tick-level OFI 可能更強但需單獨驗證 |
+| aggTrades (tick) | OFI (Order Flow Imbalance) — tick-level 版 | ✅ 是 (20260305 EDA) | ❌ **FAIL**: 所有 OFI 衍生特徵 IC<0.01 | Cont et al. 2014。tick-level OFI IC=-0.011 (2x proxy -0.006) 但仍 <0.01。ofi_mom/cum/zscore 全 FAIL。**Alpha 不在 flow direction 而在 trade size** |
+| aggTrades (tick) | avg_trade_size (whale detection) | ✅ 是 (20260305 EDA) | **WEAK GO**: IC=-0.030, 7/8 same sign, corr(TSMOM)=0.04 | **最強 aggTrades 特徵**。Higher avg trade size → lower future returns (smart money distribution)。A1 4/7 FAIL。→ Handoff Quant Dev ablation |
 | GLD daily (yfinance) | GLD_mom_60d risk-off filter | ✅ 是 (20260301 EDA) | **GO**: IC=-0.049, 8/8 same sign, 5/5 gates, corr(BTC_mom)=0.125, corr(TVL)=0.034 | → Handoff Quant Dev as Filter |
 | VIX daily (yfinance) | VIX_mom_30d contrarian recovery | ✅ 是 (20260301 EDA) | **GO**: IC=+0.043, **8/8 years consistent**, corr(GLD)=0.053(正交!) | → Combined with GLD as Macro Regime Filter |
 | DXY daily (yfinance) | DXY_mom_90d dollar strength | ✅ 是 (20260301 EDA) | **WEAK GO**: IC=-0.040, 5/8 years consistent, corr(BTC_mom)=0.33 偏高 | 候補（DXY 與 BTC momentum 較冗餘） |
@@ -148,7 +151,7 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 **門檻**：總分 < 2.5 不啟動深入研究。最高候選分數 < 3.0 時，「本週期不研究」是合理選項。
 
-### 當前排序（2026-03-02）
+### 當前排序（2026-03-05）
 
 | # | 研究方向 | 目標缺口 | 整合模式 | 分散化 | 數據 | Alpha | 複雜度 | 文獻 | **總分** | 備註 |
 |---|---------|---------|---------|:------:|:----:|:-----:|:------:|:----:|:--------:|------|
@@ -171,13 +174,13 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 
 ### 建議下一步研究（Top 3）
 
-1. **Filter Replacement 框架**（全新方向）— 所有 4 個 filter (OI/On-chain/Macro/VPIN) 疊加 HTF 都退化，但 standalone 均優於 HTF baseline (OI +6.7%, On-chain +5.3%, Macro +4.6%, VPIN +3.5%)。問題不是 signal redundancy 而是 gate math（多重 gate 降低 time-in-market）。**下一步：用最強的 standalone signal 完全替換 HTF**，而非疊加。觀察期(→2026-03-14)後統一評估。
-2. **Tick-level OFI Standalone**（修正版）— taker_vol_ratio proxy FAIL，但 aggTrades tick-level OFI 數據已就緒（`*_ofi.parquet`）。真正逐筆 OFI (Cont 2014) 的資訊量遠高於 hourly ratio proxy。corr(TSMOM) 極低 → 如 IC 足夠，是最佳組合候選。需 EDA 驗證 tick OFI 是否比 proxy 更強。
+1. **avg_trade_size Filter/Overlay Ablation**（#22 WEAK GO → Quant Dev）— IC=-0.030（歷來 aggTrades 最強），corr(TSMOM)=0.04（幾乎完全正交），7/8 same sign。Alpha 在 trade SIZE 而非 OFI direction。**關鍵發現：tick OFI IC 僅微幅提升（-0.011 vs proxy -0.006），但 avg_trade_size IC 是 5x（-0.030）**。A1 4/7 是唯一弱點。需 ablation: A(HTF only), B(avg_trade_size only), C(HTF+avg_trade_size)。
+2. **Filter Replacement 框架**（觀察期後 →2026-03-18）— 所有 4 個 filter (OI/On-chain/Macro/VPIN) + avg_trade_size 疊加 HTF 都退化，但 standalone 均優於 HTF baseline。問題是 gate math（多重 gate 降低 time-in-market）。**下一步：用最強的 standalone signal 完全替換 HTF**，而非疊加。
 3. **retail_vs_top LSR standalone**（#3, 3.3 分）— IC 最強但需解決 2026 翻轉 + 換手率。
 
-> **觀察**: Orderflow Composite 是首次嘗試建立**獨立策略**（而非 filter/overlay），方向正確。corr(TSMOM)=-0.023 證實微結構維度與 TSMOM 幾乎正交。失敗原因是數據解析度：taker_vol_ratio 是小時級聚合比率，大量 tick-level 信息在聚合時丟失。下一步應測試 aggTrades 的 tick-level OFI，或更高頻 (5m/15m) 信號 + 降頻入場。
+> **關鍵洞察（20260305 Tick OFI EDA）**: 經過 6 輪 microstructure 研究（proxy OFI, VPIN, Entropy, Orderflow Composite, VP, **tick OFI**），最終發現 alpha 不在 order flow **方向** (OFI/CVD) 而在 order flow **結構** (avg_trade_size)。tick-level OFI 僅比 proxy 好 2x (IC -0.011 vs -0.006)，仍不足 A5 門檻。但 avg_trade_size（total_vol/num_trades = 鯨魚偵測）IC=-0.030，是所有 microstructure 信號中最強且與 TSMOM 完全正交。
 >
-> 此外，OI (+6.7%)、On-chain (+5.3%)、Macro (+4.6%) 三者 standalone 均優於 HTF，但均未跨 5% threshold，且疊加會 over-filter。這暗示 HTF filter 的功能可能被更精確的單一信號替代，但需要 "filter replacement" 而非 "filter stacking" 的研究框架。觀察期(→3/14)後可統一評估。
+> OI (+6.7%)、On-chain (+5.3%)、Macro (+4.6%) 三者 standalone 均優於 HTF，但均未跨 5% threshold，且疊加會 over-filter。這暗示 HTF filter 的功能可能被更精確的單一信號替代，但需要 "filter replacement" 而非 "filter stacking" 的研究框架。觀察期(→3/18)後可統一評估。
 
 ### 未來 Backlog（非緊急）
 
@@ -280,3 +283,4 @@ Alpha Researcher **開始任何新研究前必讀**的結構化知識庫。
 | 2026-03-02 | **VPIN Regime EDA (WEAK GO)**: aggTrades pipeline 建完 + 8 symbols 2020-2026。**Confounding OUTSTANDING**: corr(VPIN, ATR_pctrank)=0.025 (歷來最佳)。IC=0.005 (<0.01 A5 FAIL), 7/8 same sign (A3 PASS), vpin_delta_6 6/7yr (A1 PASS)。Quintile Q1 SR=1.85 vs Q5 SR=0.87。Filter P70: ΔSR +0.12, 6/8✅。VPIN IC < ATR IC，但完全正交。**5/6 gates PASS → WEAK GO**。正交性使 HTF+VPIN 疊加可能不重蹈 over-filter 覆轍 → Handoff Quant Dev ablation | Alpha Researcher |
 | 2026-03-02 | **VPIN Regime Filter Ablation (KEEP_BASELINE)**: 3-way ablation A(HTF only)=SR 3.846, B(VPIN only)=SR 3.980(+3.5%, **7/8**✅), C(HTF+VPIN)=SR 3.798(-1.2%, 4/8)。**正交性假設部分驗證**：VPIN ⊥ vol 確實減輕 stacking 退化（-1.2% vs macro -9.8%），但仍無法完全消除。**所有 4 個 filter (OI/On-chain/Macro/VPIN) standalone 均優於 HTF 但 stacking 均退化** → 問題是 gate math（多重 gate 降低 time-in-market）而非 signal redundancy。Code preserved, pipeline built。Configs archived | Quant Developer |
 | 2026-03-02 | **Orderflow Composite Standalone Strategy (FAIL)**: 首次嘗試獨立策略（非 filter/overlay）。taker_vol_ratio 1h proxy → OFI+VPIN+CVD 3-signal composite。**正面發現：corr(TSMOM)=-0.023**（歷來所有研究中最低，證實微結構 ⊥ TSMOM）。**負面：IC(24h)=+0.003 太弱**（A5 FAIL），pre-cost SR=0.378，MDD=-55.5%。Contrarian mode 8/8 positive SR（fade the flow 方向正確）。Threshold positioning 降 turnover 63%（~5,500 trades/sym/4yr）仍不足（年化成本 ~143% >> alpha ~5.7%）。**根因：taker_vol_ratio 小時級聚合丟失 tick 信息**，非策略邏輯問題。Strategy code preserved (`orderflow_composite_strategy.py`)，script+config archived。研究前沿更新：tick-level OFI（數據已就緒）替代 proxy 版為下一步 | Alpha Researcher |
+| 2026-03-05 | **Tick-level OFI EDA (#22 WEAK GO)**: 8 symbols, aggTrades 2020-2026。**關鍵發現：alpha 不在 OFI direction 而在 trade SIZE**。avg_trade_size IC=-0.030 (7/8 same sign, corr(TSMOM)=0.04, corr(ATR)=0.25)。所有 OFI 衍生特徵 FAIL (IC<0.01): tick OFI IC=-0.011 (僅 2x proxy -0.006), ofi_mom/cum/zscore 全弱。avg_trade_size A1 4/7 FAIL（唯一弱點）。6-Symbol 部署更新 + FutureWarning fix | Alpha Researcher |

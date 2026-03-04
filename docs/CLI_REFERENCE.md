@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-03-04 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-03-05 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
@@ -72,6 +72,7 @@
 | `fetch_onchain_data.py` | 鏈上數據探索工具（DeFi Llama / CryptoQuant / Glassnode） |
 | `gen_data_strategy_catalog.py` | Auto-generate docs/DATA_STRATEGY_CATALOG.md by scanning src/qtrade/data/ and strategy/. |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
+| `research_tick_ofi_eda.py` | Tick-level OFI EDA — Alpha Research #22 |
 | `trade_review.py` | 交易復盤工具 — 診斷信號與執行差異 |
 | `cron_alpha_decay.sh` | Alpha Decay 自動化監控 — 每週 cron 執行 |
 
@@ -197,7 +198,7 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
-| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-03-02 (Orderflow Composite standalone **FAIL**: taker_vol_ratio proxy 1h IC=+0.003 太弱, pre-cost SR=0.378, avg MDD=-55.5%. 但 corr(TSMOM)=-0.023 極低 → 如有更強 OFI signal 仍有組合潛力) |
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-03-05 (Production 6-Symbol deploy 2026-03-04, observation → 2026-03-18. ADA/BNB removed (no IC), ETH simplified, vol-based slippage enabled. Portfolio SR=3.17 realistic cost) |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |
