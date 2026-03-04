@@ -172,7 +172,7 @@ class PositionSizingConfig:
     
     # Volatility 參數
     target_volatility: float = 0.15
-    vol_lookback: int = 20
+    vol_lookback: int = 168  # 1 週的 1h bars（與 production configs 一致）
 
 
 @dataclass(frozen=True)
@@ -529,18 +529,14 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     )
 
     # position_sizing 可選
+    # 只傳入 YAML 中實際存在的欄位，缺失的由 PositionSizingConfig dataclass 默認值填充。
+    # 避免硬編碼 fallback 與 dataclass 默認值不一致。
     ps_raw = raw.get("position_sizing", {})
-    position_sizing = PositionSizingConfig(
-        method=ps_raw.get("method", "fixed"),
-        position_pct=ps_raw.get("position_pct", 1.0),
-        kelly_fraction=ps_raw.get("kelly_fraction", 0.25),
-        win_rate=ps_raw.get("win_rate"),
-        avg_win=ps_raw.get("avg_win"),
-        avg_loss=ps_raw.get("avg_loss"),
-        min_trades_for_kelly=ps_raw.get("min_trades_for_kelly", 20),
-        target_volatility=ps_raw.get("target_volatility", 0.15),
-        vol_lookback=ps_raw.get("vol_lookback", 20),
-    )
+    _ps_fields: dict = {}
+    for _k, _v in ps_raw.items():
+        if _v is not None:  # YAML 中明確設定的值
+            _ps_fields[_k] = _v
+    position_sizing = PositionSizingConfig(**_ps_fields)
 
     # futures 可選（僅合約模式使用）
     futures: FuturesConfig | None = None

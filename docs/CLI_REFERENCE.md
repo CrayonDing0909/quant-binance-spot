@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-02-28 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-03-03 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
@@ -64,22 +64,18 @@
 
 | Script | Description |
 |--------|-------------|
-| `_pbo_data_audit.py` | PBO 修正 + 數據擴展審計 |
 | `cleanup_data.py` | 數據清理工具 — 釋放磁碟空間 |
 | `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
+| `download_aggtrades_data.py` | Download aggTrades from Binance Vision and compute VPIN/CVD/OFI metrics |
 | `fetch_derivatives_data.py` | Binance 衍生品數據下載工具（LSR, Taker Vol, CVD） |
 | `fetch_liquidation_data.py` | 清算/爆倉數據下載工具 |
 | `fetch_onchain_data.py` | 鏈上數據探索工具（DeFi Llama / CryptoQuant / Glassnode） |
 | `gen_data_strategy_catalog.py` | Auto-generate docs/DATA_STRATEGY_CATALOG.md by scanning src/qtrade/data/ and strategy/. |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
-| `research_btc_htf_variants.py` | BTC HTF Filter 變體研究：為什麼 BTC 的 HTF filter 改善最小 (+0.04 SR)? |
-| `research_ic_deep_analysis.py` | IC Deep Analysis — Quant Researcher |
-| `research_overlay_4way.py` | ═══════════════════════════════════════════════════════════════ |
-| `research_overlay_ic_analysis.py` | P0: Overlay-Adjusted IC Analysis |
-| `research_strategy_blend.py` | ═══════════════════════════════════════════════════════════════ |
 | `trade_review.py` | 交易復盤工具 — 診斷信號與執行差異 |
+| `cron_alpha_decay.sh` | Alpha Decay 自動化監控 — 每週 cron 執行 |
 
-> **Archive**: 29 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
+> **Archive**: 38 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
 
 ---
 
@@ -111,24 +107,6 @@
 | `futures_nwkl.yaml` | `config/futures_nwkl.yaml` |
 | `futures_tsmom.yaml` | `config/futures_tsmom.yaml` |
 
-### Research (active experiments)
-
-| Config | File |
-|--------|------|
-| `research_htf_filter.yaml` | `config/research_htf_filter.yaml` |
-| `research_htf_lsr_oi_cascade.yaml` | `config/research_htf_lsr_oi_cascade.yaml` |
-| `research_htf_lsr_overlay.yaml` | `config/research_htf_lsr_overlay.yaml` |
-| `research_lsr_contrarian.yaml` | `config/research_lsr_contrarian.yaml` |
-| `research_lsr_overlay_meta_blend.yaml` | `config/research_lsr_overlay_meta_blend.yaml` |
-| `research_meta_blend.yaml` | `config/research_meta_blend.yaml` |
-| `research_oi_liq_bounce.yaml` | `config/research_oi_liq_bounce.yaml` |
-| `research_param_refresh_BTC.yaml` | `config/research_param_refresh_BTC.yaml` |
-| `research_param_refresh_XRP.yaml` | `config/research_param_refresh_XRP.yaml` |
-| `research_risk_mitigation_A_20260224.yaml` | `config/research_risk_mitigation_A_20260224.yaml` |
-| `research_risk_mitigation_B_20260224.yaml` | `config/research_risk_mitigation_B_20260224.yaml` |
-| `research_tsmom_carry_v2.yaml` | `config/research_tsmom_carry_v2.yaml` |
-| `research_xsmom.yaml` | `config/research_xsmom.yaml` |
-
 ### Utility
 
 | Config | File |
@@ -141,7 +119,7 @@
 |--------|------|
 | `dual_momentum.yaml` | `config/dual_momentum.yaml` |
 
-> **Archive**: 65 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
+> **Archive**: 85 deprecated/completed research configs in `config/archive/`. Preserved for git history reference.
 
 ---
 
@@ -219,13 +197,13 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
-| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-02-28 (OI Regime Filter Ablation → **FAIL**: incremental SR +4.66% < 5% threshold. OI standalone SR=4.12 > HTF SR=3.86, but stacking over-filters) |
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-03-02 (Orderflow Composite standalone **FAIL**: taker_vol_ratio proxy 1h IC=+0.003 太弱, pre-cost SR=0.378, avg MDD=-55.5%. 但 corr(TSMOM)=-0.023 極低 → 如有更強 OFI signal 仍有組合潛力) |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |
 | [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
 | [`R3C_SYMBOL_GOVERNANCE_SPEC.md`](docs/R3C_SYMBOL_GOVERNANCE_SPEC.md) | R3C Symbol Governance Spec |
-| [`RESEARCH_LITERATURE.md`](docs/RESEARCH_LITERATURE.md) | > **Last updated**: 2026-02-26 |
+| [`RESEARCH_LITERATURE.md`](docs/RESEARCH_LITERATURE.md) | > **Last updated**: 2026-03-02 |
 | [`STRATEGY_DEV_PLAYBOOK_R2_1.md`](docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) | Strategy Development Playbook (R2.1) |
 | [`STRATEGY_PORTFOLIO_GOVERNANCE.md`](docs/STRATEGY_PORTFOLIO_GOVERNANCE.md) | 策略組合治理規範 (Strategy Portfolio Governance) |
 

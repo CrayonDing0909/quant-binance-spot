@@ -32,8 +32,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -79,12 +80,51 @@ class ValidationConfig:
     # Consistency
     consistency_enabled: bool = False
     consistency_days: int = 7
+
+    # Cost Stress Test
+    cost_stress_enabled: bool = True
+    cost_stress_multipliers: List[float] = None
+
+    # Delay Stress Test
+    delay_stress_enabled: bool = True
+    delay_stress_extra_bars: int = 1
+    delay_stress_max_drop_pct: float = 50.0
+
+    # Holdout OOS
+    holdout_oos_enabled: bool = True
+    holdout_oos_max_degradation: float = 0.5
+    holdout_oos_periods: List[dict] = None
+
+    # Alpha Decay
+    # Governance spec: .cursor/skills/validation/alpha-decay-governance.md
+    alpha_decay_enabled: bool = True
+    alpha_decay_forward_bars: int = 24
+    alpha_decay_window_days: int = 180
+    alpha_decay_recent_days: int = 180
+    alpha_decay_recent_ic_min: float = 0.005
+    alpha_decay_max_decay_pct: float = 0.6
+    alpha_decay_max_critical_alerts: int = 2
+    alpha_decay_min_ic_denominator: float = 0.01
+
+    # Market Regimes (for regime analysis)
+    market_regimes: List[dict] = None
+
+    # Embargo Holdout OOS
+    embargo_holdout_enabled: bool = True
+    embargo_holdout_max_degradation: float = 0.5
+    validation_config_path: Optional[str] = None  # 用於載入 embargo config
     
     def __post_init__(self):
         if self.monte_carlo_confidence is None:
             self.monte_carlo_confidence = [0.95, 0.99]
         if self.kelly_fractions is None:
             self.kelly_fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
+        if self.cost_stress_multipliers is None:
+            self.cost_stress_multipliers = [1.5, 2.0]
+        if self.holdout_oos_periods is None:
+            self.holdout_oos_periods = []
+        if self.market_regimes is None:
+            self.market_regimes = []
 
 
 def load_validation_config(config_path: Optional[str]) -> ValidationConfig:
@@ -100,6 +140,22 @@ def load_validation_config(config_path: Optional[str]) -> ValidationConfig:
         pm = data.get("prado_methods", {})
         ky = data.get("kelly", {})
         cs = data.get("consistency", {})
+        cost_s = data.get("cost_stress", {})
+        delay_s = data.get("delay_stress", {})
+        holdout = data.get("holdout_oos", {})
+        alpha_decay = data.get("alpha_decay", {})
+        embargo_raw = data.get("data_embargo", {})
+        
+        # DSR n_trials: 優先使用 trial_registry.cumulative_n_trials（真實多重測試數）
+        trial_reg = data.get("trial_registry", {})
+        dsr_n_trials = trial_reg.get(
+            "cumulative_n_trials",
+            pm.get("deflated_sharpe", {}).get("n_trials", 729),
+        )
+
+        # Embargo holdout: 從 data_embargo section 讀取 enabled 狀態
+        embargo_temporal = embargo_raw.get("temporal", {})
+        embargo_holdout_enabled = embargo_temporal.get("enabled", True)
         
         return ValidationConfig(
             walk_forward_enabled=wf.get("enabled", True),
@@ -111,13 +167,33 @@ def load_validation_config(config_path: Optional[str]) -> ValidationConfig:
             correlation_enabled=ca.get("run_correlation_stratified", True),
             regime_enabled=ca.get("run_regime_validation", True),
             dsr_enabled=pm.get("deflated_sharpe", {}).get("enabled", True),
-            dsr_n_trials=pm.get("deflated_sharpe", {}).get("n_trials", 729),
+            dsr_n_trials=dsr_n_trials,
             pbo_enabled=pm.get("pbo", {}).get("enabled", True),
             pbo_threshold=pm.get("pbo", {}).get("threshold", 0.5),
             kelly_enabled=ky.get("enabled", True),
             kelly_fractions=ky.get("fractions", [0.0, 0.25, 0.5, 0.75, 1.0]),
             consistency_enabled=cs.get("enabled", False),
             consistency_days=cs.get("days", 7),
+            cost_stress_enabled=cost_s.get("enabled", True),
+            cost_stress_multipliers=cost_s.get("multipliers", [1.5, 2.0]),
+            delay_stress_enabled=delay_s.get("enabled", True),
+            delay_stress_extra_bars=delay_s.get("extra_delay_bars", 1),
+            delay_stress_max_drop_pct=delay_s.get("max_sharpe_drop_pct", 50.0),
+            holdout_oos_enabled=holdout.get("enabled", True),
+            holdout_oos_max_degradation=holdout.get("max_degradation", 0.5),
+            holdout_oos_periods=holdout.get("periods", []),
+            alpha_decay_enabled=alpha_decay.get("enabled", True),
+            alpha_decay_forward_bars=alpha_decay.get("forward_bars", 24),
+            alpha_decay_window_days=alpha_decay.get("window_days", 180),
+            alpha_decay_recent_days=alpha_decay.get("recent_days", 180),
+            alpha_decay_recent_ic_min=alpha_decay.get("recent_ic_min", 0.005),
+            alpha_decay_max_decay_pct=alpha_decay.get("max_decay_pct", 0.6),
+            alpha_decay_max_critical_alerts=alpha_decay.get("max_critical_alerts", 2),
+            alpha_decay_min_ic_denominator=alpha_decay.get("min_ic_denominator", 0.01),
+            market_regimes=data.get("market_regimes", []),
+            embargo_holdout_enabled=embargo_holdout_enabled,
+            embargo_holdout_max_degradation=embargo_temporal.get("max_degradation", 0.5),
+            validation_config_path=config_path,
         )
     
     return ValidationConfig()
@@ -364,6 +440,7 @@ def run_prado_methods(
     # Deflated Sharpe Ratio
     if dsr_enabled and all_test_sharpes:
         print("\n  📌 Deflated Sharpe Ratio (DSR):")
+        print(f"     n_trials={dsr_n_trials}（累積歷史測試組合數，來自 trial_registry）")
         try:
             observed_sharpe = np.mean(all_test_sharpes)
             n_obs = len(all_test_sharpes) * 100  # 估計觀察數
@@ -378,6 +455,7 @@ def run_prado_methods(
             print(f"    觀察 Sharpe: {dsr_result.observed_sharpe:.4f}")
             print(f"    校正 Sharpe: {dsr_result.deflated_sharpe:.4f}")
             print(f"    p-value: {dsr_result.p_value:.4f}")
+            print(f"    n_trials (cumulative): {dsr_n_trials}")
             print(f"    顯著性: {'✅ 顯著' if dsr_result.is_significant else '⚠️  不顯著'}")
             
         except Exception as e:
@@ -627,6 +705,465 @@ def run_consistency_check(
     return results
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Cost Stress Test
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_cost_stress_test(
+    symbols: List[str],
+    data_paths: Dict[str, Path],
+    cfg: dict,
+    strategy_name: str,
+    multipliers: List[float],
+    report_dir: Path,
+    data_dir: Optional[Path] = None,
+) -> Dict:
+    """
+    成本壓力測試：在 1×, 1.5×, 2× 成本下檢查策略存活性。
+
+    PASS 條件：2× 成本下所有幣種平均 SR > 0
+    """
+    from qtrade.backtest.run_backtest import run_symbol_backtest
+
+    print("\n" + "=" * 72)
+    print("  💰 Cost Stress Test（成本壓力測試）")
+    print("     在倍增成本下驗證策略是否仍有正收益")
+    print("=" * 72)
+
+    all_multipliers = [1.0] + [m for m in multipliers if m != 1.0]
+    # per-symbol, per-multiplier Sharpe
+    results: Dict[str, Dict[float, float]] = {}
+
+    for symbol in symbols:
+        if symbol not in data_paths:
+            continue
+        results[symbol] = {}
+        for mult in all_multipliers:
+            try:
+                stressed_cfg = copy.deepcopy(cfg)
+                stressed_cfg["fee_bps"] = stressed_cfg["fee_bps"] * mult
+                stressed_cfg["slippage_bps"] = stressed_cfg["slippage_bps"] * mult
+                bt_res = run_symbol_backtest(
+                    symbol, data_paths[symbol], stressed_cfg,
+                    strategy_name, data_dir=data_dir,
+                )
+                sr = bt_res.sharpe()
+                results[symbol][mult] = sr
+            except Exception as e:
+                print(f"    ❌ {symbol} @ {mult:.1f}x: {e}")
+                results[symbol][mult] = float("nan")
+
+    # ── 顯示表格 ──
+    header_parts = [f"{'Symbol':<12}"]
+    for mult in all_multipliers:
+        header_parts.append(f"{'SR@' + f'{mult:.1f}x':>10}")
+    print(f"\n  {' '.join(header_parts)}")
+    print("  " + "-" * (12 + 11 * len(all_multipliers)))
+
+    max_mult = max(multipliers)
+    all_max_srs = []
+    for symbol in results:
+        parts = [f"  {symbol:<12}"]
+        for mult in all_multipliers:
+            sr_val = results[symbol].get(mult, float("nan"))
+            parts.append(f"{sr_val:>10.2f}")
+        print(" ".join(parts))
+        max_sr = results[symbol].get(max_mult, float("nan"))
+        if not np.isnan(max_sr):
+            all_max_srs.append(max_sr)
+
+    # PASS/FAIL
+    avg_sr_at_max = np.mean(all_max_srs) if all_max_srs else 0.0
+    passed = avg_sr_at_max > 0
+    n_positive = sum(1 for s in all_max_srs if s > 0)
+    icon = "✅ PASS" if passed else "❌ FAIL"
+    print(f"\n  {icon}  @ {max_mult:.1f}x cost: avg SR={avg_sr_at_max:.2f}, "
+          f"{n_positive}/{len(all_max_srs)} symbols SR > 0")
+
+    # 保存結果
+    rows = []
+    for sym, mults in results.items():
+        row = {"symbol": sym}
+        for m, sr_val in mults.items():
+            row[f"sr_{m:.1f}x"] = round(sr_val, 4) if not np.isnan(sr_val) else None
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(report_dir / "cost_stress.csv", index=False)
+
+    return {
+        "passed": bool(passed),
+        "avg_sr_at_max_cost": round(float(avg_sr_at_max), 4),
+        "n_positive": n_positive,
+        "n_total": len(all_max_srs),
+        "max_multiplier": max_mult,
+        "per_symbol": results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Delay Stress Test
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_delay_stress_test(
+    symbols: List[str],
+    data_paths: Dict[str, Path],
+    cfg: dict,
+    strategy_name: str,
+    extra_delay_bars: int,
+    max_sharpe_drop_pct: float,
+    report_dir: Path,
+    data_dir: Optional[Path] = None,
+) -> Dict:
+    """
+    延遲壓力測試：在 signal_delay + extra_delay_bars 下檢查 SR 衰退。
+
+    方法：先跑正常回測 (delay=1)，再把 pos shift(extra_delay_bars)
+    重建 portfolio，比較 SR drop。
+
+    PASS 條件：SR drop < max_sharpe_drop_pct%
+    """
+    from qtrade.backtest.run_backtest import (
+        run_symbol_backtest,
+        safe_portfolio_from_orders,
+        to_vbt_direction,
+        _bps_to_pct,
+    )
+
+    print("\n" + "=" * 72)
+    print(f"  ⏱️  Delay Stress Test（延遲壓力測試，+{extra_delay_bars} bar）")
+    print("     檢測策略對執行延遲的敏感度")
+    print("=" * 72)
+
+    results: Dict[str, Dict] = {}
+
+    for symbol in symbols:
+        if symbol not in data_paths:
+            continue
+        try:
+            # 正常回測 (delay=1)
+            bt_res = run_symbol_backtest(
+                symbol, data_paths[symbol], cfg,
+                strategy_name, data_dir=data_dir,
+            )
+            baseline_sr = bt_res.sharpe()
+
+            # 額外延遲：shift pos by extra_delay_bars
+            delayed_pos = bt_res.pos.shift(extra_delay_bars).fillna(0)
+
+            # 重建 portfolio
+            dr = cfg.get("direction", "both")
+            vbt_dir = to_vbt_direction(dr)
+            fee = _bps_to_pct(cfg["fee_bps"])
+            slippage = _bps_to_pct(cfg["slippage_bps"])
+
+            pf_delayed = safe_portfolio_from_orders(
+                df=bt_res.df,
+                pos=delayed_pos,
+                fee=fee,
+                slippage=slippage,
+                init_cash=cfg["initial_cash"],
+                freq=cfg.get("interval", "1h"),
+                direction=vbt_dir,
+            )
+            delayed_stats = pf_delayed.stats()
+            delayed_sr = float(delayed_stats.get("Sharpe Ratio", 0))
+
+            # SR drop %
+            if abs(baseline_sr) > 0.001:
+                drop_pct = (baseline_sr - delayed_sr) / abs(baseline_sr) * 100
+            else:
+                drop_pct = 0.0
+
+            results[symbol] = {
+                "baseline_sr": round(baseline_sr, 4),
+                "delayed_sr": round(delayed_sr, 4),
+                "drop_pct": round(drop_pct, 1),
+            }
+
+            icon = "✅" if drop_pct < max_sharpe_drop_pct else "⚠️"
+            print(f"  {icon} {symbol}: SR {baseline_sr:.2f} → {delayed_sr:.2f} "
+                  f"(drop {drop_pct:+.1f}%)")
+
+        except Exception as e:
+            print(f"    ❌ {symbol}: {e}")
+
+    # PASS/FAIL
+    drops = [r["drop_pct"] for r in results.values()]
+    avg_drop = np.mean(drops) if drops else 0.0
+    passed = avg_drop < max_sharpe_drop_pct
+    icon = "✅ PASS" if passed else "❌ FAIL"
+    print(f"\n  {icon}  avg SR drop: {avg_drop:.1f}%（閾值: < {max_sharpe_drop_pct:.0f}%）")
+
+    # 保存結果
+    rows = [{"symbol": sym, **vals} for sym, vals in results.items()]
+    pd.DataFrame(rows).to_csv(report_dir / "delay_stress.csv", index=False)
+
+    return {
+        "passed": bool(passed),
+        "avg_drop_pct": round(float(avg_drop), 1),
+        "max_drop_pct": round(float(max(drops)) if drops else 0.0, 1),
+        "threshold_pct": max_sharpe_drop_pct,
+        "extra_delay_bars": extra_delay_bars,
+        "per_symbol": results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Holdout OOS Test
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_holdout_oos(
+    symbols: List[str],
+    data_paths: Dict[str, Path],
+    cfg: dict,
+    strategy_name: str,
+    periods: List[dict],
+    max_degradation: float,
+    report_dir: Path,
+    data_dir: Optional[Path] = None,
+) -> Dict:
+    """
+    Holdout Out-of-Sample 測試。
+
+    對每個 period：
+      - 用 train_start~train_end 跑回測 → IS SR
+      - 用 test_start~now 跑回測 → OOS SR
+      - 比較退化程度
+
+    PASS 條件：OOS SR > IS SR × (1 - max_degradation)
+    """
+    from qtrade.backtest.run_backtest import run_symbol_backtest
+
+    print("\n" + "=" * 72)
+    print("  📦 Holdout OOS Test（保留樣本外測試）")
+    print("     用 train 期間回測，再在 test 期間評估，測試策略泛化能力")
+    print("=" * 72)
+
+    all_results = {}
+
+    for period in periods:
+        pname = period["name"]
+        train_start = period.get("train_start")
+        train_end = period.get("train_end")
+        test_start = period.get("test_start")
+
+        print(f"\n  📌 Period: {pname}")
+        print(f"     Train: {train_start} → {train_end}")
+        print(f"     Test:  {test_start} → now")
+
+        period_results = {}
+
+        for symbol in symbols:
+            if symbol not in data_paths:
+                continue
+            try:
+                # IS backtest (train period)
+                is_cfg = copy.deepcopy(cfg)
+                is_cfg["start"] = train_start
+                is_cfg["end"] = train_end
+                is_res = run_symbol_backtest(
+                    symbol, data_paths[symbol], is_cfg,
+                    strategy_name, data_dir=data_dir,
+                )
+                is_sr = is_res.sharpe()
+
+                # OOS backtest (test period → end of data)
+                oos_cfg = copy.deepcopy(cfg)
+                oos_cfg["start"] = test_start
+                oos_cfg.pop("end", None)  # 不限制結束日期
+                oos_res = run_symbol_backtest(
+                    symbol, data_paths[symbol], oos_cfg,
+                    strategy_name, data_dir=data_dir,
+                )
+                oos_sr = oos_res.sharpe()
+
+                # 退化度
+                if abs(is_sr) > 0.001:
+                    degradation = (is_sr - oos_sr) / abs(is_sr)
+                else:
+                    degradation = 0.0
+
+                period_results[symbol] = {
+                    "is_sr": round(is_sr, 4),
+                    "oos_sr": round(oos_sr, 4),
+                    "degradation": round(degradation, 4),
+                }
+
+                passed_sym = oos_sr >= is_sr * (1 - max_degradation) if is_sr > 0 else oos_sr > 0
+                icon = "✅" if passed_sym else "⚠️"
+                print(f"    {icon} {symbol}: IS SR={is_sr:.2f}, "
+                      f"OOS SR={oos_sr:.2f}, 退化={degradation:.1%}")
+
+            except Exception as e:
+                print(f"    ❌ {symbol}: {e}")
+
+        all_results[pname] = period_results
+
+    # 彙總 PASS/FAIL
+    all_oos_srs = []
+    all_degs = []
+    for pname, presults in all_results.items():
+        for sym, vals in presults.items():
+            all_oos_srs.append(vals["oos_sr"])
+            all_degs.append(vals["degradation"])
+
+    avg_deg = np.mean(all_degs) if all_degs else 0.0
+    avg_oos_sr = np.mean(all_oos_srs) if all_oos_srs else 0.0
+    passed = avg_deg < max_degradation and avg_oos_sr > 0
+    icon = "✅ PASS" if passed else "❌ FAIL"
+    print(f"\n  {icon}  平均退化: {avg_deg:.1%}（閾值: < {max_degradation:.0%}），"
+          f"平均 OOS SR: {avg_oos_sr:.2f}")
+
+    # 保存結果
+    rows = []
+    for pname, presults in all_results.items():
+        for sym, vals in presults.items():
+            rows.append({"period": pname, "symbol": sym, **vals})
+    if rows:
+        pd.DataFrame(rows).to_csv(report_dir / "holdout_oos.csv", index=False)
+
+    return {
+        "passed": bool(passed),
+        "avg_degradation": round(float(avg_deg), 4),
+        "avg_oos_sr": round(float(avg_oos_sr), 4),
+        "threshold": max_degradation,
+        "per_period": all_results,
+    }
+
+
+def run_alpha_decay_check(
+    symbols: List[str],
+    data_paths: Dict[str, Path],
+    cfg_obj,
+    strategy_name: str,
+    forward_bars: int,
+    window_days: int,
+    recent_days: int,
+    recent_ic_min: float,
+    max_decay_pct: float,
+    max_critical_alerts: int,
+    report_dir: Path,
+    min_ic_denominator: float = 0.01,
+) -> Dict:
+    """
+    Alpha Decay 檢查：監控 recent IC、IC 衰退和 critical alerts。
+
+    PASS 條件（全部滿足）：
+      1) 平均 recent IC >= recent_ic_min
+      2) 平均 IC decay <= max_decay_pct
+      3) critical alerts 數量 <= max_critical_alerts
+    """
+    from qtrade.strategy import get_strategy
+    from qtrade.strategy.base import StrategyContext
+    from qtrade.validation.ic_monitor import RollingICMonitor
+
+    print("\n" + "=" * 72)
+    print("  📉 Alpha Decay Check（因子衰減檢查）")
+    print("     用 IC 追蹤信號有效性，檢測最近期是否衰退")
+    print("=" * 72)
+
+    bars_per_day = {
+        "1m": 1440,
+        "5m": 288,
+        "15m": 96,
+        "1h": 24,
+        "4h": 6,
+        "1d": 1,
+    }
+    interval = cfg_obj.market.interval
+    bpd = bars_per_day.get(interval, 24)
+    window = window_days * bpd
+
+    strategy_func = get_strategy(strategy_name)
+    monitor = RollingICMonitor(
+        window=window,
+        forward_bars=forward_bars,
+        recent_days=recent_days,
+        decay_threshold=max_decay_pct,
+        interval=interval,
+        min_ic_denominator=min_ic_denominator,
+    )
+
+    symbol_rows = []
+    recent_ics = []
+    decay_pcts = []
+    total_critical_alerts = 0
+
+    for symbol in symbols:
+        if symbol not in data_paths:
+            continue
+        try:
+            df = load_klines(data_paths[symbol])
+            params = cfg_obj.strategy.get_params(symbol)
+            ctx = StrategyContext(
+                symbol=symbol,
+                interval=interval,
+                market_type=cfg_obj.market_type_str,
+                direction=cfg_obj.direction,
+                signal_delay=1,  # Backtest validation: execute on next open.
+            )
+
+            signals = strategy_func(df, ctx, params)
+            report = monitor.compute(signals, df["close"])
+            alerts = monitor.check_alerts(report)
+            n_critical = sum(1 for a in alerts if a.severity == "critical")
+            total_critical_alerts += n_critical
+
+            recent_ics.append(float(report.recent_ic))
+            decay_pcts.append(float(report.ic_decay_pct))
+            symbol_rows.append({
+                "symbol": symbol,
+                "overall_ic": round(float(report.overall_ic), 6),
+                "recent_ic": round(float(report.recent_ic), 6),
+                "historical_ic": round(float(report.historical_ic), 6),
+                "ic_decay_pct": round(float(report.ic_decay_pct), 6),
+                "ic_ir": round(float(report.ic_ir), 6),
+                "overall_ic_pvalue": round(float(report.overall_ic_pvalue), 6),
+                "signal_count": int(report.signal_count),
+                "n_alerts": int(len(alerts)),
+                "n_critical_alerts": int(n_critical),
+                "is_decaying": bool(report.is_decaying),
+            })
+
+            icon = "✅" if n_critical == 0 and report.recent_ic >= recent_ic_min else "⚠️"
+            print(
+                f"  {icon} {symbol}: recent IC={report.recent_ic:+.4f}, "
+                f"decay={report.ic_decay_pct:+.1%}, critical={n_critical}"
+            )
+        except Exception as e:
+            print(f"    ❌ {symbol}: {e}")
+
+    avg_recent_ic = float(np.mean(recent_ics)) if recent_ics else 0.0
+    avg_decay_pct = float(np.mean(decay_pcts)) if decay_pcts else 0.0
+    passed = (
+        avg_recent_ic >= recent_ic_min
+        and avg_decay_pct <= max_decay_pct
+        and total_critical_alerts <= max_critical_alerts
+    )
+    icon = "✅ PASS" if passed else "❌ FAIL"
+    print(
+        f"\n  {icon}  avg recent IC={avg_recent_ic:+.4f} (>= {recent_ic_min:.4f}), "
+        f"avg decay={avg_decay_pct:+.1%} (<= {max_decay_pct:.0%}), "
+        f"critical alerts={total_critical_alerts} (<= {max_critical_alerts})"
+    )
+
+    if symbol_rows:
+        pd.DataFrame(symbol_rows).to_csv(report_dir / "alpha_decay.csv", index=False)
+
+    return {
+        "passed": bool(passed),
+        "avg_recent_ic": round(avg_recent_ic, 6),
+        "avg_decay_pct": round(avg_decay_pct, 6),
+        "n_critical_alerts": int(total_critical_alerts),
+        "recent_ic_min": float(recent_ic_min),
+        "max_decay_pct": float(max_decay_pct),
+        "max_critical_alerts": int(max_critical_alerts),
+        "forward_bars": int(forward_bars),
+        "window_days": int(window_days),
+        "recent_days": int(recent_days),
+        "per_symbol": symbol_rows,
+    }
+
+
 def _to_native(obj):
     """將 numpy 類型轉換為 Python 原生類型，避免 YAML 序列化問題"""
     if isinstance(obj, (np.bool_, np.generic)):
@@ -645,6 +1182,13 @@ def generate_summary(
     prado_results: Dict,
     kelly_results: Dict,
     report_dir: Path,
+    cost_stress_results: Optional[Dict] = None,
+    delay_stress_results: Optional[Dict] = None,
+    holdout_oos_results: Optional[Dict] = None,
+    alpha_decay_results: Optional[Dict] = None,
+    embargo_holdout_results=None,
+    regime_analysis_result=None,
+    red_flag_results: Optional[Dict] = None,
 ):
     """生成驗證摘要報告（新手友善版）"""
     
@@ -817,6 +1361,165 @@ def generate_summary(
             print(f"           {sym}: 勝率={info['win_rate']}, 盈虧比={info['win_loss_ratio']}, 建議={info['recommended']}")
         print()
     
+    # Cost Stress 摘要
+    if cost_stress_results:
+        passed = cost_stress_results.get("passed", True)
+        summary["tests"]["cost_stress"] = {
+            "passed": bool(passed),
+            "avg_sr_at_max_cost": cost_stress_results.get("avg_sr_at_max_cost", 0),
+            "max_multiplier": cost_stress_results.get("max_multiplier", 2.0),
+            "threshold": f"SR > 0 at {cost_stress_results.get('max_multiplier', 2.0):.1f}x cost",
+            "meaning": "策略在雙倍成本下是否仍能盈利，測試對手續費和滑點的敏感度",
+        }
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        max_m = cost_stress_results.get("max_multiplier", 2.0)
+        avg_sr = cost_stress_results.get("avg_sr_at_max_cost", 0)
+        n_pos = cost_stress_results.get("n_positive", 0)
+        n_tot = cost_stress_results.get("n_total", 0)
+        print(f"  {icon}  Cost Stress（成本壓力測試）")
+        print(f"         測試方法: 將手續費和滑點加倍，看策略是否仍有正收益")
+        print(f"         @ {max_m:.1f}x cost: avg SR={avg_sr:.2f}, "
+              f"{n_pos}/{n_tot} symbols SR > 0")
+        print()
+
+    # Delay Stress 摘要
+    if delay_stress_results:
+        passed = delay_stress_results.get("passed", True)
+        summary["tests"]["delay_stress"] = {
+            "passed": bool(passed),
+            "avg_drop_pct": delay_stress_results.get("avg_drop_pct", 0),
+            "threshold": f"SR drop < {delay_stress_results.get('threshold_pct', 50):.0f}%",
+            "meaning": "策略對執行延遲的敏感度，延遲增加 1 bar 後 SR 衰退多少",
+        }
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        avg_drop = delay_stress_results.get("avg_drop_pct", 0)
+        extra = delay_stress_results.get("extra_delay_bars", 1)
+        thresh = delay_stress_results.get("threshold_pct", 50)
+        print(f"  {icon}  Delay Stress（延遲壓力測試）")
+        print(f"         測試方法: 在正常延遲上再加 +{extra} bar，看 SR 衰退多少")
+        print(f"         avg SR drop: {avg_drop:.1f}%（標準: < {thresh:.0f}%）")
+        print()
+
+    # Holdout OOS 摘要
+    if holdout_oos_results:
+        passed = holdout_oos_results.get("passed", True)
+        summary["tests"]["holdout_oos"] = {
+            "passed": bool(passed),
+            "avg_degradation": holdout_oos_results.get("avg_degradation", 0),
+            "avg_oos_sr": holdout_oos_results.get("avg_oos_sr", 0),
+            "threshold": f"OOS 退化 < {holdout_oos_results.get('threshold', 0.5):.0%}",
+            "meaning": "用歷史數據訓練、用新數據測試，檢查策略是否只在過去有效",
+        }
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        avg_deg = holdout_oos_results.get("avg_degradation", 0)
+        avg_oos_sr = holdout_oos_results.get("avg_oos_sr", 0)
+        thresh = holdout_oos_results.get("threshold", 0.5)
+        print(f"  {icon}  Holdout OOS（保留樣本外測試）")
+        print(f"         測試方法: 劃分訓練/測試期間，比較 IS 和 OOS 績效退化")
+        print(f"         平均退化: {avg_deg:.1%}（標準: < {thresh:.0%}），"
+              f"avg OOS SR: {avg_oos_sr:.2f}")
+        print()
+
+    # Alpha Decay 摘要
+    if alpha_decay_results:
+        passed = alpha_decay_results.get("passed", True)
+        avg_recent_ic = alpha_decay_results.get("avg_recent_ic", 0.0)
+        avg_decay_pct = alpha_decay_results.get("avg_decay_pct", 0.0)
+        n_critical = alpha_decay_results.get("n_critical_alerts", 0)
+        recent_ic_min = alpha_decay_results.get("recent_ic_min", 0.02)
+        max_decay_pct = alpha_decay_results.get("max_decay_pct", 0.5)
+        max_critical = alpha_decay_results.get("max_critical_alerts", 0)
+        summary["tests"]["alpha_decay"] = {
+            "passed": bool(passed),
+            "avg_recent_ic": avg_recent_ic,
+            "avg_decay_pct": avg_decay_pct,
+            "n_critical_alerts": n_critical,
+            "threshold": (
+                f"recent IC >= {recent_ic_min:.4f}, "
+                f"decay <= {max_decay_pct:.0%}, "
+                f"critical alerts <= {max_critical}"
+            ),
+            "meaning": "追蹤信號 IC 是否衰退；防止策略 edge 在近期失效",
+        }
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        print(f"  {icon}  Alpha Decay（因子衰減檢查）")
+        print(f"         測試方法: 比較歷史與近期 IC，並檢查 critical 警報")
+        print(
+            f"         avg recent IC: {avg_recent_ic:+.4f}（標準: >= {recent_ic_min:.4f}）, "
+            f"avg decay: {avg_decay_pct:+.1%}（標準: <= {max_decay_pct:.0%}）, "
+            f"critical: {n_critical}（標準: <= {max_critical}）"
+        )
+        print()
+
+    # Regime Split 摘要
+    if regime_analysis_result is not None:
+        from qtrade.validation.regime_analysis import RegimeAnalysisResult
+        if isinstance(regime_analysis_result, RegimeAnalysisResult):
+            has_warnings = bool(regime_analysis_result.warnings)
+            passed = not has_warnings
+            summary["tests"]["regime_split"] = {
+                "passed": bool(passed),
+                "n_regimes": len(regime_analysis_result.regimes),
+                "warnings": regime_analysis_result.warnings,
+                "threshold": "所有 regime SR > 0",
+                "meaning": "策略在不同市場環境（牛市/熊市/盤整）下是否都有正收益",
+            }
+            icon = "✅ PASS" if passed else "⚠️ CHECK"
+            print(f"  {icon}  Regime Split（市場環境分段）")
+            print(f"         測試方法: 根據 BTC drawdown 自動劃分牛市/熊市/盤整")
+            if has_warnings:
+                for w in regime_analysis_result.warnings:
+                    print(f"         {w}")
+            else:
+                print(f"         所有 {len(regime_analysis_result.regimes)} 個 regime SR > 0")
+            print()
+
+    # Embargo Holdout OOS 摘要
+    if embargo_holdout_results is not None:
+        passed = embargo_holdout_results.passed
+        summary["tests"]["embargo_holdout"] = {
+            "passed": bool(passed),
+            "avg_is_sr": embargo_holdout_results.avg_is_sr,
+            "avg_oos_sr": embargo_holdout_results.avg_oos_sr,
+            "avg_degradation_pct": embargo_holdout_results.avg_degradation_pct,
+            "n_oos_positive": embargo_holdout_results.n_oos_positive,
+            "n_total": embargo_holdout_results.n_total,
+            "embargo_cutoff": embargo_holdout_results.embargo_cutoff,
+            "embargo_months": embargo_holdout_results.embargo_months,
+            "threshold": "OOS SR > 0 且衰退 < 50%",
+            "meaning": "用研究從未接觸的最近數據做測試 — 最嚴格的過擬合檢查",
+        }
+        icon = "✅ PASS" if passed else "❌ FAIL"
+        print(f"  {icon}  Embargo Holdout（🔒 數據隔離樣本外測試）")
+        print(f"         測試方法: 用最近 {embargo_holdout_results.embargo_months} 個月"
+              f"（研究從未使用）的數據做 OOS 驗證")
+        print(f"         IS SR: {embargo_holdout_results.avg_is_sr:.2f} → "
+              f"OOS SR: {embargo_holdout_results.avg_oos_sr:.2f} "
+              f"(Δ={embargo_holdout_results.avg_degradation_pct:+.1f}%)")
+        print(f"         OOS 正收益: {embargo_holdout_results.n_oos_positive}"
+              f"/{embargo_holdout_results.n_total}")
+        print(f"         Cutoff: {embargo_holdout_results.embargo_cutoff}")
+        print()
+
+    # Red Flags 摘要
+    if red_flag_results is not None:
+        passed = red_flag_results.get("passed", True)
+        n_flags = red_flag_results.get("n_flags", 0)
+        summary["tests"]["red_flags"] = {
+            "passed": bool(passed),
+            "n_flags": n_flags,
+            "threshold": "無紅旗",
+            "meaning": "自動偵測 look-ahead bias、過擬合或信號泄漏的異常指標",
+        }
+        icon = "✅ PASS" if passed else "⚠️ CHECK"
+        print(f"  {icon}  Red Flags（紅旗檢查）")
+        print(f"         測試方法: 檢查 SR>4、MDD<3%、WinRate>70% 等異常指標")
+        if n_flags > 0:
+            print(f"         發現 {n_flags} 個紅旗，建議審查")
+        else:
+            print(f"         無異常指標")
+        print()
+
     # 總體判斷
     all_passed = all(
         t.get("passed", True) 
@@ -824,7 +1527,13 @@ def generate_summary(
     )
     summary["overall_passed"] = bool(all_passed)
     
+    # 統計
+    n_pass = sum(1 for t in summary["tests"].values() if t.get("passed", True))
+    n_warn = sum(1 for t in summary["tests"].values() if not t.get("passed", True))
+    n_total = len(summary["tests"])
+
     print("  ─────────────────────────────────────────────────────────────────")
+    print(f"  📊 {n_pass} PASS / {n_warn} WARN-or-FAIL / {n_total} total tests")
     if all_passed:
         print("  🎉 Overall: ✅ 策略驗證通過 — 可以考慮上線！")
     else:
@@ -890,7 +1599,7 @@ def main():
         "--only",
         type=str,
         default=None,
-        help="只執行指定的驗證（逗號分隔）: walk_forward,monte_carlo,loao,regime,dsr,pbo,kelly,consistency,predeploy"
+        help="只執行指定的驗證（逗號分隔）: walk_forward,monte_carlo,regime_analysis,loao,regime,dsr,pbo,kelly,cost_stress,delay_stress,holdout_oos,alpha_decay,embargo_holdout,consistency,predeploy"
     )
     
     parser.add_argument(
@@ -915,6 +1624,11 @@ def main():
         val_cfg.monte_carlo_simulations = 1000
         val_cfg.correlation_enabled = False
         val_cfg.consistency_enabled = False
+        val_cfg.cost_stress_enabled = False
+        val_cfg.delay_stress_enabled = False
+        val_cfg.holdout_oos_enabled = False
+        val_cfg.alpha_decay_enabled = False
+        val_cfg.embargo_holdout_enabled = False
     
     if args.full:
         val_cfg.consistency_enabled = True
@@ -934,13 +1648,20 @@ def main():
     print(f"  交易對: {cfg.market.symbols}")
     print(f"  報告目錄: {report_dir}")
     print()
-    print("  本工具執行 6 項驗證，從不同角度檢查策略是否真的有效：")
-    print("  ① Walk-Forward  — 策略在新數據上還行不行？")
-    print("  ② Monte Carlo   — 最壞情況會虧多少？")
-    print("  ③ Cross-Asset   — 換一個幣種還有效嗎？")
-    print("  ④ DSR / PBO     — 是不是碰巧調出來的好結果？")
-    print("  ⑤ Kelly         — 每次該下多大的注？")
-    print("  ⑥ Pre-Deploy    — 回測和實盤的程式碼一致嗎？")
+    print("  本工具執行 11 項驗證，從不同角度檢查策略是否真的有效：")
+    print("  ① Walk-Forward   — 策略在新數據上還行不行？")
+    print("  ② Monte Carlo    — 最壞情況會虧多少？")
+    print("  ③ Regime Split   — 牛市/熊市/盤整都行嗎？")
+    print("  ④ Cross-Asset    — 換一個幣種還有效嗎？")
+    print("  ⑤ DSR / PBO      — 是不是碰巧調出來的好結果？")
+    print("  ⑥ Kelly          — 每次該下多大的注？")
+    print("  ⑦ Cost Stress    — 手續費翻倍還賺嗎？")
+    print("  ⑧ Delay Stress   — 信號晚一根 bar 還行嗎？")
+    print("  ⑨ Holdout OOS    — 用新數據驗證有效嗎？")
+    print("  ⑩ Alpha Decay    — 因子在近期有沒有失效？")
+    print("  ⑪ Embargo OOS    — 用研究從未接觸的數據做最終驗證")
+    print("  ⑫ Red Flags      — 有沒有過擬合的跡象？")
+    print("  ⑬ Pre-Deploy     — 回測和實盤的程式碼一致嗎？")
     
     # 準備數據路徑
     symbols = cfg.market.symbols
@@ -962,13 +1683,20 @@ def main():
     
     # 使用 AppConfig 集中方法產生回測配置（包含 market_type / direction）
     backtest_cfg = cfg.to_backtest_dict()
-    
+
     # 執行驗證
     walk_forward_results = {}
     monte_carlo_results = {}
     cross_asset_results = {}
     prado_results = {}
     kelly_results = {}
+    cost_stress_results = {}
+    delay_stress_results = {}
+    holdout_oos_results = {}
+    alpha_decay_results = {}
+    embargo_holdout_results = None
+    regime_analysis_result = None
+    red_flag_results = None
     
     def should_run(test_name: str, enabled: bool) -> bool:
         if only_tests is not None:
@@ -998,6 +1726,78 @@ def main():
             data_dir=cfg.data_dir,
         )
     
+    # 2.5. Regime-Specific Performance
+    if should_run("regime_analysis", True):
+        try:
+            from qtrade.validation.regime_analysis import (
+                compute_regime_performance,
+                auto_detect_regimes,
+                print_regime_report,
+            )
+            from qtrade.backtest.run_backtest import run_symbol_backtest
+
+            # 對每個 symbol 跑一次回測取得 equity curve
+            all_equities = {}
+            for symbol in symbols:
+                if symbol not in data_paths:
+                    continue
+                try:
+                    bt_res = run_symbol_backtest(
+                        symbol, data_paths[symbol], backtest_cfg,
+                        cfg.strategy.name, data_dir=cfg.data_dir,
+                    )
+                    all_equities[symbol] = bt_res.equity()
+                except Exception as e:
+                    print(f"  ⚠️  {symbol}: regime analysis backtest 失敗: {e}")
+
+            if all_equities:
+                # 使用手動定義 + 自動偵測 regime
+                regimes = list(val_cfg.market_regimes)  # 手動定義
+
+                # 自動偵測（如果有 BTC 數據）
+                btc_sym = next(
+                    (s for s in ["BTCUSDT", "BTCBUSD"] if s in data_paths),
+                    None,
+                )
+                if btc_sym:
+                    btc_df = pd.read_parquet(data_paths[btc_sym])
+                    auto_regimes = auto_detect_regimes(btc_df["close"])
+                    regimes.extend(auto_regimes)
+
+                # 用第一個 symbol（或 portfolio 平均）作為績效衡量
+                # 對所有 symbol 的 equity 取等權平均
+                eq_df = pd.DataFrame(all_equities)
+                # 正規化為初始值 1，再取平均
+                eq_norm = eq_df.div(eq_df.iloc[0])
+                avg_equity = eq_norm.mean(axis=1)
+
+                regime_analysis_result = compute_regime_performance(
+                    avg_equity, regimes,
+                )
+                print_regime_report(regime_analysis_result)
+
+                # 保存結果
+                if regime_analysis_result.regimes:
+                    regime_rows = []
+                    for rp in regime_analysis_result.regimes:
+                        regime_rows.append({
+                            "name": rp.name,
+                            "start": rp.start,
+                            "end": rp.end,
+                            "sharpe": rp.sharpe,
+                            "total_return_pct": rp.total_return_pct,
+                            "max_drawdown_pct": rp.max_drawdown_pct,
+                            "win_rate": rp.win_rate,
+                            "n_bars": rp.n_bars,
+                            "annualized_return_pct": rp.annualized_return_pct,
+                        })
+                    regime_df = pd.DataFrame(regime_rows)
+                    regime_df.to_csv(
+                        report_dir / "regime_analysis.csv", index=False,
+                    )
+        except Exception as e:
+            print(f"  ⚠️  Regime analysis 失敗: {e}")
+
     # 3. Cross-Asset
     run_loao = should_run("loao", val_cfg.loao_enabled)
     run_correlation = should_run("correlation", val_cfg.correlation_enabled)
@@ -1044,7 +1844,83 @@ def main():
             data_dir=cfg.data_dir,
         )
     
-    # 6. Consistency Check (需要 Paper Trading 運行中)
+    # 6. Cost Stress Test
+    if should_run("cost_stress", val_cfg.cost_stress_enabled):
+        cost_stress_results = run_cost_stress_test(
+            symbols=symbols,
+            data_paths=data_paths,
+            cfg=backtest_cfg,
+            strategy_name=cfg.strategy.name,
+            multipliers=val_cfg.cost_stress_multipliers,
+            report_dir=report_dir,
+            data_dir=cfg.data_dir,
+        )
+
+    # 7. Delay Stress Test
+    if should_run("delay_stress", val_cfg.delay_stress_enabled):
+        delay_stress_results = run_delay_stress_test(
+            symbols=symbols,
+            data_paths=data_paths,
+            cfg=backtest_cfg,
+            strategy_name=cfg.strategy.name,
+            extra_delay_bars=val_cfg.delay_stress_extra_bars,
+            max_sharpe_drop_pct=val_cfg.delay_stress_max_drop_pct,
+            report_dir=report_dir,
+            data_dir=cfg.data_dir,
+        )
+
+    # 8. Holdout OOS Test
+    if should_run("holdout_oos", val_cfg.holdout_oos_enabled) and val_cfg.holdout_oos_periods:
+        holdout_oos_results = run_holdout_oos(
+            symbols=symbols,
+            data_paths=data_paths,
+            cfg=backtest_cfg,
+            strategy_name=cfg.strategy.name,
+            periods=val_cfg.holdout_oos_periods,
+            max_degradation=val_cfg.holdout_oos_max_degradation,
+            report_dir=report_dir,
+            data_dir=cfg.data_dir,
+        )
+
+    # 8.2. Alpha Decay Check
+    if should_run("alpha_decay", val_cfg.alpha_decay_enabled):
+        alpha_decay_results = run_alpha_decay_check(
+            symbols=symbols,
+            data_paths=data_paths,
+            cfg_obj=cfg,
+            strategy_name=cfg.strategy.name,
+            forward_bars=val_cfg.alpha_decay_forward_bars,
+            window_days=val_cfg.alpha_decay_window_days,
+            recent_days=val_cfg.alpha_decay_recent_days,
+            recent_ic_min=val_cfg.alpha_decay_recent_ic_min,
+            max_decay_pct=val_cfg.alpha_decay_max_decay_pct,
+            max_critical_alerts=val_cfg.alpha_decay_max_critical_alerts,
+            report_dir=report_dir,
+            min_ic_denominator=val_cfg.alpha_decay_min_ic_denominator,
+        )
+
+    # 8.5. Embargo Holdout OOS Test（數據隔離樣本外測試）
+    if should_run("embargo_holdout", val_cfg.embargo_holdout_enabled):
+        try:
+            from qtrade.validation.embargo import (
+                load_embargo_config,
+                run_embargo_holdout_test,
+            )
+            embargo_cfg = load_embargo_config(val_cfg.validation_config_path)
+            if embargo_cfg.temporal.enabled:
+                embargo_holdout_results = run_embargo_holdout_test(
+                    symbols=symbols,
+                    data_paths=data_paths,
+                    cfg=backtest_cfg,
+                    strategy_name=cfg.strategy.name,
+                    embargo=embargo_cfg,
+                    max_degradation=val_cfg.embargo_holdout_max_degradation,
+                    data_dir=cfg.data_dir,
+                )
+        except Exception as e:
+            print(f"  ⚠️  Embargo holdout test 失敗: {e}")
+
+    # 9. Consistency Check (需要 Paper Trading 運行中)
     if should_run("consistency", val_cfg.consistency_enabled):
         run_consistency_check(
             symbols=symbols,
@@ -1053,7 +1929,7 @@ def main():
             report_dir=report_dir,
         )
     
-    # 7. Pre-Deploy 一致性檢查（回測↔實盤路徑比對）
+    # 10. Pre-Deploy 一致性檢查（回測↔實盤路徑比對）
     if should_run("predeploy", True):
         try:
             from validate_live_consistency import ConsistencyChecker, print_report
@@ -1065,7 +1941,50 @@ def main():
         except Exception as e:
             print(f"  ⚠️  Pre-deploy 檢查異常: {e}")
     
-    # 8. 生成摘要
+    # 11. Red Flag Check（對每個 symbol 的回測結果）
+    try:
+        from qtrade.validation.red_flags import check_red_flags, print_red_flags
+        from qtrade.backtest.run_backtest import run_symbol_backtest as _bt
+
+        print("\n" + "=" * 72)
+        print("  🚩 Red Flag Check（回測紅旗檢查）")
+        print("     自動偵測可能的 look-ahead bias、過擬合或信號泄漏")
+        print("=" * 72)
+
+        all_flags = []
+        for symbol in symbols:
+            if symbol not in data_paths:
+                continue
+            try:
+                bt_res = _bt(
+                    symbol, data_paths[symbol], backtest_cfg,
+                    cfg.strategy.name, data_dir=cfg.data_dir,
+                )
+                stats = bt_res.pf.stats()
+                flags = check_red_flags(stats)
+                if flags:
+                    print(f"\n  {symbol}:")
+                    for flag in flags:
+                        print(f"    {flag.emoji} {flag.metric} = {flag.value:.2f} ({flag.threshold})")
+                        print(f"       → {flag.explanation}")
+                    all_flags.extend(flags)
+            except Exception:
+                pass
+
+        if not all_flags:
+            print("\n  ✅ 所有幣種均無紅旗")
+        else:
+            print(f"\n  ⚠️  共 {len(all_flags)} 個紅旗，建議審查")
+
+        red_flag_results = {
+            "passed": len(all_flags) == 0,
+            "n_flags": len(all_flags),
+            "flags": [f"{f.emoji} {f.metric}={f.value:.2f}" for f in all_flags],
+        }
+    except Exception as e:
+        print(f"  ⚠️  Red flag check 失敗: {e}")
+
+    # 12. 生成摘要
     generate_summary(
         walk_forward_results=walk_forward_results,
         monte_carlo_results=monte_carlo_results,
@@ -1073,6 +1992,13 @@ def main():
         prado_results=prado_results,
         kelly_results=kelly_results,
         report_dir=report_dir,
+        cost_stress_results=cost_stress_results or None,
+        delay_stress_results=delay_stress_results or None,
+        holdout_oos_results=holdout_oos_results or None,
+        alpha_decay_results=alpha_decay_results or None,
+        embargo_holdout_results=embargo_holdout_results,
+        regime_analysis_result=regime_analysis_result,
+        red_flag_results=red_flag_results,
     )
     
     print(f"\n📁 報告已保存至: {report_dir}")

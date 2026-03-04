@@ -37,6 +37,7 @@ from qtrade.backtest.run_backtest import run_symbol_backtest
 from qtrade.backtest.metrics import full_report, trade_summary, trade_analysis, long_short_split_analysis
 from qtrade.backtest.plotting import plot_backtest_summary
 from qtrade.validation.prado_methods import deflated_sharpe_ratio
+from qtrade.validation.red_flags import check_red_flags, print_red_flags
 
 
 def _load_ensemble_strategy(config_path: str, symbol: str) -> tuple[str, dict] | None:
@@ -351,6 +352,10 @@ def main() -> None:
                 print(f"  ✅ 統計顯著 (DSR > 0, p < 0.05)")
             else:
                 print(f"  ⚠️  未達顯著水準")
+
+        # ── 7. Red Flag Check ─────────────────────────────
+        red_flags = check_red_flags(pf.stats())
+        print_red_flags(red_flags)
 
 
 if __name__ == "__main__":

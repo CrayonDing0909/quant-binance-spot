@@ -6,9 +6,14 @@
 """
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from qtrade.validation.prado_methods import (
     deflated_sharpe_ratio,
@@ -165,3 +170,82 @@ class TestWalkForwardSummary:
         assert "avg_train_sharpe" in summary
         assert "avg_test_sharpe" in summary
         assert summary["avg_train_sharpe"] > 0
+
+
+def _load_validate_module():
+    repo_root = Path(__file__).resolve().parent.parent
+    validate_path = repo_root / "scripts" / "validate.py"
+    spec = importlib.util.spec_from_file_location("validate_module", validate_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestValidateAlphaDecayConfig:
+    def test_load_validation_config_reads_alpha_decay_section(self, tmp_path):
+        validate_module = _load_validate_module()
+        cfg_path = tmp_path / "validation.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump(
+                {
+                    "alpha_decay": {
+                        "enabled": True,
+                        "forward_bars": 48,
+                        "window_days": 120,
+                        "recent_days": 90,
+                        "recent_ic_min": 0.03,
+                        "max_decay_pct": 0.4,
+                        "max_critical_alerts": 1,
+                        "min_ic_denominator": 0.02,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        val_cfg = validate_module.load_validation_config(str(cfg_path))
+        assert val_cfg.alpha_decay_enabled is True
+        assert val_cfg.alpha_decay_forward_bars == 48
+        assert val_cfg.alpha_decay_window_days == 120
+        assert val_cfg.alpha_decay_recent_days == 90
+        assert val_cfg.alpha_decay_recent_ic_min == 0.03
+        assert val_cfg.alpha_decay_max_decay_pct == 0.4
+        assert val_cfg.alpha_decay_max_critical_alerts == 1
+        assert val_cfg.alpha_decay_min_ic_denominator == 0.02
+
+    def test_load_validation_config_alpha_decay_defaults(self, tmp_path):
+        """When alpha_decay section is empty, defaults should match governance spec."""
+        validate_module = _load_validate_module()
+        cfg_path = tmp_path / "validation.yaml"
+        cfg_path.write_text(yaml.safe_dump({}), encoding="utf-8")
+
+        val_cfg = validate_module.load_validation_config(str(cfg_path))
+        assert val_cfg.alpha_decay_recent_ic_min == 0.005  # TSMOM-calibrated
+        assert val_cfg.alpha_decay_max_decay_pct == 0.6
+        assert val_cfg.alpha_decay_max_critical_alerts == 2
+        assert val_cfg.alpha_decay_min_ic_denominator == 0.01
+
+    def test_generate_summary_includes_alpha_decay_test(self, tmp_path):
+        validate_module = _load_validate_module()
+        summary = validate_module.generate_summary(
+            walk_forward_results={},
+            monte_carlo_results={},
+            cross_asset_results={},
+            prado_results={},
+            kelly_results={},
+            report_dir=tmp_path,
+            alpha_decay_results={
+                "passed": False,
+                "avg_recent_ic": 0.01,
+                "avg_decay_pct": 0.65,
+                "n_critical_alerts": 2,
+                "recent_ic_min": 0.02,
+                "max_decay_pct": 0.5,
+                "max_critical_alerts": 0,
+            },
+        )
+
+        assert "alpha_decay" in summary["tests"]
+        assert summary["tests"]["alpha_decay"]["passed"] is False

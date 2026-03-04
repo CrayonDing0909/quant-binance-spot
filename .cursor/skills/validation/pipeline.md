@@ -61,12 +61,28 @@ PYTHONPATH=src python scripts/validate_live_consistency.py -c config/research_<n
 - Backtest/live path consistency: config passthrough, strategy context, signal consistency, overlay consistency
 - **Must PASS before GO_NEXT — no exceptions**
 
-### 10. Alpha Decay Monitoring
+### 10. Alpha Decay Check (V10)
+
+> **Governance**: `.cursor/skills/validation/alpha-decay-governance.md`
+> **Owner**: Quant Researcher defines methodology + thresholds; Developer implements; Risk acts.
+
 ```bash
+# Via validate.py (integrated gate):
+PYTHONPATH=src python scripts/validate.py -c config/<cfg>.yaml -v config/validation.yaml --only alpha_decay
+
+# Standalone monitoring:
 PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/<cfg>.yaml
 ```
-- Rolling IC stable?
-- Annual IC persistently declining?
+
+Three-layer gate (all must PASS):
+- **Gate A (quality)**: avg recent IC >= `recent_ic_min` (default 0.005 for TSMOM)
+- **Gate B (stability)**: avg decay <= `max_decay_pct` (with small-denominator guard when |historical_ic| < 0.01)
+- **Gate C (confidence)**: critical alerts <= `max_critical_alerts`
+
+On FAIL:
+1. Researcher re-analyzes: real decay or threshold miscalibration?
+2. If miscalibration → recalibrate thresholds (see governance spec Section 5)
+3. If real decay → Risk Manager executes action protocol (WARNING / REDUCE / FLATTEN)
 
 ### 11. meta_blend Extra Validation
 

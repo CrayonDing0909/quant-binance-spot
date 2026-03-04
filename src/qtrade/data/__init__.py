@@ -49,6 +49,28 @@ def _lazy_import_order_book():
     from .order_book import OrderBookSnapshot, OrderBookCache, compute_imbalance, compute_depth_profile
     return OrderBookSnapshot, OrderBookCache, compute_imbalance, compute_depth_profile
 
+def _lazy_import_agg_trades():
+    from .agg_trades import (
+        download_and_process_aggtrades,
+        load_hourly_metrics,
+        load_vpin,
+        load_real_cvd,
+        load_ofi,
+        compute_vpin_from_bars,
+        compute_volume_clock_bars,
+        align_vpin_to_klines,
+    )
+    return (
+        download_and_process_aggtrades,
+        load_hourly_metrics,
+        load_vpin,
+        load_real_cvd,
+        load_ofi,
+        compute_vpin_from_bars,
+        compute_volume_clock_bars,
+        align_vpin_to_klines,
+    )
+
 __all__ = [
     # Core
     "save_klines",
@@ -75,4 +97,6 @@ __all__ = [
     "_lazy_import_multi_tf_loader",
     # Order book depth
     "_lazy_import_order_book",
+    # aggTrades microstructure metrics (VPIN, CVD, OFI)
+    "_lazy_import_agg_trades",
 ]

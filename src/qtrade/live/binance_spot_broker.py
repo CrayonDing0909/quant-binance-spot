@@ -1011,11 +1011,15 @@ class BinanceSpotBroker:
         current_price: float | None = None,
         reason: str = "signal",
         stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,  # Spot 模式不使用，保留以對齊 BrokerProtocol
     ) -> OrderResult | None:
         """
         執行目標倉位調整
         
         v2.0 新增：支援自動掛止損單
+        
+        Note: take_profit_price 在 Spot 模式中被忽略（Spot 不支援 TP 掛單），
+        但保留此參數以符合 BrokerProtocol 介面。
 
         與 PaperBroker 介面一致，方便切換。
 

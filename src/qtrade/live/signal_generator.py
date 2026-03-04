@@ -165,141 +165,37 @@ def generate_signal(
         )
 
     # 運行策略（傳入正確的 market_type 和 direction）
-    # 如果 params 中有注入的衍生品/輔助數據，傳入 StrategyContext
-    derivatives_data = params.pop("_derivatives_data", None)
-    auxiliary_data = params.pop("_auxiliary_data", None)
+    # 使用 .get() 而非 .pop() — 不修改呼叫者的 params dict
+    derivatives_data = params.get("_derivatives_data")
+    auxiliary_data = params.get("_auxiliary_data")
 
     ctx = StrategyContext(
         symbol=symbol,
         interval=interval,
         market_type=market_type,
         direction=direction,
+        signal_delay=0,  # 明確設定：Live 模式不延遲（信號即時執行）
         auxiliary_data=auxiliary_data,
         derivatives_data=derivatives_data,
     )
     strategy_func = get_strategy(strategy_name)
-    positions = strategy_func(df, ctx, params)
+    # 傳入不含已消費的 key 的 params（_derivatives_data / _auxiliary_data
+    # 已被 StrategyContext 消費，不應傳給策略函數；
+    # 其他 _data_dir / _oi_series 等仍需傳入，部分策略會讀取）
+    _consumed_keys = {"_derivatives_data", "_auxiliary_data"}
+    clean_params = {k: v for k, v in params.items() if k not in _consumed_keys}
+    positions = strategy_func(df, ctx, clean_params)
 
-    # ── Overlay 後處理（與 run_symbol_backtest 一致）──────────
-    # 確保 live pipeline 和 backtest pipeline 套用相同的 overlay
+    # ── Overlay 後處理 ─────────────────────────────────
+    # 使用共用 overlay pipeline，確保 live 和 backtest 行為完全一致
     if overlay_cfg and overlay_cfg.get("enabled", False):
-        from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
+        from ..strategy.overlays.overlay_pipeline import prepare_and_apply_overlay
 
-        overlay_mode = overlay_cfg.get("mode", "vol_pause")
-        overlay_params = overlay_cfg.get("params", {})
-
-        # OI 資料：與 run_symbol_backtest 一致的載入邏輯
-        # 優先使用 params 中已注入的 _oi_series（來自 BaseRunner OI cache），
-        # 否則從 _data_dir 自動載入（支援複合模式如 "oi_vol+lsr_confirmatory"）
-        oi_series = params.get("_oi_series")
-        _needs_oi = any(m in overlay_mode for m in ("oi_only", "oi_vol"))
-        if oi_series is None and _needs_oi:
-            data_dir = params.get("_data_dir")
-            if data_dir:
-                try:
-                    from ..data.open_interest import (
-                        get_oi_path, load_open_interest, align_oi_to_klines,
-                    )
-                    from pathlib import Path
-                    data_dir_path = Path(data_dir)
-                    for _prov in ["merged", "binance_vision", "coinglass", "binance"]:
-                        _oi_path = get_oi_path(data_dir_path, symbol, _prov)
-                        _oi_df = load_open_interest(_oi_path)
-                        if _oi_df is not None and not _oi_df.empty:
-                            oi_series = align_oi_to_klines(
-                                _oi_df, df.index, max_ffill_bars=2,
-                            )
-                            logger.debug(f"  {symbol}: overlay OI 載入成功 (provider={_prov})")
-                            break
-                    else:
-                        logger.warning(
-                            f"  {symbol}: overlay 模式 {overlay_mode} 需要 OI 但無法載入"
-                        )
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay OI 載入失敗: {e}")
-
-        # LSR 資料：overlay mode 含 lsr_confirmatory 時自動載入
-        if "lsr_confirmatory" in overlay_mode and "_lsr_series" not in overlay_params:
-            data_dir = params.get("_data_dir")
-            if data_dir:
-                try:
-                    from ..data.long_short_ratio import load_lsr, align_lsr_to_klines
-                    from pathlib import Path
-                    data_dir_path = Path(data_dir)
-                    deriv_dir = data_dir_path / "binance" / "futures" / "derivatives"
-                    lsr_type = overlay_params.get("lsr_type", "lsr")
-                    lsr_raw = load_lsr(symbol, lsr_type, data_dir=deriv_dir)
-                    if lsr_raw is not None and not lsr_raw.empty:
-                        lsr_aligned = align_lsr_to_klines(lsr_raw, df.index, max_ffill_bars=2)
-                        overlay_params["_lsr_series"] = lsr_aligned
-                        logger.debug(f"  {symbol}: overlay LSR 載入成功 ({len(lsr_raw)} rows)")
-                    else:
-                        logger.warning(f"  {symbol}: overlay LSR 數據不存在 ({lsr_type})")
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay LSR 載入失敗: {e}")
-
-        # OI 確認層數據：lsr_confirmatory + oi_confirm_enabled 時載入
-        if ("lsr_confirmatory" in overlay_mode
-                and overlay_params.get("oi_confirm_enabled", False)
-                and "_oi_series" not in overlay_params):
-            data_dir = params.get("_data_dir")
-            if data_dir:
-                try:
-                    from ..data.open_interest import (
-                        get_oi_path, load_open_interest, align_oi_to_klines,
-                    )
-                    from pathlib import Path
-                    data_dir_path = Path(data_dir)
-                    for _prov in ["merged", "binance_vision", "coinglass", "binance"]:
-                        _oi_path = get_oi_path(data_dir_path, symbol, _prov)
-                        _oi_df = load_open_interest(_oi_path)
-                        if _oi_df is not None and not _oi_df.empty:
-                            overlay_params["_oi_series"] = align_oi_to_klines(
-                                _oi_df, df.index, max_ffill_bars=2,
-                            )
-                            logger.debug(f"  {symbol}: overlay OI (for LSR confirm) 載入成功")
-                            break
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay OI (for LSR confirm) 載入失敗: {e}")
-
-        # FR 確認層數據：lsr_confirmatory + fr_confirm_enabled 時載入
-        if ("lsr_confirmatory" in overlay_mode
-                and overlay_params.get("fr_confirm_enabled", False)
-                and "_fr_series" not in overlay_params):
-            data_dir = params.get("_data_dir")
-            if data_dir:
-                try:
-                    from ..data.funding_rate import load_funding_rates, get_funding_rate_path
-                    from pathlib import Path
-                    data_dir_path = Path(data_dir)
-                    fr_path = get_funding_rate_path(data_dir_path, symbol)
-                    funding_df = load_funding_rates(fr_path)
-                    if funding_df is not None and not funding_df.empty:
-                        fr_col = "fundingRate" if "fundingRate" in funding_df.columns else funding_df.columns[0]
-                        fr_series = funding_df[fr_col]
-                        fr_aligned = fr_series.reindex(df.index, method="ffill")
-                        overlay_params["_fr_series"] = fr_aligned
-                        logger.debug(f"  {symbol}: overlay FR (for LSR confirm) 載入成功")
-                    else:
-                        logger.warning(f"  {symbol}: overlay FR 數據不存在")
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay FR (for LSR confirm) 載入失敗: {e}")
-
-        # 保存策略指標（overlay 操作會產生新 Series 丟失 attrs）
-        _saved_strategy_ind = getattr(positions, "attrs", {}).get("indicators")
-
-        positions = apply_overlay_by_mode(
-            position=positions,
-            price_df=df,
-            oi_series=oi_series,
-            params=overlay_params,
-            mode=overlay_mode,
+        positions = prepare_and_apply_overlay(
+            positions, df, overlay_cfg, symbol,
+            data_dir=params.get("_data_dir"),
+            injected_oi_series=params.get("_oi_series"),
         )
-        logger.info(f"📊 Live overlay applied: mode={overlay_mode}")
-
-        # 恢復策略指標
-        if _saved_strategy_ind:
-            positions.attrs["indicators"] = _saved_strategy_ind
 
     # 取最後一根 K 線的信號
     latest_signal = float(positions.iloc[-1])

@@ -34,6 +34,13 @@ model: fast
 - **每週**：Risk Guard dry-run、健康檢查、Alpha Decay 掃描、交易復盤、一致性 replay
 - **每月**：MC 重跑、相關性矩陣刷新、Kelly 校準、生產報告
 
+### Alpha Decay Action Protocol
+當 alpha_decay gate FAIL 時，按嚴重程度執行：
+- **Mild**（1 gate failed, borderline）：WARNING，增加監控頻率
+- **Moderate**（2 gates failed）：REDUCE，倉位降 50%
+- **Severe**（3 gates failed, 連續 2 週）：FLATTEN，觸發策略重新審查
+詳見 governance spec。
+
 ## 判決標準
 
 | Pre-Launch | 條件 | 後續 |
@@ -56,6 +63,7 @@ model: fast
 | Pre-Launch 審查步驟 (MC/Kelly/VaR/LaunchGuard) | `.cursor/skills/risk/pre-launch-audit.md` | 收到 GO_NEXT 時 |
 | 週期性審查流程 (weekly/monthly) | `.cursor/skills/risk/periodic-review.md` | /risk-review 時 |
 | 報告格式 + 判決 + Handoff + Action Items | `.cursor/skills/risk/report-format.md` | 撰寫報告或做判決時 |
+| Alpha Decay Governance（action protocol） | `.cursor/skills/validation/alpha-decay-governance.md` | Alpha Decay FAIL 時 / 週期審查時 |
 
 ## 關鍵參考文件
 

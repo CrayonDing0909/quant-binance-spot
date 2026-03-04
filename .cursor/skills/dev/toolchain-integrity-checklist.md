@@ -59,11 +59,54 @@
 
 ---
 
-## 4. 自動化檢查
+## 4. Config Mutation Prevention
 
-以下測試會在 CI 中自動驗證這些規則：
+### Dict 複製
+- [ ] Config dict（含嵌套 overlay/funding_rate/slippage_model）使用 `copy.deepcopy()`
+- [ ] **不要**用 `.copy()` 複製含嵌套結構的 dict（只複製第一層）
+- [ ] 在迴圈中使用 config dict 時（如 WFA grid search、多 symbol 回測），每次迭代都要 deepcopy
+
+### Params 傳遞
+- [ ] 不用 `params.pop()` — 會修改 caller 的 dict
+- [ ] 用 `params.get()` 讀取，需傳遞時建立新 dict
+- [ ] `_data_dir` 等注入型 key 在複製後的 dict 上操作，不修改原始 dict
+
+### Defaults 一致性
+- [ ] `load_config()` 中 `.get(key)` 不帶第二個參數（讓 dataclass default 生效）
+- [ ] 新增 config field 時，默認值只設在 dataclass definition 上
+
+---
+
+## 5. IC 監控 Pre-Flight（Alpha Decay）
+
+> Governance: `.cursor/skills/validation/alpha-decay-governance.md`
+
+### ic_monitor.py
+- [ ] Forward return 使用 `pct_change(forward_bars).shift(-forward_bars)` — 這是 IC 品質量測，非 PnL
+- [ ] Decay 公式有小分母保護：`|historical_ic| < min_ic_denominator` 時用絕對差
+- [ ] `min_ic_denominator` 來自 `validation.yaml`，不硬編碼
+
+### validation.yaml alpha_decay section
+- [ ] `recent_ic_min` 不超過 0.02（TSMOM 結構性低 IC）
+- [ ] `max_critical_alerts` 容許至少 1-2 個幣種暫時性問題
+- [ ] 門檻改動需有 Researcher 校準依據（不能 Developer 自行定）
+
+### 常見陷阱
+
+| 症狀 | 根因 | 修復 |
+|------|------|------|
+| Decay +240%/+1500% | 小分母爆炸：historical IC 近 0 | `min_ic_denominator` guard |
+| 全幣種 FAIL | `recent_ic_min` 太高 | 降至 0.005（TSMOM 常態） |
+| Gate 形同虛設 | `max_critical_alerts` 太寬鬆 | 保持 <= 2，配合 3-layer gate |
+
+---
+
+## 6. 自動化檢查
+
+以下測試會在 CI 中自動驗證上述規則：
 
 - `tests/test_data_dir_propagation.py` — data_dir 在所有驗證路徑中傳播
 - `tests/test_validation_pipeline.py` — DSR/PBO 基本正確性
 - `tests/test_resample_shift_guard.py` — HTF resample 必須 shift(1)
 - `tests/test_overlay_data_isolation.py` — overlay params 隔離
+- `tests/test_code_safety_guard.py` — 5 類反模式自動掃描（淺複製、params.pop、signal_delay、silent except、直接 vbt 呼叫）

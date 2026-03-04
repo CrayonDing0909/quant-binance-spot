@@ -365,7 +365,7 @@ def _apply_vol_scaling(
     pos: pd.Series,
     df: pd.DataFrame,
     target_vol: float = 0.15,
-    vol_lookback: int = 168,
+    vol_lookback: int = 168,  # 與 PositionSizingConfig.vol_lookback 一致
     max_scale: float = 2.0,
     min_scale: float = 0.1,
     interval: str = "1h",
@@ -506,122 +506,50 @@ def run_symbol_backtest(
     strategy_func = get_strategy(strategy_name)
 
     # 自動注入 _data_dir（讓策略可以自動載入 OI/FR 等輔助數據）
-    if data_dir is not None and "_data_dir" not in cfg["strategy_params"]:
-        cfg["strategy_params"]["_data_dir"] = data_dir
+    # ⚠️ 先複製再注入 — 防止修改呼叫者的 cfg dict（跨 symbol 交叉汙染）
+    strategy_params = dict(cfg["strategy_params"])
+    if data_dir is not None and "_data_dir" not in strategy_params:
+        strategy_params["_data_dir"] = data_dir
 
     # positions: [-1, 1] (Futures) 或 [0, 1] (Spot)
-    pos = strategy_func(df, ctx, cfg["strategy_params"])
+    pos = strategy_func(df, ctx, strategy_params)
 
     # ── Overlay 後處理（可選）──────────────────────────
-    # 如果 cfg 中有 overlay 配置，在 direction clip 前套用
-    # 這確保 overlay 也自動整合到 walk-forward pipeline
+    # 使用共用 overlay pipeline，確保 backtest 和 live 行為一致
     overlay_cfg = cfg.get("overlay")
     if overlay_cfg and overlay_cfg.get("enabled", False):
-        from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
-        import copy as _copy
-        overlay_mode = overlay_cfg.get("mode", "vol_pause")
-        # ⚠️ 必須 deepcopy：防止 per-symbol 的 _lsr_series / _oi_series / _fr_series
-        # 注入後汙染共用 dict（portfolio backtest 會跑多個 symbol）
-        overlay_params = _copy.deepcopy(overlay_cfg.get("params", {}))
-
-        # OI 資料：優先使用呼叫者注入的 _oi_series，否則自動從 data_dir 載入
-        # 支援複合模式：如 "oi_vol+lsr_confirmatory" 也需載入 OI
-        oi_series = cfg.get("_oi_series")
-        _needs_oi = any(m in overlay_mode for m in ("oi_only", "oi_vol"))
-        if oi_series is None and _needs_oi and data_dir:
-            from ..data.open_interest import get_oi_path, load_open_interest, align_oi_to_klines
-            for _prov in ["merged", "coinglass", "binance"]:
-                _oi_path = get_oi_path(data_dir, symbol, _prov)
-                _oi_df = load_open_interest(_oi_path)
-                if _oi_df is not None and not _oi_df.empty:
-                    oi_series = align_oi_to_klines(_oi_df, df.index, max_ffill_bars=2)
-                    break
-
-        # LSR 資料：overlay mode 含 lsr_confirmatory 時自動載入
-        if "lsr_confirmatory" in overlay_mode and "_lsr_series" not in overlay_params:
-            if data_dir:
-                try:
-                    from ..data.long_short_ratio import load_lsr, align_lsr_to_klines
-                    lsr_type = overlay_params.get("lsr_type", "lsr")
-                    deriv_dir = data_dir / "binance" / "futures" / "derivatives"
-                    lsr_raw = load_lsr(symbol, lsr_type, data_dir=deriv_dir)
-                    if lsr_raw is not None and not lsr_raw.empty:
-                        lsr_aligned = align_lsr_to_klines(lsr_raw, df.index, max_ffill_bars=2)
-                        overlay_params["_lsr_series"] = lsr_aligned
-                        logger.debug(f"  {symbol}: overlay LSR 載入成功 ({len(lsr_raw)} rows)")
-                    else:
-                        logger.warning(f"  {symbol}: overlay LSR 數據不存在 ({lsr_type})")
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay LSR 載入失敗: {e}")
-
-        # OI 確認層數據：lsr_confirmatory + oi_confirm_enabled 時載入 OI 到 overlay_params
-        if ("lsr_confirmatory" in overlay_mode
-                and overlay_params.get("oi_confirm_enabled", False)
-                and "_oi_series" not in overlay_params):
-            if data_dir:
-                try:
-                    from ..data.open_interest import get_oi_path, load_open_interest, align_oi_to_klines
-                    for _prov in ["merged", "coinglass", "binance"]:
-                        _oi_path = get_oi_path(data_dir, symbol, _prov)
-                        _oi_df = load_open_interest(_oi_path)
-                        if _oi_df is not None and not _oi_df.empty:
-                            overlay_params["_oi_series"] = align_oi_to_klines(
-                                _oi_df, df.index, max_ffill_bars=2
-                            )
-                            logger.debug(f"  {symbol}: overlay OI (for LSR confirm) 載入成功")
-                            break
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay OI (for LSR confirm) 載入失敗: {e}")
-
-        # FR 確認層數據：lsr_confirmatory + fr_confirm_enabled 時載入 FR 到 overlay_params
-        if ("lsr_confirmatory" in overlay_mode
-                and overlay_params.get("fr_confirm_enabled", False)
-                and "_fr_series" not in overlay_params):
-            if data_dir:
-                try:
-                    fr_path = get_funding_rate_path(data_dir, symbol)
-                    funding_df = load_funding_rates(fr_path)
-                    if funding_df is not None and not funding_df.empty:
-                        # 使用原始 funding rate 值（非對齊到結算時刻），用於 pctrank 計算
-                        fr_col = "fundingRate" if "fundingRate" in funding_df.columns else funding_df.columns[0]
-                        fr_series = funding_df[fr_col]
-                        fr_aligned = fr_series.reindex(df.index, method="ffill")
-                        overlay_params["_fr_series"] = fr_aligned
-                        logger.debug(f"  {symbol}: overlay FR (for LSR confirm) 載入成功 ({len(funding_df)} rows)")
-                    else:
-                        logger.warning(f"  {symbol}: overlay FR 數據不存在")
-                except Exception as e:
-                    logger.warning(f"  {symbol}: overlay FR (for LSR confirm) 載入失敗: {e}")
-
-        pos = apply_overlay_by_mode(
-            position=pos,
-            price_df=df,
-            oi_series=oi_series,
-            params=overlay_params,
-            mode=overlay_mode,
+        from ..strategy.overlays.overlay_pipeline import prepare_and_apply_overlay
+        pos = prepare_and_apply_overlay(
+            pos, df, overlay_cfg, symbol,
+            data_dir=data_dir,
+            injected_oi_series=cfg.get("_oi_series"),
         )
-        logger.info(f"📊 Overlay applied: mode={overlay_mode}")
 
     # 根據 direction 過濾信號（使用共用函數）
     pos = clip_positions_by_direction(pos, mt, dr)
 
     # ── 倉位縮放（position sizing）──────────────────
-    # 與實盤 runner 的 _apply_position_sizing 一致：
+    # 公式與實盤 runner 的 _apply_position_sizing 等價：
     #   - fixed:      pos *= position_pct（預設 1.0，不縮放）
-    #   - kelly:      pos *= kelly_pct * kelly_fraction（使用配置的 win_rate/avg_win/avg_loss）
-    #   - volatility: pos *= target_vol / realized_vol
+    #   - kelly:      pos *= kelly_pct（使用 KellyPositionSizer 計算）
+    #   - volatility: pos *= target_vol / realized_vol（向量化 per-bar 縮放）
+    #
+    # 默認值全部取自 PositionSizingConfig（確保 backtest / live 一致）。
+    # 回測用向量化實現（效能考量），live 用 PositionSizer 類別（單點計算）。
+    from ..config import PositionSizingConfig as _PSDefaults
+
     ps_cfg = cfg.get("position_sizing", {})
-    ps_method = ps_cfg.get("method", "fixed")
-    ps_pct = ps_cfg.get("position_pct", 1.0)
+    ps_method = ps_cfg.get("method", _PSDefaults.method)
+    ps_pct = ps_cfg.get("position_pct", _PSDefaults.position_pct)
 
     if ps_method == "kelly":
-        kelly_fraction = ps_cfg.get("kelly_fraction", 0.25)
+        kelly_fraction = ps_cfg.get("kelly_fraction", _PSDefaults.kelly_fraction)
         win_rate = ps_cfg.get("win_rate")
         avg_win = ps_cfg.get("avg_win")
         avg_loss = ps_cfg.get("avg_loss")
 
         if win_rate is not None and avg_win is not None and avg_loss is not None:
-            # 使用配置提供的統計（與 live runner 一致）
+            # 使用 KellyPositionSizer 計算 kelly_pct（與 live runner 相同類別）
             try:
                 from ..risk.position_sizing import KellyPositionSizer
                 ks = KellyPositionSizer(
@@ -646,8 +574,8 @@ def run_symbol_backtest(
                 "不縮放（請先跑 kelly_validation 取得統計後填入配置）"
             )
     elif ps_method == "volatility":
-        target_vol = ps_cfg.get("target_volatility", 0.15)
-        vol_lookback = ps_cfg.get("vol_lookback", 168)
+        target_vol = ps_cfg.get("target_volatility", _PSDefaults.target_volatility)
+        vol_lookback = ps_cfg.get("vol_lookback", _PSDefaults.vol_lookback)
         pos = _apply_vol_scaling(
             pos, df,
             target_vol=target_vol,

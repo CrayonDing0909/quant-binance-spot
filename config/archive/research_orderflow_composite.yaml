@@ -1,0 +1,116 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — Orderflow Composite Standalone Strategy
+# ═══════════════════════════════════════════════════════════════
+# Purpose: Evaluate orderflow-based standalone strategy as complement to TSMOM
+# Origin: ALPHA_RESEARCH_MAP #18 (VPIN) + #10 (microstructure) + plan
+# Data: taker_vol_ratio from Binance Vision derivatives (2021-12+)
+#
+# DESIGN RATIONALE:
+#   This is NOT a filter/overlay on TSMOM. It is a structurally different
+#   standalone strategy that uses microstructure data (taker flow) instead
+#   of price momentum. Goal: corr(TSMOM, orderflow) < 0.30.
+#
+#   Literature:
+#     - Cont et al. (2014): OFI → direction
+#     - Easley et al. (2012): VPIN → confidence
+#     - Standard CVD: trend confirmation
+#
+# DATA REQUIREMENTS:
+#   1. Klines: data/binance/futures/1h/{SYMBOL}.parquet
+#   2. Derivatives: data/binance/futures/derivatives/taker_vol_ratio/{SYMBOL}.parquet
+#   Download:
+#     PYTHONPATH=src python scripts/download_data.py -c config/research_orderflow_composite.yaml \
+#       --source binance_vision --derivatives
+#
+# SUCCESS CRITERIA:
+#   - Standalone SR > 1.0
+#   - corr(TSMOM, orderflow) < 0.30
+#   - Portfolio SR improvement when blended
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - ADAUSDT
+    - XRPUSDT
+    - LINKUSDT
+  interval: "1h"
+  # taker_vol_ratio starts from 2021-12 on Binance Vision
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "orderflow_composite"
+  display_name: "Orderflow Composite (Research)"
+  params:
+    # ── Signal Mode ──
+    contrarian: true   # fade the flow (1h OFI is mean-reverting at short horizons)
+
+    # ── OFI Direction ──
+    ofi_ema_span: 24         # heavier smoothing (was 12)
+    ofi_lookback: 48         # medium lookback (was 24, avoids IC dead zone)
+    ofi_tanh_scale: 1.5      # less aggressive compression
+
+    # ── VPIN Confidence ──
+    vpin_window: 72          # longer window → more stable VPIN (was 50)
+    vpin_lookback: 720
+    vpin_min_scale: 0.5      # higher floor → less VPIN-driven sizing swing
+
+    # ── CVD Confirmation ──
+    cvd_lookback: 168        # longer → more stable trend (was 72)
+    cvd_ema_span: 48         # heavier smoothing (was 24)
+    cvd_agree_scale: 1.0
+    cvd_disagree_scale: 0.3  # more penalty for disagreement (was 0.5)
+    cvd_neutral_scale: 0.5   # less neutral → more decisive (was 0.7)
+
+    # ── Threshold Positions (replaces continuous quantization) ──
+    entry_threshold: 0.25    # only enter when |signal| > 0.25
+    exit_threshold: 0.10     # exit when |signal| < 0.10 (hysteresis band)
+    composite_ema: 24        # heavy EMA smoothing before threshold
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.40
+    ETHUSDT: 0.40
+    SOLUSDT: 0.35
+    BNBUSDT: 0.35
+    DOGEUSDT: 0.35
+    ADAUSDT: 0.35
+    XRPUSDT: 0.35
+    LINKUSDT: 0.35
+
+output:
+  report_dir: "./reports/research/orderflow_composite"

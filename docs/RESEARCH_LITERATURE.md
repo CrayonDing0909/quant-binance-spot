@@ -1,4 +1,4 @@
-> **Last updated**: 2026-02-26
+> **Last updated**: 2026-03-02
 
 # 量化策略學術文獻參考庫
 
@@ -115,20 +115,72 @@
 
 ---
 
-## Microstructure（市場微結構）
+## Microstructure / Order Flow / Auction Market Theory（市場微結構 / 訂單流 / 拍賣市場理論）
 
-### 經典文獻
-- Kyle (1985) "Continuous Auctions and Insider Trading" — 資訊不對稱與價格衝擊
-- Hasbrouck (1991) "Measuring the Information Content of Stock Trades" — 訂單流信息含量
+### 經典文獻 — 理論基礎
+
+#### 市場微結構核心模型
+- Kyle (1985) "Continuous Auctions and Insider Trading" — 資訊不對稱下的連續拍賣模型，定義了 market impact 的線性框架（lambda 參數），奠定 order flow 理論的數學基礎
+- Glosten & Milgrom (1985) "Bid, Ask, and Transaction Prices in a Specialist Market with Heterogeneously Informed Traders" — 序貫交易模型：每筆交易帶有信息，market maker 從 order flow 推斷 informed trading，解釋了 bid-ask spread 的信息成分
+- Easley & O'Hara (1992) "Time and the Process of Security Price Adjustment" — PIN (Probability of Informed Trading) 模型，用交易到達率推斷知情交易比例；VPIN 的理論前身
+- Hasbrouck (1991) "Measuring the Information Content of Stock Trades" — 用 VAR 模型量化每筆交易的「信息衝擊」，區分永久性 vs 暫時性價格影響
+
+#### Order Flow Imbalance (OFI) 與 Price Impact
+- ⭐ Cont, Kukanov & Stoikov (2014) "The Price Impact of Order Book Events", Quantitative Finance, 14(1), 109-126 — **最重要的現代 OFI 論文**。定義了 Order Flow Imbalance 指標，實證證明 OFI 對短期價格變動有線性預測力。量化 orderflow 策略的數學基礎
+- Bouchaud, Farmer & Lillo (2009) "How Markets Slowly Digest Changes in Supply and Demand" — Order flow 的長記憶性（long memory）研究，limit order book 的統計特性（冪律分布、自相關結構）
+- Cont (2001) "Empirical Properties of Asset Returns" — 金融資產收益的程式化事實（stylized facts），包含波動率叢集、肥尾、volume-volatility 相關等
+
+#### VPIN 與 Informed Trading 偵測
+- ⭐ Easley, López de Prado & O'Hara (2012) "Flow Toxicity and Liquidity in a High-Frequency World", Review of Financial Studies, 25(5) — VPIN (Volume-Synchronized Probability of Informed Trading) 指標，用 volume clock 替代 time clock 偵測 informed trading。2010 Flash Crash 前 VPIN 飆升的經典實證
+
+#### Auction Market Theory (AMT) 與 Market/Volume Profile
+- Steidlmayer & Koy (1986) "Markets and Market Logic" — AMT 的開山之作。CBOT 交易員 Steidlmayer 開發的 Market Profile：價格在「公允價值」附近形成鐘形分布，偏離→回歸
+- Dalton, Jones & Dalton (1993) "Mind Over Markets" — Market Profile 實戰聖經。系統教授 TPO (Time-Price Opportunity) profile：trending day, normal day, double distribution day 等市場結構分類
+- Dalton (2007) "Markets in Profile" — Mind Over Markets 續作，加入電子交易時代的市場結構適應
+- Steidlmayer & Hawkins (2003) "Steidlmayer on Markets" — 更新版 AMT 框架，融入電子市場理解
+
+#### 教科書
+- Cartea, Jaimungal & Penalva (2015) "Algorithmic and High-Frequency Trading" (Cambridge Univ Press) — HFT / market making / order flow 系統性教科書，涵蓋最優執行、做市模型、order book 動態
+- O'Hara (1995) "Market Microstructure Theory" — 市場微結構理論的經典教科書
+
+### 實務書籍（非學術但有操作價值）
+- Trader Dale (2018) "Volume Profile: The Insider's Guide to Trading" — 實務導向的 Volume Profile 教程：POC (Point of Control)、Value Area (VA)、HVN/LVN 作為支撐/阻力
+- 開源證券《市場微觀結構研究系列》（25+ 篇系列報告）— 掛單方向長期記憶性、訂單流失衡因子、撤單行為等；國內最系統的 orderflow 量化研究系列
 
 ### 加密貨幣專屬
+- Makarov & Schoar (2020) "Trading and Arbitrage in Cryptocurrency Markets" — 跨交易所 orderflow 動態、套利效率
+- Alexander & Heck (2020) "A Critical Investigation of Cryptocurrency Data and Analysis" — 加密市場微結構特殊性：24/7 交易、碎片化流動性、wash trading 問題
+- Dyhrberg, Foley & Svec (2018) "How Investible is Bitcoin? Analyzing the Liquidity and Transaction Costs of Bitcoin Markets" — BTC 市場的流動性結構和 market microstructure
 - Taker Buy/Sell Imbalance 和 CVD（Cumulative Volume Delta）是加密市場主要的微結構信號
 - 5m/15m 級別的微結構信號換手率極高（~12× 1h 策略），成本壓力巨大
 
 ### 關鍵洞察
-- 微結構信號更適合作為 overlay（改善入場時機）而非獨立策略
+
+**理論框架（三層結構）**：
+| 層次 | 概念 | 核心問題 |
+|------|------|---------|
+| 理論基礎 | Auction Market Theory (AMT) | 市場如何透過買賣雙方的拍賣機制發現「公允價格」？ |
+| 可視化工具 | Market Profile / Volume Profile | 如何把成交量在「價格維度」上展開，找出高/低成交區？ |
+| 執行層 | Order Flow (Footprint / Delta / OFI) | 在微觀層面，誰在主動買？誰在主動賣？力量如何演變？ |
+
+**核心概念**：
+- **Volume Profile**：POC (Point of Control) = 成交量最大的價格；Value Area (VA) = 包含 70% 成交量的價格區間；HVN (High Volume Node) = 支撐/阻力，LVN (Low Volume Node) = 價格快速穿越區
+- **OFI (Order Flow Imbalance)**：衡量主動買入 vs 主動賣出的淨差值，Cont et al. 2014 證實對短期價格有線性預測力
+- **VPIN**：用 volume clock 偵測 informed trading 的密度，可作為 regime indicator（高 VPIN = 高毒性 = 高風險）
+- **CVD (Cumulative Volume Delta)**：主動買賣的累積差值，追蹤買賣方力量的長期變化趨勢
+
+**對本系統的適用性評估**：
+- 微結構信號更適合作為 **overlay**（改善入場時機）而非獨立策略
 - 終止條件：5m/15m 信號的 IC 在 2× slippage 下歸零（net edge < 0）即 FAIL
 - 成本是最大敵人：年化成本可能是 1h 策略的 4-12 倍
+- **Volume Profile 是最可行的研究方向**：可用現有 1h OHLCV 近似構建，POC/VA 作為 HTF filter 的增強，不需要 tick data
+- **VPIN 是次可行方向**：需要 aggTrades 數據（Binance Vision 可下載），但信號是 daily 級別，與我們的 1h 框架相容
+- **OFI 短期預測可行性最低**：需要 tick data + order book snapshot，數據量極大且與 1h 策略框架衝突
+
+**數據限制**：
+- Order Book depth 無歷史數據（僅 live WebSocket stream），`order_book.py` 已建基礎設施但無回測資料
+- aggTrades（逐筆成交）有歷史（Binance Vision），但 1 天 BTC ≈ 數百 MB，處理成本高
+- 經驗：2026-02 TVR EDA 顯示 IC=-0.006（弱逆向但獨立），CVD 不穩定（IC 年度翻轉）
 
 ---
 
@@ -137,6 +189,15 @@
 ### 加密市場總論
 - Bouri et al. (2019) "On the Hedge and Safe Haven Properties of Bitcoin" — BTC 作為避風港的有限性
 - Corbet et al. (2019) "Cryptocurrencies as a Financial Asset: A Systematic Analysis" — 加密資產的統計特性總覽
+
+### 資訊理論 / Entropy
+- Bandt & Pompe (2002) "Permutation Entropy: A Natural Complexity Measure for Time Series" — Permutation Entropy 原始論文，用 ordinal pattern 衡量時序隨機性，快速且穩健
+- Pincus (1991) "Approximate Entropy as a Complexity Measure" — Approximate Entropy 原始論文，衡量時序的自我相似性/規則性
+- Richman & Moorman (2000) "Physiological Time-Series Analysis Using Approximate Entropy and Sample Entropy" — Sample Entropy 改進 ApEn 的偏差問題
+- Risso (2008) "The Informational Efficiency and the Financial Crashes" — 用 Shannon entropy 偵測金融市場的結構性變化
+- Zunino et al. (2009) "Forbidden Patterns, Permutation Entropy and Stock Market Inefficiency" — PE 應用於金融市場效率檢測
+
+> **實測結論 (2026-03-02)**：PE/SE/ApEn 3 種 entropy 應用於 8 crypto symbols 1h OHLCV，所有 IC < 0.01。加密 1h 序列太接近 random walk，entropy 不含有用交易信息。Entropy ≠ vol proxy（好消息），但也 ≠ alpha（壞消息）。
 
 ### 量化方法論
 - López de Prado (2018) "Advances in Financial Machine Learning" — 金融 ML 的去偏方法（PBO、CPCV、DSR）

@@ -448,8 +448,8 @@ def generate_oi_liq_bounce(
         data_dir = params.get("_data_dir")
         if data_dir is not None:
             try:
-                from ..data.open_interest import get_oi_path, load_open_interest, align_oi_to_klines
-                for prov in ["merged", "binance_vision", "coinglass", "binance"]:
+                from ..data.open_interest import get_oi_path, load_open_interest, align_oi_to_klines, OI_PROVIDER_SEARCH_ORDER
+                for prov in OI_PROVIDER_SEARCH_ORDER:
                     oi_path = get_oi_path(data_dir, ctx.symbol, prov)
                     oi_df = load_open_interest(oi_path)
                     if oi_df is not None and not oi_df.empty:

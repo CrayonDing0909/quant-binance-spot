@@ -123,3 +123,4 @@ from . import multi_tf_resonance_strategy  # noqa: E402
 from . import derivatives_enhanced_strategy  # noqa: E402
 from . import low_freq_portfolio_strategy  # noqa: E402
 from . import lsr_contrarian_strategy  # noqa: E402
+from . import orderflow_composite_strategy  # noqa: E402

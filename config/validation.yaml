@@ -33,7 +33,9 @@ cross_asset:
 prado_methods:
   deflated_sharpe:
     enabled: true
-    n_trials: 729  # Grid search 組合數（參數敏感性測試）
+    # n_trials 現在從 trial_registry.cumulative_n_trials 自動讀取
+    # 若 trial_registry 不存在則回退到此值
+    n_trials: 729  # Grid search 組合數（單策略參數敏感性）
   
   pbo:
     enabled: true
@@ -54,7 +56,23 @@ consistency:
   days: 7         # 回看天數
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Market Regime Periods (供參考)
+# Cost Stress Test（成本壓力測試）
+# ══════════════════════════════════════════════════════════════════════════════
+cost_stress:
+  enabled: true
+  multipliers: [1.5, 2.0]  # 1.5× 和 2× 成本
+  pass_criteria: "sharpe_positive"  # 2× 成本下 SR 仍 > 0
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Delay Stress Test（延遲壓力測試）
+# ══════════════════════════════════════════════════════════════════════════════
+delay_stress:
+  enabled: true
+  extra_delay_bars: 1       # 額外延遲 bar 數（signal_delay = 1 + 1 = 2）
+  max_sharpe_drop_pct: 50   # SR drop < 50% → PASS
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Market Regime Periods
 # ══════════════════════════════════════════════════════════════════════════════
 market_regimes:
   - name: "crypto_winter_2022"
@@ -78,9 +96,13 @@ market_regimes:
     description: "2024 減半後行情"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Out-of-Sample Testing (供參考)
+# Holdout Out-of-Sample Testing（保留樣本外測試）
 # ══════════════════════════════════════════════════════════════════════════════
-oos_testing:
+# 對每個 period：用 train 期間跑回測取得 IS SR，
+# 再用 test 期間評估取得 OOS SR。若 OOS SR < IS SR × 0.5 → FAIL。
+holdout_oos:
+  enabled: true
+  max_degradation: 0.5  # OOS SR < IS SR × (1 - max_degradation) → FAIL
   periods:
     - name: "full_history"
       train_start: "2017-08-17"  # BTC 上線
@@ -91,6 +113,31 @@ oos_testing:
       train_start: "2022-01-01"
       train_end: "2024-12-31"
       test_start: "2025-01-01"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Alpha Decay（因子衰減）
+# ══════════════════════════════════════════════════════════════════════════════
+# 監控信號品質是否在近期衰退，避免「回測有效、近期失效」。
+#
+# Governance spec: .cursor/skills/validation/alpha-decay-governance.md
+# Owner: Quant Researcher (methodology) → Developer (impl) → Risk (action)
+#
+# Three-layer gate:
+#   Gate A (quality):   avg recent IC >= recent_ic_min
+#   Gate B (stability): avg decay <= max_decay_pct (with small-denominator guard)
+#   Gate C (confidence): critical alerts <= max_critical_alerts
+#
+# TSMOM strategies have structurally low IC (~0.005-0.015).
+# Do NOT set recent_ic_min > 0.02 for momentum strategies.
+alpha_decay:
+  enabled: true
+  forward_bars: 24            # IC 前瞻收益計算視窗（1h=1天）
+  window_days: 180            # rolling IC 計算窗口
+  recent_days: 180            # recent vs historical 分段
+  recent_ic_min: 0.005        # Gate A: TSMOM IC 結構性低，0.005 = noise floor
+  max_decay_pct: 0.6          # Gate B: 60% decay 上限（小分母模式用絕對差）
+  max_critical_alerts: 2      # Gate C: 容許 2 個幣種有暫時性問題
+  min_ic_denominator: 0.01    # 小分母保護：|historical_ic| < 此值時改用絕對差
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Thresholds (驗證閾值)
@@ -114,3 +161,206 @@ thresholds:
   
   # Consistency
   min_consistency_rate: 0.95       # 最小一致性
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Trial Registry（多重測試修正 — DSR n_trials 真實來源）
+# ══════════════════════════════════════════════════════════════════════════════
+# 每次新研究方向 FAIL/PASS 後，必須更新此處的 n_trials。
+# DSR 使用 cumulative_n_trials 而非 deflated_sharpe.n_trials。
+# 計算邏輯：每個研究方向的 lookback × indicator × threshold 組合數，累加。
+#
+# 維護規則（亦記載於 failure-registry.md Maintenance Rules）：
+#   - 每次新研究方向結論（FAIL / GO / KEEP_BASELINE）後，新增一行
+#   - 更新 cumulative_n_trials = Σ directions[*].estimated_variants
+trial_registry:
+  # 累積策略/變體測試數量 — DSR 實際使用此值
+  cumulative_n_trials: 2463
+
+  # 各研究方向明細（供審計追溯）
+  directions:
+    # ── 核心策略參數 grid search ──
+    - id: "core_grid_search"
+      description: "TSMOM+Carry grid search (lookback × weight × threshold)"
+      estimated_variants: 729
+      status: "production"
+      date: "2026-02-26"
+
+    # ── Alpha Research Map 方向 ──
+    - id: "#1_tsmom_core"
+      description: "TSMOM EMA cross variants (lookback × smoothing)"
+      estimated_variants: 50
+      status: "production"
+      date: "2026-02-25"
+
+    - id: "#2_carry_fr_proxy"
+      description: "Carry / FR proxy variants"
+      estimated_variants: 30
+      status: "production"
+      date: "2026-02-25"
+
+    - id: "#3_htf_filter_v2"
+      description: "HTF Filter 4h+Daily variants (EMA × ADX × threshold)"
+      estimated_variants: 80
+      status: "production"
+      date: "2026-02-26"
+
+    - id: "#4_lsr_overlay"
+      description: "LSR overlay variants (pctrank × boost × reduce × confirm)"
+      estimated_variants: 60
+      status: "production"
+      date: "2026-02-27"
+
+    - id: "#5_bb_mean_reversion"
+      description: "Bollinger Band MR (8 symbols × param variants)"
+      estimated_variants: 40
+      status: "FAIL"
+      date: "2026-02-25"
+
+    - id: "#6_vol_squeeze"
+      description: "Vol Squeeze independent strategy"
+      estimated_variants: 30
+      status: "FAIL"
+      date: "2026-02-25"
+
+    - id: "#7_fr_carry_standalone"
+      description: "FR direct carry strategy"
+      estimated_variants: 20
+      status: "FAIL"
+      date: "2026-02-25"
+
+    - id: "#8_oi_spike"
+      description: "OI Spike strategy"
+      estimated_variants: 20
+      status: "FAIL"
+      date: "2026-02-25"
+
+    - id: "#9_oi_liq_bounce"
+      description: "OI Liq Bounce v1-v4.2 (lookback × threshold × SL/TP)"
+      estimated_variants: 80
+      status: "SHELVED"
+      date: "2026-02-27"
+
+    - id: "#10_xsmom"
+      description: "XSMOM cross-sectional momentum (6 variants)"
+      estimated_variants: 30
+      status: "FAIL"
+      date: "2026-02-27"
+
+    - id: "#11_4h_tf_optimization"
+      description: "4h TF replacement variants"
+      estimated_variants: 40
+      status: "FAIL"
+      date: "2026-02-27"
+
+    - id: "#12_taker_vol_overlay"
+      description: "TVR + CVD overlay variants (smoothing × pctile × mode)"
+      estimated_variants: 70
+      status: "WEAK_GO"
+      date: "2026-02-27"
+
+    - id: "#13_oi_regime_filter"
+      description: "OI regime filter (13 indicators × threshold × lookback)"
+      estimated_variants: 80
+      status: "FAIL"
+      date: "2026-02-28"
+
+    - id: "#14_onchain_regime"
+      description: "On-chain regime filter (18 indicators × threshold × lookback)"
+      estimated_variants: 100
+      status: "KEEP_BASELINE"
+      date: "2026-02-28"
+
+    - id: "#15_tier_ablation"
+      description: "Tier ablation 5-config (A/B/C/D/E)"
+      estimated_variants: 50
+      status: "production"
+      date: "2026-02-28"
+
+    - id: "#16_volume_profile"
+      description: "VP indicators (5 × 3 lookbacks × thresholds + ablation)"
+      estimated_variants: 80
+      status: "FAIL"
+      date: "2026-03-01"
+
+    - id: "#17_macro_regime"
+      description: "Macro regime (26 indicators × threshold × lookback + ablation)"
+      estimated_variants: 120
+      status: "KEEP_BASELINE"
+      date: "2026-03-01"
+
+    - id: "#18_vpin_regime"
+      description: "VPIN regime filter (VPIN × delta variants × threshold + ablation)"
+      estimated_variants: 60
+      status: "KEEP_BASELINE"
+      date: "2026-03-02"
+
+    - id: "#19_entropy_regime"
+      description: "Entropy regime (3 measures × 3 lookbacks × thresholds)"
+      estimated_variants: 54
+      status: "FAIL"
+      date: "2026-03-02"
+
+    - id: "#20_orderflow_composite"
+      description: "Orderflow composite standalone (OFI+VPIN+CVD × modes × thresholds)"
+      estimated_variants: 90
+      status: "FAIL"
+      date: "2026-03-02"
+
+    - id: "#21_breakout_vol_atr"
+      description: "BTC breakout_vol_atr blend (20 params)"
+      estimated_variants: 50
+      status: "FAIL"
+      date: "2026-02-28"
+
+    - id: "#22_lsr_standalone_retail_vs_top"
+      description: "retail_vs_top LSR standalone variants"
+      estimated_variants: 30
+      status: "FAIL"
+      date: "2026-02-27"
+
+    # ── 新方向加在此處 ──
+    # - id: "#XX_new_direction"
+    #   description: "..."
+    #   estimated_variants: N
+    #   status: "FAIL/GO/KEEP_BASELINE"
+    #   date: "YYYY-MM-DD"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Data Embargo（研究數據隔離 — 確保真 OOS）
+# ══════════════════════════════════════════════════════════════════════════════
+# 目的：所有 research scripts 只能使用 embargo cutoff 之前的數據進行研究。
+# embargo 區間內的數據保留為純粹的 holdout，在 validation 階段才使用。
+# 這是防止「已看過所有數據」問題的唯一有效措施。
+#
+# 使用方式：
+#   from qtrade.validation.embargo import load_embargo_config, enforce_temporal_embargo
+#   embargo = load_embargo_config("config/validation.yaml")
+#   df = enforce_temporal_embargo(df, embargo)  # 自動截斷
+#
+data_embargo:
+  # ── 時間 Embargo ──
+  # 鎖住最近 N 個月的數據，研究只能用 cutoff 之前的資料。
+  # Validation 的 holdout test 用 embargo 區間做最終 OOS 評估。
+  temporal:
+    enabled: true
+    embargo_months: 3        # ~2160 bars at 1h，足夠統計意義
+    # 研究用數據截止：now() - embargo_months
+    # 例：today=2026-03-02 → cutoff=2025-12-02 → 研究只能用到 2025-12-02
+
+  # ── 幣種 Embargo ──
+  # 保留 1-2 個 symbol 完全不參與研究/ablation。
+  # 最後用 embargo symbols 做 cross-symbol OOS 驗證。
+  # 選擇標準：
+  #   1. 不在生產 8 幣種中（BTCUSDT/ETHUSDT/SOLUSDT/BNBUSDT/DOGEUSDT/ADAUSDT/AVAXUSDT/LINKUSDT）
+  #   2. 不在任何研究腳本的 symbol list 中
+  #   3. 有足夠歷史數據（>= 5 年）和流動性
+  #   4. 非核心幣種（不是 BTC/ETH）
+  #
+  # ⚠️ 注意：AVAXUSDT 是生產幣種，不能做 embargo！
+  symbol:
+    enabled: true
+    embargo_symbols: ["DOTUSDT", "ATOMUSDT"]
+    # DOTUSDT: 5.5yr, 48K bars — 僅出現在舊 R3C universe（已棄用），未在簡化策略研究中使用
+    # ATOMUSDT: 6.0yr, 53K bars — 僅出現在 build_universe 候選列表，從未被研究
+    # 研究/ablation 只用其餘 symbols
+    # validation 時用 embargo symbols 測試策略泛化能力

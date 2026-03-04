@@ -236,6 +236,7 @@ class ConsistencyChecker:
             interval="1h",
             market_type=self.market_type,
             direction=self.direction,
+            signal_delay=0,  # 驗證工具：直接比對原始信號，不延遲
         )
         params = self.backtest_cfg.get("strategy_params", {})
         
@@ -294,6 +295,7 @@ class ConsistencyChecker:
             interval="1h",
             market_type=self.market_type,
             direction=self.direction,
+            signal_delay=0,  # 驗證工具：檢查原始信號時序
         )
         params = self.backtest_cfg.get("strategy_params", {})
         
@@ -430,6 +432,7 @@ class ConsistencyChecker:
             interval="1h",
             market_type=self.market_type,
             direction=self.direction,
+            signal_delay=0,  # 驗證工具：確認多次執行一致性
         )
         params = self.backtest_cfg.get("strategy_params", {})
         
@@ -463,6 +466,7 @@ class ConsistencyChecker:
             interval="1h",
             market_type=self.market_type,
             direction=self.direction,
+            signal_delay=0,  # 驗證工具：測試邊界行為
         )
         params = self.backtest_cfg.get("strategy_params", {})
         
@@ -536,6 +540,7 @@ class ConsistencyChecker:
             interval="1h",
             market_type=self.market_type,
             direction=self.direction,
+            signal_delay=0,  # 驗證工具：確認分段執行狀態一致
         )
         params = self.backtest_cfg.get("strategy_params", {})
         

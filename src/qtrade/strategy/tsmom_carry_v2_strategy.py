@@ -458,6 +458,160 @@ def _load_and_align_onchain_indicator(
         return None
 
 
+def _load_and_align_macro_indicator(
+    kline_index: pd.DatetimeIndex,
+    data_dir: str | Path = "data",
+    gld_window: int = 60,
+    vix_window: int = 30,
+    zscore_lookback: int = 252,
+) -> Optional[pd.Series]:
+    """
+    載入宏觀跨市場 regime 指標（GLD + VIX combined score）並對齊到 kline index
+
+    Combined Score = (-GLD_zscore + VIX_zscore) / 2
+    正值 = risk-on（VIX 反彈 or GLD 回落）
+    負值 = risk-off（GLD 大漲 or VIX 低迷）
+
+    數據流程：
+      1. 讀取快取 parquet（data/macro/gld_daily.parquet, vix_daily.parquet）
+      2. 若無快取，嘗試 yfinance 下載並存檔
+      3. 計算各自 momentum → zscore
+      4. Combined score
+      5. shift(1) 延遲 1 天（前一日收盤後才可用）
+      6. reindex to kline_index (ffill)
+
+    Args:
+        kline_index:      目標 K 線時間索引
+        data_dir:         數據根目錄
+        gld_window:       GLD momentum 窗口（天）
+        vix_window:       VIX momentum 窗口（天）
+        zscore_lookback:  z-score rolling 窗口（天，預設 252 = ~1 交易年）
+
+    Returns:
+        對齊後的宏觀 regime score 序列，或 None
+    """
+    try:
+        macro_dir = Path(data_dir) / "macro"
+        macro_dir.mkdir(parents=True, exist_ok=True)
+
+        gld_path = macro_dir / "gld_daily.parquet"
+        vix_path = macro_dir / "vix_daily.parquet"
+
+        gld_daily = None
+        vix_daily = None
+
+        # --- 嘗試讀取快取 ---
+        if gld_path.exists():
+            gld_df = pd.read_parquet(gld_path)
+            if "Close" in gld_df.columns:
+                gld_daily = gld_df["Close"]
+            elif "close" in gld_df.columns:
+                gld_daily = gld_df["close"]
+
+        if vix_path.exists():
+            vix_df = pd.read_parquet(vix_path)
+            if "Close" in vix_df.columns:
+                vix_daily = vix_df["Close"]
+            elif "close" in vix_df.columns:
+                vix_daily = vix_df["close"]
+
+        # --- 若無快取，嘗試下載 ---
+        if gld_daily is None or vix_daily is None:
+            try:
+                import yfinance as yf
+
+                start_str = "2017-01-01"
+                if gld_daily is None:
+                    logger.info("macro_regime: Downloading GLD data via yfinance...")
+                    gld_data = yf.download("GLD", start=start_str, auto_adjust=True, progress=False)
+                    if gld_data is not None and len(gld_data) > 0:
+                        # Flatten multi-level columns if present
+                        if isinstance(gld_data.columns, pd.MultiIndex):
+                            gld_data.columns = gld_data.columns.get_level_values(0)
+                        gld_data.to_parquet(gld_path)
+                        gld_daily = gld_data["Close"]
+                        logger.info(f"macro_regime: GLD cached, {len(gld_daily)} rows")
+
+                if vix_daily is None:
+                    logger.info("macro_regime: Downloading VIX data via yfinance...")
+                    vix_data = yf.download("^VIX", start=start_str, auto_adjust=True, progress=False)
+                    if vix_data is not None and len(vix_data) > 0:
+                        if isinstance(vix_data.columns, pd.MultiIndex):
+                            vix_data.columns = vix_data.columns.get_level_values(0)
+                        vix_data.to_parquet(vix_path)
+                        vix_daily = vix_data["Close"]
+                        logger.info(f"macro_regime: VIX cached, {len(vix_daily)} rows")
+            except ImportError:
+                logger.warning("macro_regime: yfinance 未安裝，無法下載宏觀數據")
+                return None
+            except Exception as e:
+                logger.warning(f"macro_regime: yfinance 下載失敗: {e}")
+                # 繼續嘗試已有的資料
+
+        if gld_daily is None or vix_daily is None:
+            logger.warning("macro_regime: GLD or VIX 數據不可用")
+            return None
+
+        # Ensure datetime index
+        gld_daily.index = pd.to_datetime(gld_daily.index)
+        vix_daily.index = pd.to_datetime(vix_daily.index)
+
+        # Remove timezone for alignment
+        if gld_daily.index.tz is not None:
+            gld_daily.index = gld_daily.index.tz_localize(None)
+        if vix_daily.index.tz is not None:
+            vix_daily.index = vix_daily.index.tz_localize(None)
+
+        # --- 計算 momentum ---
+        gld_mom = gld_daily.pct_change(gld_window)
+        vix_mom = vix_daily.pct_change(vix_window)
+
+        # --- 計算 z-score ---
+        def _zscore(s: pd.Series, window: int) -> pd.Series:
+            mu = s.rolling(window, min_periods=window // 2).mean()
+            sigma = s.rolling(window, min_periods=window // 2).std()
+            return (s - mu) / sigma.replace(0, np.nan)
+
+        gld_z = _zscore(gld_mom, zscore_lookback)
+        vix_z = _zscore(vix_mom, zscore_lookback)
+
+        # --- Combined score: (-GLD_z + VIX_z) / 2 ---
+        # GLD rally = risk-off → negative contribution
+        # VIX spike = contrarian recovery → positive contribution
+        common_idx = gld_z.dropna().index.intersection(vix_z.dropna().index)
+        if len(common_idx) < 100:
+            logger.warning(f"macro_regime: insufficient common data ({len(common_idx)} days)")
+            return None
+
+        gld_z_aligned = gld_z.reindex(common_idx)
+        vix_z_aligned = vix_z.reindex(common_idx)
+        combined = (-gld_z_aligned + vix_z_aligned) / 2
+
+        # --- shift(1): 延遲 1 天確保因果性（前一日收盤後才可用）---
+        combined = combined.shift(1)
+
+        # --- Timezone alignment ---
+        if kline_index.tz is not None and combined.index.tz is None:
+            combined.index = combined.index.tz_localize(kline_index.tz)
+        elif kline_index.tz is None and combined.index.tz is not None:
+            combined.index = combined.index.tz_localize(None)
+
+        # --- reindex to kline_index (ffill, daily → 1h) ---
+        aligned = combined.reindex(kline_index, method="ffill")
+
+        n_valid = aligned.notna().sum()
+        logger.info(
+            f"macro_regime: combined score loaded, "
+            f"GLD window={gld_window}d, VIX window={vix_window}d, "
+            f"{n_valid}/{len(aligned)} valid ({n_valid/len(aligned)*100:.1f}%)"
+        )
+        return aligned
+
+    except Exception as e:
+        logger.warning(f"macro_regime: 載入失敗: {e}")
+        return None
+
+
 def _load_and_align_oi(
     symbol: str,
     kline_index: pd.DatetimeIndex,
@@ -479,6 +633,36 @@ def _load_and_align_oi(
 
     logger.info(f"tsmom_carry_v2: {symbol} 無 OI 數據")
     return None
+
+
+def _load_and_align_vpin(
+    symbol: str,
+    kline_index: pd.DatetimeIndex,
+    data_dir: str | Path = "data",
+) -> Optional[pd.Series]:
+    """載入 VPIN (1h) 並對齊到 kline index
+
+    VPIN 是外部 aggregated 數據（從 aggTrades volume-clock bars 計算），
+    有獨立時間戳，reindex+ffill 不涉及 intra-bar look-ahead。
+
+    路徑：{data_dir}/binance/futures/aggtrades_agg/{SYMBOL}_vpin_1h.parquet
+    """
+    from ..data.agg_trades import load_vpin, align_vpin_to_klines
+
+    aggtrades_dir = Path(data_dir) / "binance" / "futures" / "aggtrades_agg"
+    vpin = load_vpin(symbol, freq="1h", data_dir=aggtrades_dir)
+    if vpin is None:
+        logger.info(f"tsmom_carry_v2: {symbol} 無 VPIN 數據")
+        return None
+
+    aligned = align_vpin_to_klines(vpin, kline_index, max_ffill_bars=4)
+    if aligned is None or aligned.isna().all():
+        logger.warning(f"tsmom_carry_v2: {symbol} VPIN 對齊後全為 NaN")
+        return None
+
+    coverage = aligned.notna().mean() * 100
+    logger.info(f"tsmom_carry_v2: {symbol} VPIN loaded ({coverage:.1f}% coverage)")
+    return aligned
 
 
 # ══════════════════════════════════════════════════════════════
@@ -720,6 +904,70 @@ def generate_tsmom_carry_v2(
             )
 
     # ══════════════════════════════════════════════════
+    # Macro Cross-Market Regime Filter (opt-in, default disabled)
+    # Source: Alpha Researcher Macro EDA (2026-03-01)
+    # Result: GO — GLD_mom_60d IC=-0.049, VIX_mom_30d IC=+0.043
+    #   Combined IC=0.056, binary filter Δ SR +0.20~+0.61, 8/8 improved
+    #   Independence: corr(BTC_mom)=0.125, corr(TVL)=0.034
+    # ══════════════════════════════════════════════════
+    macro_regime_filter_enabled = params.get("macro_regime_filter_enabled", False)
+    if macro_regime_filter_enabled:
+        from .filters import macro_regime_filter
+        macro_score = _load_and_align_macro_indicator(
+            df.index, data_dir,
+            gld_window=int(params.get("macro_gld_window", 60)),
+            vix_window=int(params.get("macro_vix_window", 30)),
+            zscore_lookback=int(params.get("macro_zscore_lookback", 252)),
+        )
+        if macro_score is not None:
+            macro_lookback = int(params.get("macro_pctrank_lookback", 720))
+            macro_min_pctrank = float(params.get("macro_min_pctrank", 0.20))
+            raw_pos = macro_regime_filter(
+                raw_pos, macro_score,
+                lookback=macro_lookback,
+                min_pctrank=macro_min_pctrank,
+            )
+            logger.info(
+                f"  Macro regime filter [{ctx.symbol}]: "
+                f"GLD_w={params.get('macro_gld_window', 60)}, "
+                f"VIX_w={params.get('macro_vix_window', 30)}, "
+                f"pctrank≥{macro_min_pctrank}"
+            )
+        else:
+            logger.warning(
+                f"  Macro regime filter [{ctx.symbol}]: 宏觀數據不可用，跳過過濾"
+            )
+
+    # ══════════════════════════════════════════════════
+    # VPIN Regime Filter (opt-in, default disabled)
+    # Source: Alpha Researcher VPIN EDA (2026-03-02)
+    # Result: WEAK GO — corr(ATR)=0.025 (完全正交 vol)
+    #   Q1 SR=1.845 vs Q5 SR=0.870, filter P70 ΔSR +0.117
+    #   IC=0.005 (<0.01, 弱但 7/8 same sign)
+    #   Hypothesis: VPIN ⊥ vol → HTF+VPIN 可能不會 over-filter
+    # ══════════════════════════════════════════════════
+    vpin_regime_filter_enabled = params.get("vpin_regime_filter_enabled", False)
+    if vpin_regime_filter_enabled:
+        from .filters import vpin_regime_filter
+        vpin_series = _load_and_align_vpin(ctx.symbol, df.index, data_dir)
+        if vpin_series is not None:
+            vpin_lookback = int(params.get("vpin_regime_lookback", 720))
+            vpin_max_pctrank = float(params.get("vpin_regime_max_pctrank", 0.70))
+            raw_pos = vpin_regime_filter(
+                raw_pos, vpin_series,
+                lookback=vpin_lookback,
+                max_pctrank=vpin_max_pctrank,
+            )
+            logger.info(
+                f"  VPIN regime filter [{ctx.symbol}]: lookback={vpin_lookback}, "
+                f"max_pctrank={vpin_max_pctrank}"
+            )
+        else:
+            logger.warning(
+                f"  VPIN regime filter [{ctx.symbol}]: VPIN 數據不可用，跳過過濾"
+            )
+
+    # ══════════════════════════════════════════════════
     # Turnover 控制
     # ══════════════════════════════════════════════════
     pos = _apply_turnover_control(
@@ -773,6 +1021,18 @@ def generate_tsmom_carry_v2(
             _ind["onchain_regime"] = "ON"
         else:
             _ind["onchain_regime"] = "OFF"
+
+        # Macro regime filter 狀態
+        if macro_regime_filter_enabled:
+            _ind["macro_regime"] = "ON"
+        else:
+            _ind["macro_regime"] = "OFF"
+
+        # VPIN regime filter 狀態
+        if vpin_regime_filter_enabled:
+            _ind["vpin_regime"] = "ON"
+        else:
+            _ind["vpin_regime"] = "OFF"
 
         result.attrs["indicators"] = _ind
     except Exception:

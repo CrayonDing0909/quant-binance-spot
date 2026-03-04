@@ -94,3 +94,43 @@ Before using any dataset in research:
 2. Document the `DataQualityReport` results in the notebook.
 3. If `is_valid == False`, fix data issues before proceeding (or document why you proceed despite issues).
 4. For new data sources not yet integrated, document the ingestion pipeline needed.
+
+## 8. Data Embargo（數據隔離 — 確保真 OOS）
+
+**所有新的 research scripts 必須使用 embargo 機制。** CI 自動掃描強制執行（`test_embargo_guard.py`）。
+
+### 為什麼需要 Embargo
+
+已經看過的數據不可能變回 OOS。任何在全量數據上做的 train/test split 都是 pseudo-OOS。
+Embargo 機制確保研究時鎖住最近 N 個月的數據，只在 validation 時才用作 holdout。
+
+### 使用方式
+
+```python
+# 在每個新 research script 開頭
+from qtrade.validation.embargo import (
+    load_embargo_config,
+    enforce_temporal_embargo,
+    get_research_symbols,
+    print_embargo_status,
+)
+
+embargo = load_embargo_config()
+print_embargo_status(embargo)
+
+# 時間 embargo：截斷最近 N 個月的數據
+df = load_klines(data_path)
+df = enforce_temporal_embargo(df, embargo)  # 自動截斷
+
+# 幣種 embargo：排除保留的 OOS symbols
+research_symbols = get_research_symbols(all_symbols, embargo)
+```
+
+### 規則
+
+1. 所有 `scripts/research_*.py` **必須** import 並使用 embargo 函數
+2. 如果某個腳本不需要 embargo（例如已完成的歷史研究），在 docstring 中加入 opt-out：
+   `# EMBARGO_EXEMPT: <reason>`
+3. Embargo 設定在 `config/validation.yaml` 的 `data_embargo` section
+4. **永遠不要在研究過程中修改 embargo 設定**（等同於偷看 OOS 數據）
+5. Embargo symbols 的選擇：流動性足夠 + 非核心幣種（不是 BTC/ETH）

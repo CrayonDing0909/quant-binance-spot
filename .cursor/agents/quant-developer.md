@@ -1,7 +1,3 @@
----
-name: quant-developer
-model: fast
----
 
 # Quant Developer — 量化策略開發者
 
@@ -54,13 +50,17 @@ model: fast
 ## 自我檢查清單
 
 1. 所有測試通過
-2. `StrategyContext(` 呼叫含 `market_type` + `direction`
+2. `StrategyContext(` 呼叫含 `market_type` + `direction` + **`signal_delay=`**
 3. `vbt.Portfolio.from_orders(` 的 `direction` 不寫死
-4. `price=df['open']`（避免 look-ahead）
+4. `price=df['open']`（避免 look-ahead）— 使用 `safe_portfolio_from_orders()`
 5. 使用 `cfg.to_backtest_dict()`
 6. Meta 策略 → `auto_delay=False`
 7. Overlay 一致性：config / backtest / live 三者相同
 8. Overlay ablation：已跑且標註在報告中
+9. Config dict 用 `copy.deepcopy()`（不是 `.copy()`）
+10. 不用 `params.pop()` 修改 caller dict — 用 `.get()` + 新 dict
+11. 默認值唯一來源是 dataclass — `load_config()` 不硬編碼 fallback
+12. Alpha Decay 門檻改動必須有 Researcher 校準依據 — 不能自行拍腦袋定門檻
 
 ## Skills（詳細流程在 skill 檔案中）
 
@@ -68,6 +68,8 @@ model: fast
 |-------|------|---------|
 | meta_blend 多策略混合 | `.cursor/skills/dev/meta-blend-pattern.md` | 開發多策略混合時 |
 | Binance API 注意事項 | `.cursor/skills/dev/binance-api-gotchas.md` | 修改 broker/API 代碼時 |
+| 工具鏈完整性 | `.cursor/skills/dev/toolchain-integrity-checklist.md` | 回測/驗證前自查 |
+| Alpha Decay Governance | `.cursor/skills/validation/alpha-decay-governance.md` | 修改 ic_monitor / validate.py alpha_decay 時 |
 
 ## Config 凍結（Research → Production）
 

@@ -8,6 +8,9 @@ Open Interest (OI) 歷史資料下載、快取與對齊
 
 Provider 優先級：binance_vision > coinglass > binance。
 
+**重要**：搜尋 OI 資料時使用 `OI_PROVIDER_SEARCH_ORDER` 常數，
+不要在各模組中重複硬編碼 provider 清單。
+
 使用方式：
     from qtrade.data.open_interest import (
         download_open_interest,
@@ -30,6 +33,23 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ══════════════════════════════════════════════════════════════
+# 統一 OI Provider 搜尋順序（全專案共用，勿在其他模組中硬編碼）
+# ══════════════════════════════════════════════════════════════
+
+OI_PROVIDER_SEARCH_ORDER: list[str] = [
+    "merged",          # 合併後的資料（最完整）
+    "binance_vision",  # data.binance.vision 公開資料庫
+    "coinglass",       # Coinglass API
+    "binance",         # Binance 免費 API（最短歷史）
+]
+"""
+搜尋 OI 資料時依序嘗試的 provider 名稱。
+所有需要載入 OI 的模組（backtest / live / validation / strategy）
+都應 import 並使用此常數，確保搜尋行為一致。
+"""
 
 
 # ══════════════════════════════════════════════════════════════
@@ -712,7 +732,7 @@ def compute_oi_coverage(
         # Try merged first, then raw providers
         oi_df = None
         provider_used = "none"
-        for provider_name in ["merged", "coinglass", "binance"]:
+        for provider_name in OI_PROVIDER_SEARCH_ORDER:
             path = get_oi_path(data_dir, symbol, provider_name)
             oi_df = load_open_interest(path)
             if oi_df is not None and not oi_df.empty:

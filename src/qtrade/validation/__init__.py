@@ -93,6 +93,38 @@ from .consistency_checker import (
     check_strategy_consistency,
 )
 
+# Regime Analysis
+from .regime_analysis import (
+    compute_regime_performance,
+    auto_detect_regimes,
+    print_regime_report,
+    RegimePerformance,
+    RegimeAnalysisResult,
+)
+
+# Red Flag Detection
+from .red_flags import (
+    check_red_flags,
+    print_red_flags,
+    RedFlag,
+)
+
+# Data Embargo (OOS Enforcement)
+from .embargo import (
+    EmbargoConfig,
+    TemporalEmbargoConfig,
+    SymbolEmbargoConfig,
+    EmbargoHoldoutResult,
+    EmbargoHoldoutSummary,
+    load_embargo_config,
+    enforce_temporal_embargo,
+    get_research_symbols,
+    is_symbol_embargoed,
+    get_embargo_only_symbols,
+    run_embargo_holdout_test,
+    print_embargo_status,
+)
+
 __all__ = [
     # Walk-Forward
     "walk_forward_analysis",
@@ -137,4 +169,27 @@ __all__ = [
     "BacktestCheckReport",
     "CheckResult",
     "check_strategy_consistency",
+    # Regime Analysis
+    "compute_regime_performance",
+    "auto_detect_regimes",
+    "print_regime_report",
+    "RegimePerformance",
+    "RegimeAnalysisResult",
+    # Red Flag Detection
+    "check_red_flags",
+    "print_red_flags",
+    "RedFlag",
+    # Data Embargo
+    "EmbargoConfig",
+    "TemporalEmbargoConfig",
+    "SymbolEmbargoConfig",
+    "EmbargoHoldoutResult",
+    "EmbargoHoldoutSummary",
+    "load_embargo_config",
+    "enforce_temporal_embargo",
+    "get_research_symbols",
+    "is_symbol_embargoed",
+    "get_embargo_only_symbols",
+    "run_embargo_holdout_test",
+    "print_embargo_status",
 ]

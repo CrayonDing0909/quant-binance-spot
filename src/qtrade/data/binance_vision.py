@@ -39,11 +39,22 @@ DATA_TYPES = {
     "futures_coin": "futures/cm/monthly/klines",  # Coin-M Futures
 }
 
+# aggTrades 數據路徑
+AGGTRADES_DATA_TYPES = {
+    "futures": "futures/um/monthly/aggTrades",
+}
+
 # K 線欄位（Binance 標準格式）
 KLINE_COLS = [
     "open_time", "open", "high", "low", "close", "volume",
     "close_time", "quote_asset_volume", "num_trades",
     "taker_buy_base", "taker_buy_quote", "ignore"
+]
+
+# aggTrades 欄位（Binance 標準格式 — CSV 無 header）
+AGGTRADES_COLS = [
+    "agg_trade_id", "price", "qty", "first_trade_id",
+    "last_trade_id", "transact_time", "is_buyer_maker",
 ]
 
 
@@ -310,3 +321,159 @@ def check_data_availability(
             "earliest_month": None,
             "message": f"❌ {symbol} 在 Binance Data Vision 上找不到數據",
         }
+
+
+# ══════════════════════════════════════════════════════════════
+#  aggTrades 下載（Binance Vision — Futures USDT-M）
+# ══════════════════════════════════════════════════════════════
+
+def generate_monthly_aggtrades_urls(
+    symbol: str,
+    start: str,
+    end: str,
+) -> list[tuple[str, str]]:
+    """
+    生成 aggTrades 每月下載 URL
+
+    URL 格式:
+        https://data.binance.vision/data/futures/um/monthly/aggTrades/{SYMBOL}/{SYMBOL}-aggTrades-{YYYY-MM}.zip
+
+    Args:
+        symbol: 交易對，如 "BTCUSDT"
+        start:  開始日期 "YYYY-MM-DD"
+        end:    結束日期 "YYYY-MM-DD"
+
+    Returns:
+        list of (url, year_month) tuples
+    """
+    data_path = AGGTRADES_DATA_TYPES["futures"]
+
+    start_dt = datetime.strptime(start, "%Y-%m-%d")
+    end_dt = datetime.strptime(end, "%Y-%m-%d")
+
+    urls: list[tuple[str, str]] = []
+    current = start_dt.replace(day=1)
+
+    while current <= end_dt:
+        year_month = current.strftime("%Y-%m")
+        filename = f"{symbol}-aggTrades-{year_month}.zip"
+        url = f"{BASE_URL}/{data_path}/{symbol}/{filename}"
+        urls.append((url, year_month))
+
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+
+    return urls
+
+
+def download_single_month_aggtrades(
+    symbol: str,
+    year_month: str,
+    session: requests.Session | None = None,
+    max_retries: int = 3,
+) -> Optional[pd.DataFrame]:
+    """
+    下載並解析 Binance Vision 單月 aggTrades 數據
+
+    aggTrades CSV 欄位（無 header）:
+        agg_trade_id, price, qty, first_trade_id,
+        last_trade_id, transact_time, is_buyer_maker
+
+    ⚠️ 檔案可能很大（BTC 單月 100-500 MB zip），呼叫端應逐月處理並及時釋放記憶體。
+
+    Args:
+        symbol:      交易對，如 "BTCUSDT"
+        year_month:  月份 "YYYY-MM"
+        session:     可選 requests.Session（重用連接）
+        max_retries: 重試次數
+
+    Returns:
+        DataFrame (index=transact_time UTC), 或 None（資料不存在/下載失敗）
+    """
+    data_path = AGGTRADES_DATA_TYPES["futures"]
+    filename = f"{symbol}-aggTrades-{year_month}.zip"
+    url = f"{BASE_URL}/{data_path}/{symbol}/{filename}"
+
+    own_session = session is None
+    if own_session:
+        session = requests.Session()
+
+    try:
+        for attempt in range(max_retries):
+            try:
+                response = session.get(url, timeout=120)
+
+                if response.status_code == 404:
+                    logger.debug(f"  ⏭️  aggTrades {symbol} {year_month}: 資料不存在")
+                    return None
+
+                response.raise_for_status()
+
+                with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+                    csv_filename = zf.namelist()[0]
+                    with zf.open(csv_filename) as csv_file:
+                        # ZipExtFile.seek(0) 不可靠 → 讀入 BytesIO
+                        buf = io.BytesIO(csv_file.read())
+
+                    # Binance Vision aggTrades CSV: 早期無 header，2024+ 有 header
+                    first_line = buf.readline().decode("utf-8", errors="ignore").strip()
+                    buf.seek(0)
+
+                    has_header = first_line.startswith("agg_trade_id")
+
+                    df = pd.read_csv(
+                        buf,
+                        header=0 if has_header else None,
+                        names=None if has_header else AGGTRADES_COLS,
+                        dtype={
+                            "agg_trade_id": "int64",
+                            "price": "float64",
+                            "qty": "float64",
+                            "first_trade_id": "int64",
+                            "last_trade_id": "int64",
+                            "transact_time": "int64",
+                            "is_buyer_maker": "bool",
+                        },
+                    )
+                    # 統一欄位名（header 版可能有不同命名）
+                    if has_header:
+                        df.columns = AGGTRADES_COLS
+
+                df["transact_time"] = pd.to_datetime(
+                    df["transact_time"], unit="ms", utc=True
+                )
+                df = df.set_index("transact_time").sort_index()
+
+                logger.info(
+                    f"  ✅ aggTrades {symbol} {year_month}: "
+                    f"{len(df):,} trades "
+                    f"({df.index[0].strftime('%Y-%m-%d')} → "
+                    f"{df.index[-1].strftime('%Y-%m-%d')})"
+                )
+                return df
+
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** (attempt + 1)
+                    logger.warning(
+                        f"  ⚠️  aggTrades {symbol} {year_month}: "
+                        f"retry in {wait_time}s ({attempt + 1}/{max_retries}): {e}"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(
+                        f"  ❌ aggTrades {symbol} {year_month}: 下載失敗 - {e}"
+                    )
+                    return None
+            except Exception as e:
+                logger.error(
+                    f"  ❌ aggTrades {symbol} {year_month}: 解析失敗 - {e}"
+                )
+                return None
+    finally:
+        if own_session and session is not None:
+            session.close()
+
+    return None

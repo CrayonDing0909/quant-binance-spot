@@ -1,6 +1,6 @@
 # Strategy Development Playbook (R2.1)
 
-> **Last updated**: 2026-02-25 (新增 Stage D.5 Overlay Ablation、驗證矩陣、一致性檢查)
+> **Last updated**: 2026-03-03 (Validation Matrix 新增 Alpha Decay gate)
 
 This playbook captures the end-to-end process used to evolve from R1 -> R2 -> R2.1.
 Use this as the default template for all future strategy research and production rollout.
@@ -93,8 +93,8 @@ If any critical check fails, do not promote.
 
 **沒有 3-way 數據的替代聲明，直接駁回。**
 
-> 工具參考：`scripts/research_overlay_4way.py` 可做 R3C × MetaBlend 的 4-way 比較。
-> 新策略可參考此腳本結構，或手動跑 `run_backtest.py` 配合 overlay config 切換。
+> 工具參考：`scripts/archive/research_overlay_4way.py` 可做 4-way 比較（已歸檔，供結構參考）。
+> 新策略可手動跑 `run_backtest.py` 配合 overlay config 切換。
 
 ### Stage E: Ablation and Attribution
 
@@ -173,7 +173,7 @@ For overlays (exit/risk controls):
 | # | 測試 | 負責人 | 工具/指令 | 通過標準 |
 |---|------|--------|-----------|----------|
 | V1 | 完整回測（生產一致，overlay ON） | Developer | `run_backtest.py -c config/research_*.yaml` | Sharpe > 0.3，成本已啟用 |
-| V2 | Overlay ablation（裸跑 vs overlay） | Developer | 手動或 `research_overlay_4way.py` | 報告 Delta Sharpe / MDD |
+| V2 | Overlay ablation（裸跑 vs overlay） | Developer | 手動 `run_backtest.py` 配合 overlay config 切換 | 報告 Delta Sharpe / MDD |
 | V3 | `validate --quick`（因果 + 基本檢查） | Developer | `validate.py --quick` | 全 PASS |
 | V4 | 部署前一致性（含 overlay 一致性） | Researcher | `validate_live_consistency.py` | 全 PASS |
 | V5 | Walk-Forward（>= 5 splits） | Researcher | `run_walk_forward.py --splits 6` | OOS Sharpe > 0.3 |
@@ -181,15 +181,16 @@ For overlays (exit/risk controls):
 | V7 | 成本壓力測試（1.5x、2.0x） | Researcher | 手動乘數 | 2x 下仍盈利 |
 | V8 | 延遲壓力測試（+1 bar） | Researcher | 手動延遲 | SR 衰減 < 50% |
 | V9 | DSR 統計檢定 | Researcher | `validate.py --full` | p-value < 0.05 |
-| V10 | Monte Carlo（MC1-MC4） | Risk Manager | MC 腳本 | 4 項全 PASS |
-| V11 | 組合風險評估 | Risk Manager | 風險腳本 | VaR < 5%, corr < 0.8 |
-| V12 | Production Launch Guard | Risk Manager | `prod_launch_guard.py --dry-run` | ALLOW_LAUNCH |
+| V10 | Alpha Decay（IC 監控） | Researcher | `monitor_alpha_decay.py` | recent IC >= 0.02，衰退 <= 50%，critical alerts = 0 |
+| V11 | Monte Carlo（MC1-MC4） | Risk Manager | MC 腳本 | 4 項全 PASS |
+| V12 | 組合風險評估 | Risk Manager | 風險腳本 | VaR < 5%, corr < 0.8 |
+| V13 | Production Launch Guard | Risk Manager | `prod_launch_guard.py --dry-run` | ALLOW_LAUNCH |
 
 ### 分工原則
 
 - **Developer**（V1-V3）：確保回測正確、overlay ablation 完成、基本因果檢查通過
 - **Researcher**（V4-V9）：獨立重跑完整驗證，不信任 Developer 的數字
-- **Risk Manager**（V10-V12）：壓力測試和部署門檻
+- **Risk Manager**（V11-V13）：壓力測試和部署門檻
 
 ### 跳過條件
 

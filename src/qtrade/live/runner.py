@@ -34,10 +34,17 @@ live_logger = get_logger("live_runner")
 
 
 class BrokerProtocol(Protocol):
-    """Broker 通用介面，Paper 和 Real broker 都實現此介面"""
+    """Broker 通用介面，Paper / Spot / Futures broker 都實現此介面。
+
+    所有 Broker 的 execute_target_position 簽名必須一致：
+      - current_price: float | None = None（Futures 可自動取價）
+      - stop_loss_price / take_profit_price: float | None = None
+    """
     def execute_target_position(
-        self, symbol: str, target_pct: float, current_price: float, reason: str = "",
-        stop_loss_price: float | None = None, take_profit_price: float | None = None
+        self, symbol: str, target_pct: float,
+        current_price: float | None = None, reason: str = "",
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> object | None: ...
 
     def get_position_pct(self, symbol: str, current_price: float) -> float: ...

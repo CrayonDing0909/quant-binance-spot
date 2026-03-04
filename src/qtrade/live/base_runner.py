@@ -275,7 +275,7 @@ class BaseRunner(ABC):
     def _load_oi_from_disk(self) -> None:
         """從 parquet 載入所有 symbol 的 OI 到記憶體快取（僅保留最近 N 行）。"""
         try:
-            from ..data.open_interest import get_oi_path, load_open_interest
+            from ..data.open_interest import get_oi_path, load_open_interest, OI_PROVIDER_SEARCH_ORDER
         except ImportError:
             self._log.warning("⚠️  open_interest 模組不可用，OI 快取停用")
             return
@@ -283,7 +283,7 @@ class BaseRunner(ABC):
         data_dir = self.cfg.data_dir
         loaded = 0
         for sym in self.symbols:
-            for prov in ["merged", "binance_vision", "coinglass", "binance"]:
+            for prov in OI_PROVIDER_SEARCH_ORDER:
                 oi_path = get_oi_path(data_dir, sym, prov)
                 oi_df = load_open_interest(oi_path)
                 if oi_df is not None and not oi_df.empty:
@@ -585,7 +585,7 @@ class BaseRunner(ABC):
             elif hasattr(self.broker, "get_equity"):
                 return self.broker.get_equity()
         except Exception as e:
-            self._log.debug(f"取得權益失敗: {e}")
+            self._log.warning(f"⚠️ 取得權益失敗（影響 position sizing）: {e}")
         return None
 
     def _get_price(self, symbol: str) -> float | None:
@@ -597,8 +597,8 @@ class BaseRunner(ABC):
         if hasattr(self.broker, "get_price"):
             try:
                 return self.broker.get_price(symbol)
-            except Exception:
-                pass
+            except Exception as e:
+                self._log.debug(f"  {symbol}: 從 broker 取得價格失敗: {e}")
         return None
 
     def _apply_position_sizing(self, raw_signal: float, price: float, symbol: str) -> float:
@@ -635,7 +635,20 @@ class BaseRunner(ABC):
             position_value = position_size * price
             adjusted_signal = position_value / equity if equity > 0 else raw_signal
             return max(-1.0, min(1.0, adjusted_signal))
-        except Exception:
+        except Exception as e:
+            # ⚠️ Position sizing 失敗 → 回退到 raw_signal（滿倉）
+            # 這可能導致過度曝險，必須有可見性
+            self._log.error(
+                f"❌ {symbol}: Position sizing 計算失敗，回退到 raw_signal={raw_signal:.2f}: {e}"
+            )
+            # 一次性 TG 告警（避免每個 tick 都發）
+            if not getattr(self, "_ps_error_notified", False):
+                self._ps_error_notified = True
+                if self.notifier:
+                    self.notifier.send_error(
+                        f"⚠️ Position sizing 異常！{symbol}: {e}\n"
+                        f"已回退到 raw_signal={raw_signal:.2f}，請檢查"
+                    )
             return raw_signal
 
     # ══════════════════════════════════════════════════════════

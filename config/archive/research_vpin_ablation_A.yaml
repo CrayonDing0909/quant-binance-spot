@@ -1,13 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-# OI REGIME FILTER ABLATION — Config A: HTF Only (Baseline)
+# ABLATION A — HTF Only (Baseline)
 # ═══════════════════════════════════════════════════════════════
-# Created: 2026-02-28
-# Purpose: Ablation study — HTF Filter ONLY, no OI Regime Filter
-# Base: prod_candidate_simplified.yaml (current production, SR=3.85)
-#
-# This is the CONTROL group — identical to production.
-# htf_filter_enabled: true (all symbols)
-# oi_regime_filter_enabled: false (default, not set)
+# Purpose: Baseline for VPIN ablation study
+# This is identical to prod_candidate_simplified.yaml
+# Comparison: A (HTF only) vs B (VPIN only) vs C (HTF+VPIN)
 # ═══════════════════════════════════════════════════════════════
 
 market:
@@ -21,7 +17,7 @@ market:
     - AVAXUSDT
     - LINKUSDT
   interval: "1h"
-  start: "2022-01-01"
+  start: "2020-10-01"
   end: null
   market_type: "futures"
 
@@ -33,10 +29,8 @@ futures:
 
 strategy:
   name: "meta_blend"
-  display_name: "HTF Filter v2 + LSR (Simplified)"
+  display_name: "VPIN Ablation A — HTF Only (Baseline)"
   params:
-    # ── Default sub-strategy (SOL, AVAX, BNB, DOGE, ADA) ──
-    # confirmatory mode: w_tsmom / w_basis_carry are dead params (not used)
     sub_strategies:
       - name: "tsmom_carry_v2"
         weight: 1.0
@@ -64,11 +58,9 @@ strategy:
           position_step: 0.1
           min_change_threshold: 0.05
           htf_filter_enabled: true
+          vpin_regime_filter_enabled: false
 
   symbol_overrides:
-    # ── BTC: 100% tsmom_carry_v2 btc_enhanced (720h, 30/100) + HTF daily-dominant ──
-    # Academic support: BTC has longer trend cycles due to institutional adoption
-    # Ablation evidence: 720h lookback → +0.38 per-sym SR (1.64→2.02)
     BTCUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
@@ -97,9 +89,8 @@ strategy:
             htf_4h_ema_slow: 100
             htf_no_confirm: 0.7
             htf_4h_only_confirm: 0.3
+            vpin_regime_filter_enabled: false
 
-    # ── ETH: 100% tsmom_carry_v2 eth_enhanced (OI/FR/Basis) + HTF C_hard ──
-    # Uses independent derivatives data sources (low overfitting risk)
     ETHUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
@@ -130,9 +121,8 @@ strategy:
             position_step: 0.1
             min_change_threshold: 0.05
             htf_filter_enabled: true
+            vpin_regime_filter_enabled: false
 
-    # ── LINK: 100% tsmom_carry_v2 tsmom_only (carry IC unstable) + HTF C_hard ──
-    # Removing carry is regularization, not overfitting
     LINKUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
@@ -149,10 +139,8 @@ strategy:
             position_step: 0.1
             min_change_threshold: 0.05
             htf_filter_enabled: true
+            vpin_regime_filter_enabled: false
 
-    # SOL, AVAX, BNB, DOGE, ADA → inherit default (no overrides needed)
-
-  # ── Overlay: oi_vol + lsr_confirmatory (identical to prod) ──
   overlay:
     enabled: true
     mode: "oi_vol+lsr_confirmatory"
@@ -210,73 +198,5 @@ portfolio:
     AVAXUSDT: 0.35
     LINKUSDT: 0.35
 
-live:
-  kline_cache: true
-  flip_confirmation: false
-  prefer_limit_order: true
-  limit_order_timeout_s: 10
-
-  rebalance_band:
-    enabled: true
-    threshold_pct: 0.03
-    apply_on_same_direction_only: true
-
-  symbol_governance:
-    enabled: true
-    review_frequency: "weekly"
-    warmup_days: 14
-    quarantine_min_days: 14
-    consecutive_reviews_for_quarantine: 2
-    consecutive_reviews_for_recovery: 2
-    artifacts_dir: "reports/symbol_governance"
-
-    thresholds:
-      edge_sharpe_deweight: 0.3
-      edge_sharpe_quarantine: 0.0
-      edge_sharpe_recover_active: 0.8
-      edge_sharpe_recover_from_quarantine: 0.5
-      edge_per_turnover_min: 0.0
-      slippage_ratio_deweight: 1.5
-      slippage_ratio_quarantine: 1.8
-      slippage_ratio_recover_active: 1.2
-      slippage_ratio_recover_from_quarantine: 1.3
-      consistency_min: 99.0
-      consistency_recover: 99.5
-      missed_signals_quarantine: 5.0
-      dd_quarantine_pct: 25.0
-
-    weights:
-      active_multiplier: 1.0
-      deweight_multiplier: 0.5
-      quarantine_multiplier: 0.0
-      min_weight: 0.03
-      max_weight: 0.20
-
-  watchdog:
-    enabled: true
-    interval_sec: 300
-    alert_cooldown_sec: 1800
-    startup_grace_sec: 300
-    runner_ready_grace_sec: 180
-    heartbeat_warn_sec: 90
-    heartbeat_critical_sec: 180
-    ws_msg_warn_sec: 180
-    ws_msg_critical_sec: 300
-    data_warn_age_sec:
-      "1h": 7200
-      "5m": 1800
-    data_critical_age_sec:
-      "1h": 14400
-      "5m": 3600
-    error_window_minutes: 15
-    error_warn_count: 5
-    error_critical_count: 12
-
-notification:
-  telegram_bot_token: ${FUTURES_TELEGRAM_BOT_TOKEN}
-  telegram_chat_id: ${FUTURES_TELEGRAM_CHAT_ID}
-  prefix: "🚀 [SIMPLIFIED]"
-  enabled: true
-
 output:
-  report_dir: "./reports"
+  report_dir: "./reports/research/vpin_ablation"

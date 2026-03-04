@@ -95,6 +95,7 @@ class RollingICMonitor:
         decay_threshold: float = 0.50,  # IC 下降超過 50% 視為衰退
         recent_days: int = 180,
         interval: str = "1h",
+        min_ic_denominator: float = 0.01,  # 小分母保護閾值
     ):
         self.window = window
         self.forward_bars = forward_bars
@@ -102,6 +103,7 @@ class RollingICMonitor:
         self.decay_threshold = decay_threshold
         self.recent_days = recent_days
         self.interval = interval
+        self.min_ic_denominator = min_ic_denominator
         
         # 根據 interval 計算 bars per day
         bars_per_day_map = {
@@ -126,6 +128,10 @@ class RollingICMonitor:
             ICReport
         """
         # 計算前瞻收益
+        # NOTE: shift(-forward_bars) is intentional for IC monitoring.
+        # IC measures signal QUALITY (correlation with future returns), not trade PnL.
+        # Backtest PnL uses open prices — that is a separate concern.
+        # See: .cursor/skills/validation/alpha-decay-governance.md §2
         forward_returns = prices.pct_change(self.forward_bars).shift(-self.forward_bars)
         
         # 對齊
@@ -159,8 +165,21 @@ class RollingICMonitor:
             recent_ic = valid_ic.iloc[half:].mean()
             historical_ic = valid_ic.iloc[:half].mean()
         
-        ic_decay_pct = 1.0 - (recent_ic / historical_ic) if historical_ic != 0 else 0.0
-        is_decaying = ic_decay_pct > self.decay_threshold
+        # Small-denominator guard: when historical IC is near zero, ratio
+        # explodes (e.g. +240%, +1500%). Use absolute difference instead.
+        # See: .cursor/skills/validation/alpha-decay-governance.md §3
+        if abs(historical_ic) < self.min_ic_denominator:
+            ic_decay_pct = abs(historical_ic - recent_ic)
+            # For small-denominator mode, decay_threshold is interpreted as
+            # absolute IC difference (not percentage).  A raw diff > 0.02
+            # is already a meaningful shift when the base is near zero.
+            is_decaying = ic_decay_pct > self.min_ic_denominator * 2
+        elif historical_ic != 0:
+            ic_decay_pct = 1.0 - (recent_ic / historical_ic)
+            is_decaying = ic_decay_pct > self.decay_threshold
+        else:
+            ic_decay_pct = 0.0
+            is_decaying = False
         
         # 年度分析
         yearly_ic = self._compute_yearly_ic(signals, forward_returns)

@@ -15,9 +15,9 @@ alwaysApply: false
 
 ## Development Steps
 
-1. **Phase 1 — Weight Optimization**: Sweep weights with `scripts/research_strategy_blend.py`
+1. **Phase 1 — Weight Optimization**: Sweep weights (reference: `scripts/archive/research_strategy_blend.py`)
    ```bash
-   PYTHONPATH=src python scripts/research_strategy_blend.py
+   PYTHONPATH=src python scripts/archive/research_strategy_blend.py
    ```
 2. **Phase 2 — Configure meta_blend**: Define `sub_strategies` and per-symbol overrides in YAML
 3. **Phase 3 — Validate**: Backtest + WFA + cost stress + ablation (Pure A / Pure B / A+B)
@@ -54,6 +54,6 @@ strategy:
 ## Reference Files
 
 - Strategy implementation: `src/qtrade/strategy/meta_blend_strategy.py`
-- Research config: `config/research_meta_blend.yaml`
-- Production candidate: `config/prod_candidate_meta_blend.yaml`
-- Weight optimization script: `scripts/research_strategy_blend.py`
+- Research config: `config/archive/research_meta_blend.yaml` (archived)
+- Production candidate: `config/prod_candidate_simplified.yaml`
+- Weight optimization script: `scripts/archive/research_strategy_blend.py` (archived)

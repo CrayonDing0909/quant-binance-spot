@@ -18,19 +18,26 @@ PYTHONPATH=src python scripts/risk_guard.py \
 
 # 2. Health check
 PYTHONPATH=src python scripts/health_check.py \
-  -c config/prod_candidate_htf_lsr.yaml --real --notify
+  -c config/prod_candidate_simplified.yaml --real --notify
 
-# 3. Alpha Decay scan
-PYTHONPATH=src python scripts/monitor_alpha_decay.py \
-  -c config/prod_candidate_htf_lsr.yaml
+# 3. Alpha Decay scan (automated via cron — check latest report)
+#    Cron: scripts/cron_alpha_decay.sh runs weekly Sunday 00:00 UTC
+#    Reports: reports/alpha_decay/
+#    Governance: .cursor/skills/validation/alpha-decay-governance.md
+ls -lt reports/alpha_decay/ | head -5
+cat reports/alpha_decay/$(ls -t reports/alpha_decay/ | head -1)
+# If alpha_decay gate FAIL:
+#   Mild (1 gate failed)   → WARNING, increase monitoring to daily
+#   Moderate (2 gates)     → REDUCE position size by 50%
+#   Severe (3 gates, 2wk)  → FLATTEN, trigger strategy review with Researcher
 
 # 4. Trade review (run for each live strategy)
 PYTHONPATH=src python scripts/trade_review.py \
-  -c config/prod_candidate_htf_lsr.yaml --days 7 --with-replay
+  -c config/prod_candidate_simplified.yaml --days 7 --with-replay
 
 # 5. Backtest↔Live consistency replay (run for each live strategy)
 PYTHONPATH=src python scripts/validate_live_consistency.py \
-  -c config/prod_candidate_htf_lsr.yaml -v
+  -c config/prod_candidate_simplified.yaml -v
 ```
 
 ### Weekly Warning Thresholds
@@ -65,7 +72,7 @@ print(corr)
 "
 
 # 3. Kelly Fraction re-calibration (using last 6 months live trades)
-PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_htf_lsr.yaml trades
+PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_simplified.yaml trades
 
 # 4. Production report
 PYTHONPATH=src python scripts/prod_report.py
@@ -76,8 +83,11 @@ PYTHONPATH=src python scripts/prod_report.py
 - Correlation significantly changed? (pairwise corr shifts in bull/bear markets)
 - Kelly fraction needs adjustment? (win rate or payoff ratio changed)
 - Circuit breaker threshold needs adjustment?
-- Alpha Decay IC persistently declining?
+- Alpha Decay IC persistently declining? (check Gate A/B/C per governance spec)
 
 > **Division of labor**: Risk Manager leads monthly review (MC + correlation + Kelly calibration).
 > If alpha decay is detected (specific symbol IC declining, rolling SR degrading), hand off to Quant Researcher for deep IC analysis.
 > Avoid duplicate work — you calculate correlation once; Researcher only intervenes when deep analysis is needed.
+>
+> **Alpha Decay ownership**: Researcher OWNS methodology (formula, thresholds). Risk OWNS action (reduce/flatten). Developer implements.
+> See `.cursor/skills/validation/alpha-decay-governance.md` for full spec.

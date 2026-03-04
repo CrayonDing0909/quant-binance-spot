@@ -1,0 +1,103 @@
+---
+alwaysApply: true
+---
+# Code Safety Anti-Patterns — CRITICAL
+
+These rules exist because 4 rounds of architectural audits found 11 bugs from 5 recurring anti-patterns.
+Every agent MUST check these before writing or reviewing Python code in `src/qtrade/`.
+
+CI guard: `tests/test_code_safety_guard.py` enforces these automatically.
+
+## 1. Nested Dict Must Use `deepcopy`
+
+Config dicts (`cfg`, `base_cfg`, `overlay_params`) often contain nested dicts (overlay, funding_rate, slippage_model, position_sizing). A shallow `.copy()` shares nested references → cross-contamination across symbols/trials.
+
+```python
+# ❌ BAD: shallow copy — overlay/funding_rate are still shared references
+cfg = base_cfg.copy()
+cfg["strategy_params"]["new_key"] = value  # mutates base_cfg!
+
+# ✅ GOOD: deepcopy isolates all nested structures
+import copy
+cfg = copy.deepcopy(base_cfg)
+```
+
+**Rule**: Any dict that contains sub-dicts (especially `cfg`, `base_cfg`, `overlay_params`, `strategy_params`) MUST use `copy.deepcopy()`, never `.copy()`.
+
+## 2. Never Mutate Caller's Dict
+
+Functions receiving `params: dict` must NOT modify it via `.pop()` or direct injection. The caller may reuse the same dict for multiple symbols.
+
+```python
+# ❌ BAD: .pop() removes key from caller's dict
+data_dir = params.pop("_data_dir")
+
+# ❌ BAD: injecting keys into caller's dict
+params["_data_dir"] = str(self.cfg.data_dir)
+
+# ✅ GOOD: read without mutation
+data_dir = params.get("_data_dir")
+
+# ✅ GOOD: create a new dict for downstream use
+clean_params = {k: v for k, v in params.items() if not k.startswith("_")}
+```
+
+**Rule**: Use `.get()` to read, build new dicts for downstream. Never `.pop()` or inject into a dict you didn't create.
+
+## 3. `StrategyContext` Must Have Explicit `signal_delay`
+
+The default `signal_delay=0` is dangerous in backtest contexts (causes look-ahead). Always write it explicitly so intent is clear.
+
+```python
+# ❌ BAD: implicit signal_delay=0 — is this intentional or a bug?
+ctx = StrategyContext(symbol=sym, interval="1h", market_type="futures", direction="both")
+
+# ✅ GOOD: backtest mode — delay=1 (trade on next open)
+ctx = StrategyContext(symbol=sym, interval="1h", market_type="futures", direction="both",
+                      signal_delay=1)
+
+# ✅ GOOD: live mode — delay=0 (execute immediately), explicitly stated
+ctx = StrategyContext(symbol=sym, interval="1h", market_type="futures", direction="both",
+                      signal_delay=0)  # Live: 信號即時執行
+```
+
+**Rule**: Every `StrategyContext(...)` call MUST include `signal_delay=` with a comment explaining why.
+
+## 4. Dataclass Defaults Are the Single Source of Truth
+
+When loading config from YAML, do NOT provide hardcoded fallback values that differ from the dataclass defaults. This creates hidden divergence.
+
+```python
+# ❌ BAD: hardcoded 20 overrides PositionSizingConfig.vol_lookback=168
+vol_lookback=ps_raw.get("vol_lookback", 20)
+
+# ✅ GOOD: let None flow through → dataclass default fills it
+vol_lookback=ps_raw.get("vol_lookback")
+# Then in dataclass construction, None fields get their default values
+```
+
+**Rule**: `load_config()` should use `.get(key)` without a second argument for fields that have dataclass defaults. The dataclass `__init__` or `__post_init__` handles missing values.
+
+## 5. No Silent Exception on Critical Trading Paths
+
+`except Exception: pass` on order execution or position sizing paths can cause full-position risk exposure with zero visibility.
+
+```python
+# ❌ BAD: position sizing fails silently → trades at 100% equity
+except Exception:
+    pass
+
+# ✅ GOOD: log error + alert, then fallback with visibility
+except Exception as e:
+    logger.error(f"❌ {symbol}: Position sizing failed, fallback to raw_signal: {e}")
+    self.notifier.send_error(f"Position sizing failed: {e}")
+```
+
+**Critical paths** (MUST have logging + alerting on exception):
+- `_apply_position_sizing`
+- `execute_target_position`
+- `_process_signal`
+- Circuit breaker checks
+
+**Non-critical paths** (silent `pass` is acceptable):
+- DB writes, notification sends, cache refreshes, periodic reports

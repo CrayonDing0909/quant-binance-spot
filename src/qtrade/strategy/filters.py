@@ -6,7 +6,7 @@
     如果當前 bar 不滿足過濾條件，不允許新開倉（但不強制平倉）。
 
 用法：
-    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter, oi_regime_filter, onchain_regime_filter, causal_resample_align
+    from qtrade.strategy.filters import trend_filter, volume_filter, htf_trend_filter, volatility_filter, time_of_day_filter, oi_regime_filter, onchain_regime_filter, macro_regime_filter, vpin_regime_filter, causal_resample_align
 
     raw_pos = my_indicator_logic(df, params)
     pos = trend_filter(df, raw_pos, min_adx=25)
@@ -14,6 +14,7 @@
     pos = volatility_filter(df, pos, min_atr_ratio=0.005)  # 波動率過濾
     pos = htf_trend_filter(df, pos, htf_interval="4h")  # 高級時間框架趨勢
     pos = onchain_regime_filter(pos, tvl_sc_ratio_mom_30d_series)  # 鏈上 regime 過濾
+    pos = macro_regime_filter(pos, macro_score_series)  # 宏觀跨市場 regime 過濾
 """
 from __future__ import annotations
 from typing import Callable
@@ -965,6 +966,180 @@ def onchain_regime_filter(
                 position_state = -1
             else:
                 result[i] = 0.0     # regime 低迷 → 擋掉
+        else:
+            result[i] = 0.0
+            position_state = 0
+
+    return pd.Series(result, index=raw_pos.index)
+
+
+def macro_regime_filter(
+    raw_pos: pd.Series,
+    macro_score_series: pd.Series,
+    lookback: int = 720,
+    min_pctrank: float = 0.20,
+) -> pd.Series:
+    """
+    Macro Cross-Market Regime 過濾器：在宏觀 risk-off 環境下禁止新開倉
+
+    根據 Alpha Researcher 2026-03-01 Macro Cross-Market Regime EDA：
+      - 主要信號：GLD_mom_60d (IC=-0.049, 8/8 same sign, 6/8yr)
+      - 輔助信號：VIX_mom_30d (IC=+0.043, 8/8yr consistent)
+      - GLD ⊥ VIX corr=0.053（幾乎正交，互補性強）
+      - Combined IC=0.056 (>individual)
+      - Binary filter (block bottom 20%): Δ SR +0.20~+0.61, 8/8 improved
+      - 與現有信號獨立性極高：corr(BTC_mom)=0.125, corr(TVL)=0.034
+      - Quality Gates: 5/5 PASS → GO
+
+    機制假說：
+      GLD rally → flight-to-safety → risk-off → crypto 趨勢不可靠
+      VIX spike → contrarian recovery → crypto 趨勢改善
+      Combined: 排除宏觀 risk-off 環境（底部 20%），保留 risk-on
+
+    數據特性：
+      - Daily 頻率（yfinance），前一交易日收盤後可用
+      - 外部數據（獨立時間戳），reindex+ffill 無 intra-bar look-ahead
+      - 但必須 shift(1) 延遲 1 天確保因果性
+
+    規則：
+      - macro_score_series 的 rolling pctrank (0~1) < min_pctrank → 禁止新開倉
+      - 已有持倉不受影響（不強制平倉）
+      - 數據缺失時保持原有信號（不阻擋）
+
+    Args:
+        raw_pos:            原始持倉信號 [-1, 1]
+        macro_score_series: 宏觀 regime 得分（已對齊到 kline index，forward-fill）
+                            正值 = risk-on（有利），負值 = risk-off（不利）
+                            預期由 _compute_macro_score() 生成
+        lookback:           pctrank 回看窗口（預設 720 bars = 30 天 @ 1h）
+        min_pctrank:        最低百分位排名閾值（預設 0.20 = bottom 20% 阻擋）
+
+    Returns:
+        過濾後的持倉序列
+    """
+    if macro_score_series is None or macro_score_series.empty:
+        return raw_pos
+
+    # 計算 rolling pctrank (0~1)
+    pctrank = macro_score_series.rolling(
+        lookback, min_periods=max(lookback // 2, 1)
+    ).rank(pct=True)
+
+    # 對齊到 raw_pos index (ffill for daily → 1h)
+    pctrank_aligned = pctrank.reindex(raw_pos.index, method="ffill").fillna(1.0).values
+
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0  # 0=flat, 1=long, -1=short
+
+    for i in range(len(raw)):
+        macro_ok = pctrank_aligned[i] >= min_pctrank
+
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                result[i] = raw[i]  # 已有多倉 → 保持
+            elif macro_ok:
+                result[i] = raw[i]  # risk-on → 允許新開多
+                position_state = 1
+            else:
+                result[i] = 0.0     # risk-off → 擋掉
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                result[i] = raw[i]  # 已有空倉 → 保持
+            elif macro_ok:
+                result[i] = raw[i]  # risk-on → 允許新開空
+                position_state = -1
+            else:
+                result[i] = 0.0     # risk-off → 擋掉
+        else:
+            result[i] = 0.0
+            position_state = 0
+
+    return pd.Series(result, index=raw_pos.index)
+
+
+def vpin_regime_filter(
+    raw_pos: pd.Series,
+    vpin_series: pd.Series,
+    lookback: int = 720,
+    max_pctrank: float = 0.70,
+) -> pd.Series:
+    """
+    VPIN Regime 過濾器：在高 VPIN（知情交易密度高、毒性流量大）時禁止新開倉
+
+    根據 Alpha Researcher 2026-03-02 VPIN Regime EDA：
+      - VPIN (Easley, López de Prado & O'Hara, 2012) 偵測 informed trading
+      - 高 VPIN = 高毒性 → 趨勢信號不可靠
+      - Q1 (low VPIN) SR = 1.845 vs Q5 (high VPIN) SR = 0.870
+      - Filter P70: Δ SR +0.117, freq loss 30%, 6/8 improved
+      - Confounding OUTSTANDING: corr(VPIN, ATR_pctrank) = 0.025（完全正交 vol）
+      - Quality Gates: 5/6 PASS → WEAK GO
+      - IC = 0.005（< 0.01, 弱但 7/8 same sign）
+
+    與其他 regime filters 的關鍵差異：
+      - OI/On-chain/Macro: block LOW indicator → min_pctrank
+      - VPIN: block HIGH indicator → max_pctrank（反向閘門）
+      - VPIN ⊥ volatility（corr=0.025），理論上不會與 HTF filter 產生 over-filter
+
+    機制假說：
+      高 VPIN → 知情交易者主導市場流動性 → adverse selection 升高
+      → 趨勢追蹤者（uninformed）容易被反向狩獵
+      → 低 VPIN 環境下動量策略更有效
+
+    數據特性：
+      - VPIN 從 aggTrades volume-clock bars 計算，1h 頻率
+      - 外部 aggregated 數據（獨立時間戳），reindex+ffill 無 intra-bar look-ahead
+      - 數據路徑：data/binance/futures/aggtrades_agg/{SYMBOL}_vpin_1h.parquet
+
+    規則：
+      - VPIN 的 rolling pctrank (0~1) > max_pctrank → 禁止新開倉
+      - 已有持倉不受影響（不強制平倉）
+      - 數據缺失時保持原有信號（不阻擋）
+
+    Args:
+        raw_pos:      原始持倉信號 [-1, 1]
+        vpin_series:  VPIN 值序列（已對齊到 kline index，forward-fill）
+        lookback:     pctrank 回看窗口（預設 720 bars = 30 天 @ 1h）
+        max_pctrank:  最高百分位排名閾值（預設 0.70 = 高 VPIN P70+ 阻擋）
+
+    Returns:
+        過濾後的持倉序列
+    """
+    if vpin_series is None or vpin_series.empty:
+        return raw_pos
+
+    # 計算 rolling pctrank (0~1)
+    vpin_pctrank = vpin_series.rolling(
+        lookback, min_periods=max(lookback // 2, 1)
+    ).rank(pct=True)
+
+    # 對齊到 raw_pos index (ffill)
+    pctrank_aligned = vpin_pctrank.reindex(raw_pos.index, method="ffill").fillna(0.0).values
+
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0  # 0=flat, 1=long, -1=short
+
+    for i in range(len(raw)):
+        # 反向閘門：VPIN pctrank > max_pctrank → 毒性過高，阻擋
+        vpin_ok = pctrank_aligned[i] <= max_pctrank
+
+        if raw[i] > 0:  # 做多信號
+            if position_state == 1:
+                result[i] = raw[i]  # 已有多倉 → 保持
+            elif vpin_ok:
+                result[i] = raw[i]  # VPIN 安全 → 允許新開多
+                position_state = 1
+            else:
+                result[i] = 0.0     # VPIN 過高 → 擋掉
+        elif raw[i] < 0:  # 做空信號
+            if position_state == -1:
+                result[i] = raw[i]  # 已有空倉 → 保持
+            elif vpin_ok:
+                result[i] = raw[i]  # VPIN 安全 → 允許新開空
+                position_state = -1
+            else:
+                result[i] = 0.0     # VPIN 過高 → 擋掉
         else:
             result[i] = 0.0
             position_state = 0

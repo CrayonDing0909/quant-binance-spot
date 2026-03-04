@@ -44,6 +44,7 @@ Hyperopt 參數優化引擎
 """
 from __future__ import annotations
 
+import copy
 import json
 import time
 import warnings
@@ -251,7 +252,7 @@ class HyperoptEngine:
         """
         self.strategy_name = strategy_name
         self.symbol_data = symbol_data  # {symbol: Path}
-        self.base_cfg = base_cfg.copy()
+        self.base_cfg = copy.deepcopy(base_cfg)
         self.param_space = param_space
         self.market_type = market_type
         self.direction = direction
@@ -320,8 +321,8 @@ class HyperoptEngine:
             # 採樣參數
             sampled_params = self._suggest_params(trial)
             
-            # 合併到策略參數
-            cfg = self.base_cfg.copy()
+            # 合併到策略參數（deepcopy 防止巢狀 dict 交叉汙染）
+            cfg = copy.deepcopy(self.base_cfg)
             cfg["strategy_params"] = {
                 **cfg.get("strategy_params", {}),
                 **sampled_params,
@@ -525,7 +526,7 @@ class HyperoptEngine:
         if isinstance(objective_fn, str):
             objective_fn = get_objective_fn(objective_fn)
         
-        cfg = self.base_cfg.copy()
+        cfg = copy.deepcopy(self.base_cfg)
         cfg["strategy_params"] = {
             **cfg.get("strategy_params", {}),
             **best_params,
@@ -796,7 +797,7 @@ class WalkForwardValidator:
             logger.info(f"   Test:  {test_dates[0]} → {test_dates[1]} ({test_end_idx - test_start_idx} bars)")
             
             # 訓練：在 train 數據上建立回測配置（修改 start/end）
-            train_cfg = self.base_cfg.copy()
+            train_cfg = copy.deepcopy(self.base_cfg)
             train_cfg["start"] = train_dates[0]
             train_cfg["end"] = train_dates[1]
             
@@ -818,7 +819,7 @@ class WalkForwardValidator:
             )
             
             # 測試：用最佳參數在 test 數據上回測
-            test_cfg = self.base_cfg.copy()
+            test_cfg = copy.deepcopy(self.base_cfg)
             test_cfg["start"] = test_dates[0]
             test_cfg["end"] = test_dates[1]
             test_cfg["strategy_params"] = {

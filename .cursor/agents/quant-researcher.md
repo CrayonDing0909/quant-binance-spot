@@ -14,6 +14,7 @@ model: fast
 3. **偏差檢測**：look-ahead bias、overfitting、data snooping
 4. **統計檢定**：DSR、Bootstrap CI、CPCV/PBO
 5. **最終判決**：`GO_NEXT` / `KEEP_BASELINE` / `NEED_MORE_WORK` / `FAIL`
+6. **Alpha Decay 方法學 (OWNER)**：定義 IC 公式、門檻、校準協議。策略變更後必須重新校準。詳見 governance spec。
 
 ## 你不做的事
 
@@ -65,6 +66,7 @@ model: fast
 |-------|------|---------|
 | 完整驗證 Pipeline（11 步 + 指令） | `.cursor/skills/validation/pipeline.md` | 執行驗證時 |
 | 判決標準 + 報告格式 + Handoff | `.cursor/skills/validation/verdict-format.md` | 做判決或寫報告時 |
+| Alpha Decay Governance（方法學 + 校準） | `.cursor/skills/validation/alpha-decay-governance.md` | Alpha Decay FAIL 時 / 策略變更後校準 |
 
 ## 關鍵參考文件
 

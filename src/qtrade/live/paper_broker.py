@@ -199,7 +199,7 @@ class PaperBroker:
         self,
         symbol: str,
         target_pct: float,
-        current_price: float,
+        current_price: float | None = None,
         reason: str = "signal",
         stop_loss_price: float | None = None,  # v2.0: 介面對齊（Paper 模式不使用）
         take_profit_price: float | None = None,  # v2.0: 介面對齊（Paper 模式不使用）
@@ -220,7 +220,15 @@ class PaperBroker:
 
         Returns:
             TradeRecord 如果執行了交易，否則 None
+
+        Raises:
+            ValueError: 如果 current_price 為 None（Paper 模式必須提供價格）
         """
+        if current_price is None:
+            raise ValueError(
+                f"PaperBroker.execute_target_position: {symbol} 必須提供 current_price"
+            )
+
         # 根據市場類型限制 target_pct 範圍
         if self.supports_short:
             target_pct = max(-1.0, min(1.0, target_pct))

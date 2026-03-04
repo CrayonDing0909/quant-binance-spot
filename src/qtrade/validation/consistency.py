@@ -448,6 +448,9 @@ class ConsistencyValidator:
         這是使用完整數據一次性計算所有信號（回測模式）。
         如果提供了 overlay_cfg，會在策略信號後套用 overlay，
         與 run_symbol_backtest 和 live signal_generator 的行為一致。
+
+        **重要**: 使用 signal_delay=1（模擬 trade_on="next_open"），
+        讓回測信號與 run_symbol_backtest 行為一致。
         """
         from ..strategy.base import StrategyContext
         
@@ -456,119 +459,18 @@ class ConsistencyValidator:
             interval=self.interval,
             market_type=self.market_type,
             direction=self.direction,
+            signal_delay=1,  # 回測模式：signal_delay=1（trade_on="next_open"）
         )
         strategy_func = self._get_strategy_func()
         positions = strategy_func(df, ctx, self.params)
         
-        # 套用 overlay（與回測和 live 路徑一致）
+        # 套用 overlay（使用共用 pipeline，確保與 backtest / live 行為一致）
         if self.overlay_cfg and self.overlay_cfg.get("enabled", False):
             try:
-                from ..strategy.overlays.oi_vol_exit_overlay import apply_overlay_by_mode
-                
-                overlay_mode = self.overlay_cfg.get("mode", "vol_pause")
-                overlay_params = self.overlay_cfg.get("params", {})
-                
-                # 載入 OI 數據（如 overlay mode 需要，支援複合模式）
-                oi_series = None
-                _needs_oi = any(m in overlay_mode for m in ("oi_vol", "oi_only"))
-                if _needs_oi and self.data_dir:
-                    try:
-                        from ..data.open_interest import (
-                            get_oi_path, load_open_interest, align_oi_to_klines
-                        )
-                        from pathlib import Path
-                        data_dir = Path(self.data_dir)
-                        for prov in ["merged", "binance_vision", "coinglass", "binance"]:
-                            oi_path = get_oi_path(data_dir, symbol, prov)
-                            oi_df = load_open_interest(oi_path)
-                            if oi_df is not None and not oi_df.empty:
-                                oi_series = align_oi_to_klines(
-                                    oi_df, df.index, max_ffill_bars=2
-                                )
-                                break
-                    except Exception as e:
-                        logger.warning(
-                            f"Consistency validator: 無法載入 OI for overlay: {e}"
-                        )
-                
-                # 載入 LSR 數據（如 overlay mode 需要）
-                if "lsr_confirmatory" in overlay_mode and "_lsr_series" not in overlay_params:
-                    if self.data_dir:
-                        try:
-                            from ..data.long_short_ratio import load_lsr, align_lsr_to_klines
-                            data_dir = Path(self.data_dir)
-                            deriv_dir = data_dir / "binance" / "futures" / "derivatives"
-                            lsr_type = overlay_params.get("lsr_type", "lsr")
-                            lsr_raw = load_lsr(symbol, lsr_type, data_dir=deriv_dir)
-                            if lsr_raw is not None and not lsr_raw.empty:
-                                lsr_aligned = align_lsr_to_klines(
-                                    lsr_raw, df.index, max_ffill_bars=2
-                                )
-                                overlay_params["_lsr_series"] = lsr_aligned
-                        except Exception as e:
-                            logger.warning(
-                                f"Consistency validator: 無法載入 LSR for overlay: {e}"
-                            )
-
-                # OI 確認層數據（lsr_confirmatory + oi_confirm_enabled）
-                if ("lsr_confirmatory" in overlay_mode
-                        and overlay_params.get("oi_confirm_enabled", False)
-                        and "_oi_series" not in overlay_params):
-                    if self.data_dir:
-                        try:
-                            from ..data.open_interest import (
-                                get_oi_path, load_open_interest, align_oi_to_klines,
-                            )
-                            data_dir = Path(self.data_dir)
-                            for prov in ["merged", "binance_vision", "coinglass", "binance"]:
-                                oi_path = get_oi_path(data_dir, symbol, prov)
-                                oi_df = load_open_interest(oi_path)
-                                if oi_df is not None and not oi_df.empty:
-                                    overlay_params["_oi_series"] = align_oi_to_klines(
-                                        oi_df, df.index, max_ffill_bars=2,
-                                    )
-                                    break
-                        except Exception as e:
-                            logger.warning(
-                                f"Consistency validator: 無法載入 OI for LSR confirm: {e}"
-                            )
-
-                # FR 確認層數據（lsr_confirmatory + fr_confirm_enabled）
-                if ("lsr_confirmatory" in overlay_mode
-                        and overlay_params.get("fr_confirm_enabled", False)
-                        and "_fr_series" not in overlay_params):
-                    if self.data_dir:
-                        try:
-                            from ..data.funding_rate import (
-                                load_funding_rates, get_funding_rate_path,
-                            )
-                            data_dir = Path(self.data_dir)
-                            fr_path = get_funding_rate_path(data_dir, symbol)
-                            funding_df = load_funding_rates(fr_path)
-                            if funding_df is not None and not funding_df.empty:
-                                fr_col = (
-                                    "fundingRate"
-                                    if "fundingRate" in funding_df.columns
-                                    else funding_df.columns[0]
-                                )
-                                fr_series = funding_df[fr_col]
-                                overlay_params["_fr_series"] = fr_series.reindex(
-                                    df.index, method="ffill"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"Consistency validator: 無法載入 FR for LSR confirm: {e}"
-                            )
-
-                positions = apply_overlay_by_mode(
-                    position=positions,
-                    price_df=df,
-                    oi_series=oi_series,
-                    params=overlay_params,
-                    mode=overlay_mode,
-                )
-                logger.info(
-                    f"Consistency validator: overlay applied (mode={overlay_mode})"
+                from ..strategy.overlays.overlay_pipeline import prepare_and_apply_overlay
+                positions = prepare_and_apply_overlay(
+                    positions, df, self.overlay_cfg, symbol,
+                    data_dir=self.data_dir,
                 )
             except ImportError:
                 logger.warning(
@@ -609,6 +511,7 @@ class ConsistencyValidator:
                 interval=self.interval,
                 market_type=self.market_type,
                 direction=self.direction,
+                signal_delay=0,  # Live 模式：信號即時執行，不延遲
             )
             live_positions = strategy_func(live_df, ctx, self.params)
             live_signal = float(live_positions.iloc[-1])

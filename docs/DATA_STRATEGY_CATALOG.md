@@ -1,6 +1,6 @@
 # Data & Strategy Catalog
 
-> **Auto-generated**: 2026-02-28 by `scripts/gen_data_strategy_catalog.py`
+> **Auto-generated**: 2026-03-03 by `scripts/gen_data_strategy_catalog.py`
 > **Do NOT edit by hand** — regenerate after adding data modules or strategies.
 >
 > ```bash
@@ -15,7 +15,7 @@
 |----------|--------|-------------|-------------|
 | **K 線** | `binance_client.py` | (no description) | BinanceHTTP |
 | **K 線** | `binance_futures_client.py` | Binance Futures HTTP Client | BinanceFuturesHTTP |
-| **K 線** | `binance_vision.py` | Binance Data Vision - 官方歷史數據批量下載 | `download_binance_vision_klines()`, `get_available_symbols()`, `check_data_availability()` |
+| **K 線** | `binance_vision.py` | Binance Data Vision - 官方歷史數據批量下載 | `download_binance_vision_klines()`, `get_available_symbols()`, `check_data_availability()`, `generate_monthly_aggtrades_urls()`, `download_single_month_aggtrades()` |
 | **K 線** | `ccxt_client.py` | CCXT 多交易所數據源 - 統一 API 訪問 100+ 交易所 | `convert_symbol()`, `list_available_exchanges()`, `fetch_ccxt_klines()`, `check_exchange_symbol()`, `get_earliest_data_timestamp()` |
 | **K 線** | `klines.py` | (no description) | `fetch_klines()` |
 | **K 線** | `storage.py` | (no description) | `save_klines()`, `load_klines()`, `get_local_data_range()`, `merge_klines()` |
@@ -30,6 +30,7 @@
 | **即時** | `order_book.py` | Order Book Depth 數據模組（Phase 4C） | OrderBookSnapshot, `compute_imbalance()`, `compute_depth_profile()`, OrderBookCache, `parse_depth_message()` |
 | **工具** | `multi_tf_loader.py` | 多時間框架數據載入器 (Multi-TF Loader) | MultiTFLoader |
 | **工具** | `quality.py` | 數據質量檢查模組 | DataQualityIssue, DataQualityReport, DataQualityChecker, `validate_data_quality()`, `clean_data()` |
+| **其他** | `agg_trades.py` | aggTrades 聚合指標模組 — VPIN / Real CVD / OFI | `aggregate_trades_to_hourly()`, `compute_volume_clock_bars()`, `compute_vpin_from_bars()`, `resample_vpin_to_time()`, `compute_real_cvd()` |
 
 ---
 
@@ -58,6 +59,7 @@
 | ⚪ 已實作 | `nw_envelope_regime` | `nw_envelope_regime_strategy.py` | NW Envelope + Regime Filter + MTF Gating 策略（Futures 多空） |
 | ⚪ 已實作 | `nwkl` | `nwkl_strategy.py` | NWKL v3.1（Nadaraya-Watson Kernel Regression + Lorentzian Distance k-NN Classifier） |
 | ⚪ 已實作 | `oi_bb_rv` | `oi_bb_rv_strategy.py` | OI + Bollinger Band Breakout + Realized Volatility Filter (OI-BB-RV) |
+| ⚪ 已實作 | `orderflow_composite` | `orderflow_composite_strategy.py` | Orderflow Composite 獨立策略 |
 | ⚪ 已實作 | `rsi_adx_atr` | `rsi_adx_atr_strategy.py` | RSI + ADX + ATR 組合策略 |
 | ⚪ 已實作 | `rsi_adx_atr_trailing` | `rsi_adx_atr_strategy.py` | RSI + ADX + ATR 組合策略 |
 | ⚪ 已實作 | `tsmom` | `tsmom_strategy.py` | TSMOM（Time-Series Momentum）策略 |
@@ -68,7 +70,7 @@
 | ⚪ 已實作 | `xsmom` | `xsmom_strategy.py` | XSMOM（Cross-Sectional Momentum）策略 — 改進版 |
 | ⚪ 已實作 | `xsmom_tsmom` | `xsmom_strategy.py` | XSMOM（Cross-Sectional Momentum）策略 — 改進版 |
 
-> **Total**: 30 registered strategies
+> **Total**: 31 registered strategies
 
 ---
 

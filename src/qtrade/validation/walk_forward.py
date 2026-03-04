@@ -9,6 +9,7 @@ Walk-Forward Analysis & Parameter Sensitivity
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Dict, List
 
@@ -298,8 +299,8 @@ def parameter_sensitivity_analysis(
 
     for idx, combo in enumerate(combos, 1):
         params = dict(zip(param_names, combo))
-        cfg = base_cfg.copy()
-        cfg["strategy_params"] = {**base_cfg["strategy_params"], **params}
+        cfg = copy.deepcopy(base_cfg)
+        cfg["strategy_params"] = {**cfg["strategy_params"], **params}
 
         try:
             res = run_symbol_backtest(

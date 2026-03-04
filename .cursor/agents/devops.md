@@ -86,10 +86,13 @@ Server: Oracle Cloud (1GB RAM, x86_64)
 IP: 140.83.57.255
 tmux: meta_blend_live
 Config: config/prod_candidate_simplified.yaml
-Strategy: meta_blend 8-Symbol + HTF Filter v2 + LSR (Simplified), 3x ISOLATED
-Observation: 2026-02-28 ~ 2026-03-14
-Rollback L1: prod_candidate_htf_lsr.yaml (SR=3.77)
-Rollback L2: prod_candidate_htf_filter.yaml (SR=2.75)
+Strategy: meta_blend 6-Symbol + HTF Filter v2 + LSR (Simplified v2), 3x ISOLATED
+  Symbols: BTC, ETH, SOL, DOGE, AVAX, LINK (removed: ADA, BNB)
+  Vol slippage model: enabled (square-root impact)
+  ETH: simplified to default tier (eth_enhanced was dead params)
+Observation: 2026-03-04 ~ 2026-03-18
+Rollback L1: git revert to 8-symbol config (SR=3.80)
+Rollback L2: prod_candidate_htf_lsr.yaml (SR=3.77)
 ```
 
 ## 監控指令
@@ -101,6 +104,20 @@ Rollback L2: prod_candidate_htf_filter.yaml (SR=2.75)
 | 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_simplified.yaml` |
 | 交易查詢 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_simplified.yaml summary` |
 | Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_simplified.yaml` |
+
+### Alpha Decay Cron 自動化
+
+`scripts/cron_alpha_decay.sh` 每週自動執行 Alpha Decay 掃描，報告輸出到 `reports/alpha_decay/`。
+
+Oracle Cloud crontab 設定：
+
+```bash
+# 每週日 00:00 UTC 執行 Alpha Decay 監控
+0 0 * * 0  /home/ubuntu/quant-binance-spot/scripts/cron_alpha_decay.sh >> /home/ubuntu/quant-binance-spot/logs/cron_alpha_decay.log 2>&1
+```
+
+> 報告位置：`reports/alpha_decay/alpha_decay_<timestamp>.json`
+> 有警報時自動發送 Telegram 通知，無警報時靜默。
 
 ### 查看持倉
 
