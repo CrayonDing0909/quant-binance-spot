@@ -73,6 +73,7 @@ When you modify code that a doc describes, update the `Last updated` date in tha
 | ~~`R3C_SYMBOL_GOVERNANCE_SPEC.md`~~ | Archived to `docs/archive/` — symbol governance now tracked in Feature Ownership Registry |
 | `STRATEGY_PORTFOLIO_GOVERNANCE.md` | Strategy portfolio addition/replacement/retirement rules change |
 | `CURSOR_WORKFLOW.md` | Agent roles or workflow changes |
+| `ORCHESTRATION_MVP.md` | Orchestrator state model / commands / stage contracts / approval flow changes |
 | `RESEARCH_LITERATURE.md` | New literature discovered during research |
 | `ALPHA_RESEARCH_MAP.md` | After any Alpha Research session (new signal tested, direction closed, coverage changed) |
 
@@ -103,9 +104,10 @@ config/                    ← Active configs only (~15)
 config/archive/            ← Deprecated / completed research configs
 scripts/                   ← Active scripts only (~30)
 scripts/archive/           ← One-off research / migration scripts
-docs/                      ← Living documentation (~5 files)
+docs/                      ← Living documentation (~7 files)
 docs/archive/              ← Historical / superseded docs
-.cursor/agents/            ← 5 lean agent definitions (~70-130 lines each)
-.cursor/skills/            ← 18 skill files (alpha/dev/validation/risk/ops)
+tasks/                     ← Orchestrated task manifests / pilot task replays
+.cursor/agents/            ← 7 lean agent definitions (~70-130 lines each)
+.cursor/skills/            ← 23 skill files (alpha/dev/validation/risk/ops/portfolio)
 .cursor/rules/             ← Always-apply rules (.mdc, alwaysApply: true)
 ```

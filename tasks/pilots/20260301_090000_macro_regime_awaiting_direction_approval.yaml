@@ -1,0 +1,73 @@
+schema_version: 1
+task_id: research_20260301_090000_macro_regime
+goal: Evaluate cross-market macro regime indicators as a possible replacement candidate for the HTF filter.
+mode: research_orchestration_mvp
+created_at: "2026-03-01T09:00:00Z"
+updated_at: "2026-03-01T09:35:00Z"
+current_stage: low_confidence_review
+status: awaiting_approval
+owner_agent: orchestrator
+confidence_level: low
+review_required: true
+review_reason: Integration mode is promising but replacement-vs-stacking decision is still costly enough to justify review.
+auto_advance: false
+stage_started_at: "2026-03-01T09:20:00Z"
+last_heartbeat_at: "2026-03-01T09:35:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files: []
+  generated_artifacts:
+    - "tasks/pilots/20260301_090000_macro_regime_awaiting_direction_approval.yaml"
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "Stop before downstream implementation if macro thesis is rejected."
+  steps:
+    - "Reject the direction or narrow scope before data fanout."
+    - "Leave baseline and production config unchanged."
+  verified: true
+approval:
+  required: true
+  stage: research_direction_approval
+  reason: Strategist finished the gap definition and recommends a filter-replacement study before wider data fanout.
+  requested_at: "2026-03-01T09:35:00Z"
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: null
+  notebook: null
+  proposal: null
+decision:
+  gap: Baseline likely over-filters chop and risk-off regimes with a broad HTF gate; test whether a cleaner macro filter can replace it.
+  archetype: regime_filter_replacement
+  integration_mode: filter_replacement_candidate
+  success_criteria:
+    - Lower correlation to existing HTF gate than prior filter candidates.
+    - Clear regime separation before any developer handoff.
+    - Enough edge to justify replacement testing instead of another stacking attempt.
+  kill_criteria:
+    - Macro indicators behave like another volatility proxy with no incremental regime separation.
+    - Signal quality is too weak to justify downstream implementation.
+  hypothesis: null
+  data_requirements: []
+  coverage_gate: null
+  eda_findings: []
+  handoff_recommendation: null
+  final_outcome: null
+blockers: []
+notes:
+  - Pilot replay shows approval should happen before broad GLD/VIX data fanout.
+next_recommended_action: Approve or narrow the direction before starting alpha research.
+final_packet:
+  recommendation: "Review before wider macro data fanout."
+  evidence_tier: null
+  blocker_summary: null
+  handoff_decision: "Not ready for developer handoff."
+  review_summary: "This pilot demonstrates the only class of case where strategist should stop early: low-confidence, high-cost direction choice."

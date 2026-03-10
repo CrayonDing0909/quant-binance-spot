@@ -1,0 +1,69 @@
+schema_version: 1
+task_id: research_YYYYMMDD_HHMMSS_slug
+goal: "<one-sentence research goal>"
+mode: research_orchestration_mvp
+created_at: "YYYY-MM-DDTHH:MM:SSZ"
+updated_at: "YYYY-MM-DDTHH:MM:SSZ"
+current_stage: intake
+status: running
+owner_agent: orchestrator
+confidence_level: high
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "YYYY-MM-DDTHH:MM:SSZ"
+last_heartbeat_at: "YYYY-MM-DDTHH:MM:SSZ"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files: []
+  generated_artifacts: []
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: null
+  steps: []
+  verified: false
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: null
+  notebook: null
+  proposal: null
+decision:
+  gap: null
+  archetype: null
+  integration_mode: null
+  success_criteria: []
+  kill_criteria: []
+  hypothesis: null
+  data_requirements: []
+  coverage_gate: null
+  eda_findings: []
+  handoff_recommendation: null
+  final_outcome: null
+blockers: []
+notes: []
+next_recommended_action: "<what should happen next>"
+final_packet:
+  recommendation: null
+  evidence_tier: null
+  blocker_summary: null
+  handoff_decision: null
+  review_summary: null
+
+# blockers entry shape example:
+# - kind: data_gap
+#   reason: Missing historical liquidation-state labels.
+#   unblock_condition: Accept proxy labeling or stop the direction.

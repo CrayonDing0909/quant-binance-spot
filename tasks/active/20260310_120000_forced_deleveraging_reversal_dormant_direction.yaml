@@ -1,0 +1,87 @@
+schema_version: 1
+task_id: research_20260310_120000_forced_deleveraging_reversal_dormant_direction
+goal: Determine whether forced deleveraging reversal should be preserved as a dormant reopen direction rather than handed off now.
+mode: research_orchestration_mvp
+created_at: "2026-03-10T12:00:00Z"
+updated_at: "2026-03-10T12:20:00Z"
+current_stage: stop_or_handoff
+status: completed
+owner_agent: orchestrator
+confidence_level: high
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-10T12:20:00Z"
+last_heartbeat_at: "2026-03-10T12:20:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files:
+    - "docs/research/20260310_forced_deleveraging_reversal_proposal.md"
+    - "notebooks/research/20260310_forced_deleveraging_reversal_eda.ipynb"
+  generated_artifacts:
+    - "tasks/active/20260310_120000_forced_deleveraging_reversal_dormant_direction.yaml"
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "Reopen only after historical liquidation-state evidence exists."
+  steps:
+    - "Leave production config unchanged."
+    - "Keep the thesis only in the reopen backlog."
+    - "Start a new research task instead of reviving this one if state evidence becomes available."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: Strategist intake is complete and recommends preserving the thesis only as a dormant reopen candidate under the `proxy-valid / state-invalid` evidence tier.
+  requested_at: "2026-03-10T12:12:00Z"
+  resolved_at: "2026-03-10T12:20:00Z"
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: "docs/research/20260310_forced_deleveraging_reversal_proposal.md"
+  notebook: "notebooks/research/20260310_forced_deleveraging_reversal_eda.ipynb"
+  proposal: "docs/research/20260310_forced_deleveraging_reversal_proposal.md"
+decision:
+  gap: Baseline remains underexposed to panic-to-rebound event windows where it is often flat or wrong, but the thesis still lacks true liquidation-state validation.
+  archetype: event_reversal_satellite
+  integration_mode: dormant_reopen_candidate
+  success_criteria:
+    - Preserve only one clear dormant variant with low correlation and portfolio-meaningful density.
+    - Keep the direction alive without prematurely spending Quant Developer time.
+    - Reopen only when true liquidation-state evidence can be tested.
+  kill_criteria:
+    - Real liquidation-state history becomes available and the cascade_end family no longer survives.
+    - The thesis cannot progress beyond proxy-based evidence or remains an event-colored overlay.
+  hypothesis: Cascade-end reversal is promising enough to preserve as a dormant second-leg thesis, but not yet valid for developer handoff.
+  data_requirements:
+    - Historical liquidation-state data for all target symbols
+    - Common-window OI and LSR replay support on the reopening window
+  coverage_gate: 2022+ common-data window is usable, but true historical liquidation-state remains unavailable and is the active blocker.
+  eda_findings:
+    - Best surviving proxy trigger is `cascade_end` with `no_htf_gate`
+    - Mean TIM is in the portfolio-meaningful zone and baseline correlation is low
+    - `panic_liquidation` remains weak and true state validation is still blocked
+  handoff_recommendation: do_not_handoff_preserve_as_dormant_direction
+  final_outcome: approved_as_dormant_reopen_candidate
+blockers:
+  - kind: state_validation_gap
+    reason: True historical liquidation-state data does not exist, so the thesis remains `proxy-valid / state-invalid`.
+    unblock_condition: Historical liquidation-state becomes available and the same trigger family survives state-based rerun.
+notes:
+  - Intake reused existing proposal and notebook rather than starting a fresh EDA pass.
+  - Reopen framework suggests preserving only `cascade_end reversal` if one dormant direction is kept.
+  - This task is intentionally parked at approval before any additional research fanout.
+  - User approved preserving the direction as dormant rather than handing it to Quant Developer now.
+next_recommended_action: Keep `cascade_end reversal` in the reopen backlog and only reopen when historical liquidation-state evidence becomes available.
+final_packet:
+  recommendation: "Keep as dormant reopen candidate."
+  evidence_tier: "proxy-valid / state-invalid"
+  blocker_summary: "Historical liquidation-state data is unavailable, so the thesis cannot pass state validation."
+  handoff_decision: "Do not hand off to Quant Developer."
+  review_summary: "Approved without additional research because the existing proposal already supported a dormant-direction decision."

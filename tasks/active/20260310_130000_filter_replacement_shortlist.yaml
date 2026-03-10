@@ -1,0 +1,87 @@
+schema_version: 1
+task_id: research_20260310_130000_filter_replacement_shortlist
+goal: Evaluate OI, On-chain, Macro, and VPIN as HTF filter replacement candidates and rank which one is most worth pursuing next.
+mode: research_orchestration_mvp
+created_at: "2026-03-10T13:00:00Z"
+updated_at: "2026-03-10T13:18:00Z"
+current_stage: stop_or_handoff
+status: completed
+owner_agent: orchestrator
+confidence_level: high
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-10T13:18:00Z"
+last_heartbeat_at: "2026-03-10T13:18:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files:
+    - "docs/ALPHA_RESEARCH_MAP.md"
+    - ".cursor/rules/project-overview.mdc"
+  generated_artifacts:
+    - "tasks/active/20260310_130000_filter_replacement_shortlist.yaml"
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "Maintain current HTF baseline and treat this task as synthesis only."
+  steps:
+    - "Do not change production config."
+    - "If the shortlist is later rejected, keep all preserved filter code dormant and leave baseline unchanged."
+    - "Open a new replacement-validation task before any developer handoff or freeze."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: "docs/ALPHA_RESEARCH_MAP.md"
+  notebook: null
+  proposal: null
+decision:
+  gap: Existing evidence suggests HTF is not best-in-class on standalone performance, but replacing it is an architecture-level change that should only happen after the live observation window and a dedicated validation pass.
+  archetype: filter_replacement_synthesis
+  integration_mode: filter_replacement_candidate
+  success_criteria:
+    - Rank candidates by standalone strength, robustness, and expected replacement risk.
+    - Prefer candidates that improve standalone Sharpe without severe evidence gaps.
+    - Avoid turning replacement research into another stacking exercise.
+  kill_criteria:
+    - No candidate materially outperforms HTF after standalone review.
+    - The shortlist relies on stale evidence or unresolved architecture risk.
+  hypothesis: One of the preserved regime filters is likely more suitable as a full HTF replacement than as a stacked filter, but the best candidate should be selected before any new implementation effort.
+  data_requirements:
+    - Existing OI, On-chain, Macro, and VPIN research summaries
+    - Existing ablation and validation results already captured in the repo
+  coverage_gate: Sufficient for synthesis because all four candidates already have completed EDA/ablation records in the repo.
+  eda_findings:
+    - OI had the strongest standalone uplift versus HTF (+6.7%) but failed the incremental promotion threshold and would require architecture-level replacement validation.
+    - On-chain had the best evidence quality package: strongest validated signal quality, standalone SR +5.3%, and full validation already passed.
+    - Macro was directionally strong but weaker than On-chain on standalone uplift and stacked the worst with HTF (-9.8%).
+    - VPIN was the most orthogonal candidate and stacked least badly, but its standalone uplift (+3.5%) was weaker than OI, On-chain, and Macro.
+  handoff_recommendation: maintain_baseline_now_prepare_onchain_first_replacement_shortlist
+  final_outcome: shortlist_completed_keep_baseline
+blockers:
+  - kind: observation_window_gate
+    reason: Production observation window for the current 6-symbol candidate runs through 2026-03-18, so replacement should not be rushed mid-observation.
+    unblock_condition: Observation window ends cleanly and replacement validation is explicitly authorized.
+notes:
+  - This task reused existing research instead of launching new EDA.
+  - Recommendation is a shortlist and sequencing decision, not a promotion decision.
+  - Existing memory pattern remains intact: standalone can beat HTF while stacking still over-filters.
+next_recommended_action: Keep the current HTF baseline during the observation window; if replacement research is reopened after 2026-03-18, evaluate On-chain first, OI second, Macro third, VPIN fourth.
+final_packet:
+  recommendation: "Shortlist `On-chain` as the first HTF replacement candidate, with `OI` second, `Macro` third, and `VPIN` fourth. Maintain the current HTF baseline for now."
+  evidence_tier: "synthesis_complete / replacement_not_yet_authorized"
+  blocker_summary: "This is an architecture-level change and the live observation window is still open, so the correct action is shortlist now, validate later."
+  handoff_decision: "Do not hand off to Quant Developer yet for replacement work; reopen a dedicated replacement-validation task after the observation window."
+  review_summary: "Why On-chain not OI: slightly lower standalone uplift than OI, but materially stronger evidence stack and already passed full validation. Why not Macro: positive but weaker and stacking degradation was the worst. Why not VPIN: strongest orthogonality, but standalone benefit was too small to lead the shortlist."

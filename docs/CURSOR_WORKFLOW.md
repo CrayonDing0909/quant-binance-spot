@@ -1,16 +1,23 @@
 # Cursor Agent 工作流指南
 
-> **Last updated**: 2026-02-25 (速查表分類重構 + 維護/改進路由 + 預設規則)
+> **Last updated**: 2026-03-10 (Orchestrator 升級為 V2：低信心才 review，task manifest 改為 rollback-aware system of record)
 
-> 日常開發時的 prompt 參考。5 個 Agent、什麼時候用誰、怎麼下 prompt。
-> Slash commands 可用 `/` 快速觸發常用流程，見下方「Slash Commands」段落。
+> 日常開發時的 prompt 參考。7 個 Agent、什麼時候用誰、怎麼下 prompt。
+> 研究任務預設優先走 `@orchestrator` + slash commands；需要直接找專家時，再手動指定其他 agent。
 
 ---
 
 ## 你的角色
 
-你是 **Orchestrator（指揮者）**。Agent 之間不會自動溝通 — 你是中間人。
-你的工作就是：看結果 → 判斷下一步 → 叫對的 Agent 做事。
+在 Research Orchestration MVP 中，你的角色從「人工 dispatcher」改成 **Supervisor（批准式監督者）**。
+
+你的預設工作是：
+- 給目標
+- 只在低信心 / blocker / 高風險決策時 review
+- 在需要時做批准 / 拒絕 / 暫停 / 續跑決策
+
+你**不需要**再為每一步手動挑 agent、補同樣的上下文、追 heartbeat 或整理 handoff 結果。
+這些動作由 `@orchestrator` 負責；只有在你想直接找某個專家 agent 深聊時，才手動切換。
 
 ---
 
@@ -20,6 +27,10 @@
 
 | 我想... | Agent | Prompt 範例 |
 |---------|-------|-------------|
+| 只講目標，讓系統自動分流研究流程 | `@orchestrator` | `幫我研究 forced deleveraging reversal 是否值得做成 satellite strategy` |
+| 查某個研究任務現在卡在哪裡 | `@orchestrator` | `幫我看 task_id=research_20260310_forced_deleveraging_reversal 的狀態` |
+| 分析 Baseline 弱點 / 找互補策略方向 | `@portfolio-strategist` | `分析目前 A (Baseline) 在哪些 regime 最弱，給我 3 個互補策略方向` |
+| 判斷新方向該做 standalone 還是 filter | `@portfolio-strategist` | `這個策略適合當第二條腿還是 TSMOM 的 filter？` |
 | 探索新策略想法 | `@alpha-researcher` | `幫我研究 Funding Rate 反向策略的可行性` |
 | 看鏈上數據有沒有 alpha | `@alpha-researcher` | `分析 BTCUSDT Open Interest 變化與價格的 IC` |
 | 整理研究成提案 | `@alpha-researcher` | `把上面的研究整理成 Strategy Proposal` |
@@ -51,7 +62,7 @@
 | 修 bug / 重構程式碼 | `@quant-developer` | `重構 xxx 模組，把 print 改成 logger` |
 | 跑測試 | 任何 Agent | `跑一下 pytest 確認沒壞東西` |
 
-> **不確定找誰？** 直接在新 Chat 描述任務，不需要 `@` 任何 agent。預設助手會幫你分流，或直接處理。簡單規則：動到**程式碼或 `.cursor/` 檔案** → `@quant-developer`；動到 **Oracle Cloud / cron / tmux** → `@devops`；需要**風險判斷** → `@risk-manager`。
+> **不確定找誰？** 研究任務先用 `@orchestrator` 或 `/start-research`。只有在你明確知道要直接對哪個專家下指令時，才手動指定 agent。簡單規則：研究前期 routing / heartbeat / approval → `@orchestrator`；要先判斷 **Baseline 缺口 / 互補策略方向** → `@portfolio-strategist`；動到**程式碼或 `.cursor/` 檔案** → `@quant-developer`；動到 **Oracle Cloud / cron / tmux** → `@devops`；需要**風險判斷** → `@risk-manager`。
 
 ---
 
@@ -62,6 +73,10 @@
 
 | Command | Agent | 用途 |
 |---------|-------|------|
+| `/start-research` | `@orchestrator` | 建立 research task manifest、做 intake、預設自動串 stage；只有 low confidence 才 review |
+| `/task-status` | `@orchestrator` | 讀取 manifest，回報 `running` / `blocked` / `stalled` / `awaiting_approval` 狀態與 rollback 摘要 |
+| `/approve-stage` | `@orchestrator` | 批准或拒絕當前 gate，並讓流程往下一個 stage 前進 |
+| `/resume-task` | `@orchestrator` | 讓 `paused` / `blocked` / `stalled` 的研究任務續跑 |
 | `/deploy` | `@devops` | 部署最新改動到 Oracle Cloud（git push → pull → 重啟） |
 | `/healthcheck` | `@devops` | 完整健康檢查（runner 狀態、持倉、系統資源） |
 | `/backtest` | `@quant-developer` | 跑回測 + `--quick` 驗證（需填入 config 路徑） |
@@ -84,13 +99,96 @@
 
 ---
 
-## 三種工作模式
+## 預設研究編排（MVP）
+
+適合：你只想給一個研究目標，剩下的 intake / stage routing / progress tracking / final packet 整理由系統處理。
+
+### 預設入口
+
+- 新任務：`/start-research`
+- 查狀態：`/task-status`
+- 批准 gate：`/approve-stage`
+- 續跑任務：`/resume-task`
+
+### Task Manifest
+
+每個研究任務都會有一個 manifest，儲存在 `tasks/active/`，格式與欄位定義見 `docs/ORCHESTRATION_MVP.md` 與 `tasks/_templates/research_task_manifest.yaml`。
+它是 **system of record**，負責保存：
+- state / heartbeat
+- strategy / research decision
+- touched files / artifacts
+- rollback target / rollback steps
+
+但它**不是**你平常要手動推流程的主介面。
+
+### 狀態語意
+
+| 狀態 | 意義 | 你要做什麼 |
+|------|------|-----------|
+| `running` | 任務正常前進中 | 不需要介入，除非你要中止或改 scope |
+| `awaiting_approval` | 到了需要你批准的 gate | 用 `/approve-stage` 決定是否前進 |
+| `blocked` | 缺資料、需求歧義、或有外部依賴卡住 | 補資訊或決定停掉 / 改 scope |
+| `stalled` | 太久沒有 heartbeat，疑似中斷 | 用 `/task-status` 確認，再用 `/resume-task` 續跑 |
+| `paused` | 你主動暫停 | 需要時再 `/resume-task` |
+| `completed` | 當前 MVP 範圍已完成 | 看 summary，決定是否 handoff 或結案 |
+
+### 高風險 gate（保留人工批准能力）
+
+- `research_direction_approval`（僅 low confidence 才觸發）
+- `config_freeze`
+- `prod_deploy`
+- `risk_incident_action`
+
+### Research MVP Flow
+
+```mermaid
+flowchart TD
+    userGoal["UserGoal"] --> orchestrator["Orchestrator"]
+    orchestrator --> intake["Intake"]
+    intake --> strategist["StrategistStage"]
+    strategist --> confidence["ConfidenceCheck"]
+    confidence -->|"high_or_medium"| researcher["AlphaResearchStage"]
+    confidence -->|"low"| approval["ReviewNeeded"]
+    approval --> researcher["AlphaResearchStage"]
+    researcher --> summary["StageSummaryAndNextStep"]
+```
+
+---
+
+## 四種工作模式
+
+### Mode O: Research Orchestration MVP
+
+適合：你想用單一入口管理研究流程，而不是自己手動 dispatch。
+
+```
+Step 0: /start-research → @orchestrator
+        「給一個研究目標」
+        → 產出: task manifest + intake summary
+
+Step 1: @orchestrator
+        自動執行 strategist stage（必要時對齊 `@portfolio-strategist` contract）
+        → 若高/中信心：直接續跑
+        → 若低信心：才停在 review
+
+Step 2: @orchestrator
+        自動執行 alpha-research stage（必要時對齊 `@alpha-researcher` contract）
+        → 產出: hypothesis / data needs / EDA findings / handoff recommendation
+
+Step 3: /task-status 或最終 summary
+        你通常只看 final packet
+        → 決定 handoff / stop / archive / 擴大研究
+```
 
 ### Mode A: 完整流程（新策略從 0 到上線）
 
 適合：全新策略開發，從研究到部署。
 
 ```
+Step 0: @portfolio-strategist
+        「分析 A (Baseline) 的弱點，定義這次研究要補的缺口」
+        → 產出: Baseline Weakness Report / Complement Thesis Brief
+
 Step 1: @alpha-researcher
         「我想研究 [主題]，幫我建 Notebook 做 EDA」
         → 產出: notebooks/research/YYYYMMDD_xxx_exploration.ipynb
@@ -127,9 +225,12 @@ Step 7: @devops
 
 ### Mode B: 快速迭代（改進現有策略）
 
-適合：調參數、加 filter、修 bug。跳過 Alpha Researcher。
+適合：調參數、加 filter、修 bug。若是互補策略方向不明，先找 Portfolio Strategist。
 
 ```
+Step 0: @portfolio-strategist (optional)
+        「先判斷這次改動是在補哪個 Baseline 缺口」
+
 Step 1: @quant-developer
         「在 tsmom_ema 策略加一個 volatility filter，
          用 config/research_tsmom_vol.yaml 跑回測」
@@ -264,7 +365,7 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 ## 讀取 Agent 輸出 — Next Steps 機制
 
 每個 Agent 完成任務後，都會在輸出最後附上一個 **「Next Steps (pick one)」** 表格。
-這讓你（Orchestrator）不需要記住完整的流程，只需要看建議選項、選一個、貼上 Prompt。
+在 **manual 模式** 下，這讓你不需要記住完整流程；在 **orchestrated 模式** 下，優先使用 `/approve-stage`、`/resume-task`、`/task-status`，只有脫離 MVP 流程時才手動複製 prompt。
 
 ### 格式
 
@@ -297,6 +398,7 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 | Agent 完成後 | 常見選項 |
 |-------------|---------|
+| Portfolio Strategist | A: 交給 Alpha Researcher 做 EDA · B: 交給 Developer 直接做 ablation · C: 關閉方向 |
 | Alpha Researcher | A: 交給 Developer 實作 · B: 轉換研究方向 · C: 歸檔停止 |
 | Quant Developer | A: 提交 Researcher 審查 · B: 自我迭代改進 · C: 退回 Researcher |
 | Quant Researcher | GO→ Risk Manager · NMW→ Developer · FAIL→ Researcher 或歸檔 |
@@ -400,6 +502,8 @@ Researcher 判定 NEED_MORE_WORK，原因：
 
 | Agent | 檔案 |
 |-------|------|
+| Orchestrator | `.cursor/agents/orchestrator.md` |
+| Portfolio Strategist | `.cursor/agents/portfolio-strategist.md` |
 | Alpha Researcher | `.cursor/agents/alpha-researcher.md` |
 | Quant Developer | `.cursor/agents/quant-developer.md` |
 | Quant Researcher | `.cursor/agents/quant-researcher.md` |

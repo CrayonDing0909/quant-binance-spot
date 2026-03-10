@@ -1,0 +1,87 @@
+schema_version: 1
+task_id: research_20260310_040000_forced_deleveraging_reversal
+goal: Assess whether forced deleveraging reversal can serve as a satellite strategy for the baseline portfolio.
+mode: research_orchestration_mvp
+created_at: "2026-03-10T04:00:00Z"
+updated_at: "2026-03-10T11:20:00Z"
+current_stage: alpha_research
+status: blocked
+owner_agent: orchestrator
+confidence_level: medium
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-10T08:30:00Z"
+last_heartbeat_at: "2026-03-10T11:20:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files:
+    - "docs/research/20260310_forced_deleveraging_reversal_proposal.md"
+    - "notebooks/research/20260310_forced_deleveraging_reversal_eda.ipynb"
+  generated_artifacts:
+    - "tasks/pilots/20260310_040000_forced_deleveraging_reversal_blocked.yaml"
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "Stop or shelve the direction without affecting baseline production."
+  steps:
+    - "Do not hand off to Quant Developer while state validation is blocked."
+    - "Document proxy-valid evidence and reopen conditions."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - notebook
+  - proposal
+artifacts:
+  complement_thesis_brief: "docs/research/20260310_forced_deleveraging_reversal_proposal.md"
+  notebook: "notebooks/research/20260310_forced_deleveraging_reversal_eda.ipynb"
+  proposal: "docs/research/20260310_forced_deleveraging_reversal_proposal.md"
+decision:
+  gap: Baseline underreacts during panic cascades and sharp reversal windows.
+  archetype: event_reversal_satellite
+  integration_mode: satellite_strategy_candidate
+  success_criteria:
+    - Capture crash_rebound and sharp_reversal buckets where baseline is flat or wrong.
+    - Maintain low concentration and low correlation to baseline.
+    - Preserve thesis consistency without relying on unavailable historical labels.
+  kill_criteria:
+    - No credible proxy for liquidation state exists.
+    - Coverage issues force a misleading common-window result.
+  hypothesis: Cascade-end reversals may provide a low-correlation event leg during panic liquidation windows.
+  data_requirements:
+    - LSR backfill with acceptable coverage
+    - Reliable proxy for liquidation-state timing
+  coverage_gate: Initial OI and LSR coverage was insufficient before the 2022 common-window rerun.
+  eda_findings:
+    - crash_rebound and sharp_reversal buckets were strong
+    - panic_liquidation remained weak
+    - 24h fixed hold was the best exit among tested variants
+  handoff_recommendation: null
+  final_outcome: blocked_pending_stop_or_proxy_decision
+blockers:
+  - kind: data_gap
+    reason: No true historical liquidation-state dataset exists for the thesis-critical label.
+    unblock_condition: Accept a proxy definition explicitly or stop the direction.
+  - kind: coverage_gap
+    reason: Early-period OI and LSR coverage gaps distort the full-history analysis.
+    unblock_condition: Use the 2022+ common window with documented limitations.
+notes:
+  - Pilot replay shows blocked state must be explicit instead of silently timing out.
+next_recommended_action: Decide whether to accept a proxy-based continuation or stop and archive the direction.
+final_packet:
+  recommendation: "Blocked pending true state evidence."
+  evidence_tier: "proxy-valid / state-invalid"
+  blocker_summary: "Historical liquidation-state is unavailable; early-window coverage also needs common-window treatment."
+  handoff_decision: "Do not hand off to Quant Developer."
+  review_summary: "This pilot demonstrates a blocker-driven stop rather than a low-confidence review."

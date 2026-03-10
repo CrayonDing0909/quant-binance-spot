@@ -1,0 +1,77 @@
+schema_version: 1
+task_id: research_20260305_120000_tick_ofi
+goal: Determine whether tick-level order-flow information contains a complementary alpha leg for the baseline portfolio.
+mode: research_orchestration_mvp
+created_at: "2026-03-05T12:00:00Z"
+updated_at: "2026-03-05T18:10:00Z"
+current_stage: stop_or_handoff
+status: completed
+owner_agent: orchestrator
+confidence_level: high
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-05T17:40:00Z"
+last_heartbeat_at: "2026-03-05T18:10:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files: []
+  generated_artifacts:
+    - "tasks/pilots/20260305_120000_tick_ofi_handoff_ready.yaml"
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "If downstream ablation fails, keep this as research evidence only."
+  steps:
+    - "Leave production unchanged."
+    - "Use the handoff packet only as input to Quant Developer ablation."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - notebook
+artifacts:
+  complement_thesis_brief: null
+  notebook: null
+  proposal: null
+decision:
+  gap: Baseline lacks a low-correlation microstructure input for intraday structure shifts.
+  archetype: microstructure_filter_or_overlay
+  integration_mode: candidate_filter_or_overlay
+  success_criteria:
+    - The signal must stay orthogonal to TSMOM.
+    - Raw signal quality must justify developer ablation rather than endless EDA.
+    - The result should narrow to one concrete implementation hypothesis.
+  kill_criteria:
+    - Order-flow direction features remain too weak to justify any handoff.
+    - The signal only re-encodes an existing baseline feature.
+  hypothesis: The alpha sits in order-flow structure rather than in order-flow direction.
+  data_requirements:
+    - aggTrades-derived hourly metrics
+  coverage_gate: aggTrades coverage sufficient for 2020-2026 test window
+  eda_findings:
+    - avg_trade_size showed the best raw signal quality among the tested microstructure features
+    - OFI direction variants were weak and should not be promoted
+    - The promising path narrowed to avg_trade_size filter or overlay ablation
+  handoff_recommendation: handoff_to_quant_developer
+  final_outcome: handoff_ready
+blockers: []
+notes:
+  - Pilot replay shows every completed research task needs one default next action.
+next_recommended_action: Quant Developer runs avg_trade_size filter and overlay ablation against the baseline.
+final_packet:
+  recommendation: "Proceed to Quant Developer ablation."
+  evidence_tier: "handoff-ready"
+  blocker_summary: null
+  handoff_decision: "Hand off to Quant Developer."
+  review_summary: "This pilot demonstrates the default happy path: no mid-task review, just a final packet."

@@ -38,16 +38,18 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
 - Use `cfg.to_backtest_dict()` — never manually assemble
 - Research: `config/research_*.yaml` — NEVER modify `prod_*` during research
 
-## 5-Agent Workflow
+## 7-Agent Workflow
 
 ```
-Alpha Researcher → Quant Developer → Quant Researcher → Risk Manager → Developer (freeze) → DevOps
-                                                                                              ↓
-                                                                                         Production
+Orchestrator → Portfolio Strategist → Alpha Researcher → Quant Developer → Quant Researcher → Risk Manager → Developer (freeze) → DevOps
+                                                                                                                                     ↓
+                                                                                                                                Production
 ```
 
 | Agent | Scope |
 |-------|-------|
+| Orchestrator | Research task intake, routing, task state/rollback tracking, heartbeat visibility, low-confidence review gating |
+| Portfolio Strategist | Baseline weakness diagnosis, complementary strategy design, research routing |
 | Alpha Researcher | Strategy discovery, EDA, Proposal |
 | Quant Developer | Implementation, backtest, config freeze |
 | Quant Researcher | Full validation (WFA/CPCV/DSR), verdict |
@@ -63,7 +65,8 @@ src/qtrade/{strategy,backtest,live,validation,data,risk,monitor}/
 config/              ← Active configs (~15)
 config/archive/      ← Deprecated configs
 scripts/             ← Active scripts (~30)
-.cursor/agents/      ← 5 agent definitions
-.cursor/skills/      ← 18 skill files (alpha/dev/validation/risk/ops)
+tasks/               ← Orchestrated research task manifests / pilot replays
+.cursor/agents/      ← 7 agent definitions
+.cursor/skills/      ← 23 skill files (alpha/dev/ops/portfolio/risk/validation)
 .cursor/rules/       ← Always-apply rules (anti-bias, hygiene, etc.)
 ```
