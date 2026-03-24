@@ -81,9 +81,9 @@ class StrategyConfig:
 
     def get_params(self, symbol: str | None = None) -> dict:
         """返回合併後的參數：base params + symbol overrides"""
-        merged = dict(self.params)
+        merged = copy.deepcopy(self.params)
         if symbol and self.symbol_overrides and symbol in self.symbol_overrides:
-            merged.update(self.symbol_overrides[symbol])
+            merged.update(copy.deepcopy(self.symbol_overrides[symbol]))
         return merged
 
 
@@ -496,6 +496,19 @@ def _resolve_env_var(value: str | None) -> str | None:
     return value
 
 
+def _non_none_fields(raw: dict | None, keys: tuple[str, ...] | list[str] | None = None) -> dict:
+    """只保留 YAML 中明確設定的欄位，讓 dataclass defaults 處理缺省值。"""
+    if not raw:
+        return {}
+
+    if keys is None:
+        items = raw.items()
+    else:
+        items = ((key, raw.get(key)) for key in keys)
+
+    return {k: v for k, v in items if v is not None}
+
+
 def load_config(path: str = "config/base.yaml") -> AppConfig:
     load_dotenv()
     with open(path, "r", encoding="utf-8") as f:
@@ -506,27 +519,24 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
 
     # market 配置
     market_raw = dict(raw["market"])
-    market_type_str = market_raw.pop("market_type", "spot")
-    market_type = MarketType(market_type_str)
-    aux_intervals = market_raw.pop("auxiliary_intervals", [])
-    market = MarketConfig(
-        **market_raw,
-        market_type=market_type,
-        auxiliary_intervals=aux_intervals if aux_intervals else [],
-    )
+    market_type_raw = market_raw.pop("market_type", None)
+    market_type = MarketType(market_type_raw) if market_type_raw is not None else MarketType.SPOT
+    if market_type_raw is not None:
+        market_raw["market_type"] = market_type
+    aux_intervals = market_raw.pop("auxiliary_intervals", None)
+    if aux_intervals is not None:
+        market_raw["auxiliary_intervals"] = aux_intervals
+    market = MarketConfig(**market_raw)
 
     # portfolio 可選
     portfolio_raw = raw.get("portfolio", {})
     portfolio = PortfolioConfig(
-        allocation=portfolio_raw.get("allocation"),
-        cash_reserve=portfolio_raw.get("cash_reserve", 0.2),
+        **_non_none_fields(portfolio_raw, ("allocation", "cash_reserve"))
     )
 
     # risk 可選
     risk_raw = raw.get("risk", {})
-    risk = RiskConfig(
-        max_drawdown_pct=risk_raw.get("max_drawdown_pct", 0.20),
-    )
+    risk = RiskConfig(**_non_none_fields(risk_raw, ("max_drawdown_pct",)))
 
     # position_sizing 可選
     # 只傳入 YAML 中實際存在的欄位，缺失的由 PositionSizingConfig dataclass 默認值填充。
@@ -543,22 +553,23 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     if market_type == MarketType.FUTURES:
         futures_raw = raw.get("futures", {})
         futures = FuturesConfig(
-            leverage=futures_raw.get("leverage", 1),
-            margin_type=futures_raw.get("margin_type", "ISOLATED"),
-            position_mode=futures_raw.get("position_mode", "ONE_WAY"),
-            direction=futures_raw.get("direction", "both"),
+            **_non_none_fields(
+                futures_raw,
+                ("leverage", "margin_type", "position_mode", "direction"),
+            )
         )
 
     # notification 可選
     notification: NotificationConfig | None = None
     notif_raw = raw.get("notification")
     if notif_raw:
-        notification = NotificationConfig(
-            telegram_bot_token=_resolve_env_var(notif_raw.get("telegram_bot_token")),
-            telegram_chat_id=_resolve_env_var(notif_raw.get("telegram_chat_id")),
-            prefix=notif_raw.get("prefix", ""),
-            enabled=notif_raw.get("enabled", True),
-        )
+        notif_fields = {
+            "telegram_bot_token": _resolve_env_var(notif_raw.get("telegram_bot_token")),
+            "telegram_chat_id": _resolve_env_var(notif_raw.get("telegram_chat_id")),
+            "prefix": notif_raw.get("prefix"),
+            "enabled": notif_raw.get("enabled"),
+        }
+        notification = NotificationConfig(**_non_none_fields(notif_fields))
 
     # live 可選
     live_raw = raw.get("live", {})
@@ -568,60 +579,81 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     sg_thresh_raw = sg_raw.get("thresholds", {})
     sg_weights_raw = sg_raw.get("weights", {})
     sg_thresholds = SymbolGovernanceThresholds(
-        edge_sharpe_deweight=sg_thresh_raw.get("edge_sharpe_deweight", 0.3),
-        edge_sharpe_quarantine=sg_thresh_raw.get("edge_sharpe_quarantine", 0.0),
-        edge_sharpe_recover_active=sg_thresh_raw.get("edge_sharpe_recover_active", 0.8),
-        edge_sharpe_recover_from_quarantine=sg_thresh_raw.get("edge_sharpe_recover_from_quarantine", 0.5),
-        edge_per_turnover_min=sg_thresh_raw.get("edge_per_turnover_min", 0.0),
-        slippage_ratio_deweight=sg_thresh_raw.get("slippage_ratio_deweight", 1.5),
-        slippage_ratio_quarantine=sg_thresh_raw.get("slippage_ratio_quarantine", 1.8),
-        slippage_ratio_recover_active=sg_thresh_raw.get("slippage_ratio_recover_active", 1.2),
-        slippage_ratio_recover_from_quarantine=sg_thresh_raw.get("slippage_ratio_recover_from_quarantine", 1.3),
-        consistency_min=sg_thresh_raw.get("consistency_min", 99.0),
-        consistency_recover=sg_thresh_raw.get("consistency_recover", 99.5),
-        missed_signals_quarantine=sg_thresh_raw.get("missed_signals_quarantine", 5.0),
-        dd_quarantine_pct=sg_thresh_raw.get("dd_quarantine_pct", 25.0),
+        **_non_none_fields(
+            sg_thresh_raw,
+            (
+                "edge_sharpe_deweight",
+                "edge_sharpe_quarantine",
+                "edge_sharpe_recover_active",
+                "edge_sharpe_recover_from_quarantine",
+                "edge_per_turnover_min",
+                "slippage_ratio_deweight",
+                "slippage_ratio_quarantine",
+                "slippage_ratio_recover_active",
+                "slippage_ratio_recover_from_quarantine",
+                "consistency_min",
+                "consistency_recover",
+                "missed_signals_quarantine",
+                "dd_quarantine_pct",
+            ),
+        )
     )
     sg_weights = SymbolGovernanceWeights(
-        active_multiplier=sg_weights_raw.get("active_multiplier", 1.0),
-        deweight_multiplier=sg_weights_raw.get("deweight_multiplier", 0.5),
-        quarantine_multiplier=sg_weights_raw.get("quarantine_multiplier", 0.0),
-        min_weight=sg_weights_raw.get("min_weight", 0.03),
-        max_weight=sg_weights_raw.get("max_weight", 0.20),
+        **_non_none_fields(
+            sg_weights_raw,
+            (
+                "active_multiplier",
+                "deweight_multiplier",
+                "quarantine_multiplier",
+                "min_weight",
+                "max_weight",
+            ),
+        )
     )
     sg_cfg = SymbolGovernanceConfig(
-        enabled=sg_raw.get("enabled", False),
-        review_frequency=sg_raw.get("review_frequency", "weekly"),
-        warmup_days=sg_raw.get("warmup_days", 14),
-        quarantine_min_days=sg_raw.get("quarantine_min_days", 14),
-        consecutive_reviews_for_quarantine=sg_raw.get("consecutive_reviews_for_quarantine", 2),
-        consecutive_reviews_for_recovery=sg_raw.get("consecutive_reviews_for_recovery", 2),
         thresholds=sg_thresholds,
         weights=sg_weights,
-        artifacts_dir=sg_raw.get("artifacts_dir", "reports/symbol_governance"),
+        **_non_none_fields(
+            sg_raw,
+            (
+                "enabled",
+                "review_frequency",
+                "warmup_days",
+                "quarantine_min_days",
+                "consecutive_reviews_for_quarantine",
+                "consecutive_reviews_for_recovery",
+                "artifacts_dir",
+            ),
+        ),
     )
 
     # rebalance_band 子配置
     rb_raw = live_raw.get("rebalance_band", {})
     rb_cfg = RebalanceBandConfig(
-        enabled=rb_raw.get("enabled", False),
-        threshold_pct=rb_raw.get("threshold_pct", 0.03),
-        apply_on_same_direction_only=rb_raw.get("apply_on_same_direction_only", True),
+        **_non_none_fields(
+            rb_raw,
+            ("enabled", "threshold_pct", "apply_on_same_direction_only"),
+        )
     )
 
     live_cfg = LiveConfig(
-        kline_cache=live_raw.get("kline_cache", True),
-        flip_confirmation=live_raw.get("flip_confirmation", False),
-        prefer_limit_order=live_raw.get("prefer_limit_order", False),
-        limit_order_timeout_s=live_raw.get("limit_order_timeout_s", 10),
-        watchdog=live_raw.get("watchdog", {}),
         symbol_governance=sg_cfg,
         rebalance_band=rb_cfg,
+        **_non_none_fields(
+            live_raw,
+            (
+                "kline_cache",
+                "flip_confirmation",
+                "prefer_limit_order",
+                "limit_order_timeout_s",
+                "watchdog",
+            ),
+        ),
     )
 
     # output 可選（預設 ./reports）
     output_raw = raw.get("output", {})
-    output = OutputConfig(**output_raw) if output_raw else OutputConfig()
+    output = OutputConfig(**_non_none_fields(output_raw)) if output_raw else OutputConfig()
 
     # backtest 配置（含成本模型子項）
     bt_raw = dict(raw["backtest"])
@@ -629,20 +661,23 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     # 解析 funding_rate 子配置
     fr_raw = bt_raw.pop("funding_rate", {})
     funding_rate_cfg = FundingRateModelConfig(
-        enabled=fr_raw.get("enabled", False),
-        default_rate_8h=fr_raw.get("default_rate_8h", 0.0001),
-        use_historical=fr_raw.get("use_historical", True),
+        **_non_none_fields(fr_raw, ("enabled", "default_rate_8h", "use_historical"))
     )
     
     # 解析 slippage_model 子配置
     sm_raw = bt_raw.pop("slippage_model", {})
     slippage_model_cfg = SlippageModelConfig(
-        enabled=sm_raw.get("enabled", False),
-        base_bps=sm_raw.get("base_bps", 2.0),
-        impact_coefficient=sm_raw.get("impact_coefficient", 0.1),
-        impact_power=sm_raw.get("impact_power", 0.5),
-        adv_lookback=sm_raw.get("adv_lookback", 20),
-        participation_rate=sm_raw.get("participation_rate", 0.10),
+        **_non_none_fields(
+            sm_raw,
+            (
+                "enabled",
+                "base_bps",
+                "impact_coefficient",
+                "impact_power",
+                "adv_lookback",
+                "participation_rate",
+            ),
+        )
     )
     
     backtest_cfg = BacktestConfig(
@@ -674,4 +709,7 @@ def load_config(path: str = "config/base.yaml") -> AppConfig:
     # 附加 overlay 配置（供 run_symbol_backtest 使用，不改 frozen dataclass 結構）
     overlay_raw = raw.get("strategy", {}).get("overlay")
     object.__setattr__(app_cfg, '_overlay_cfg', overlay_raw)
+    # 附加 regime gate 配置（portfolio-level trend regime detection）
+    regime_gate_raw = raw.get("strategy", {}).get("regime_gate")
+    object.__setattr__(app_cfg, '_regime_gate_cfg', regime_gate_raw)
     return app_cfg

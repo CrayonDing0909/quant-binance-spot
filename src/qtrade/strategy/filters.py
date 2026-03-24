@@ -1147,6 +1147,147 @@ def vpin_regime_filter(
     return pd.Series(result, index=raw_pos.index)
 
 
+def avg_trade_size_overlay(
+    raw_pos: pd.Series,
+    ats_series: pd.Series,
+    lookback: int = 720,
+    scale_threshold: float = 0.50,
+    min_scale: float = 0.30,
+) -> pd.Series:
+    """
+    avg_trade_size Overlay：根據平均交易大小動態縮放持倉
+
+    根據 Alpha Researcher 2026-03-05 Tick OFI EDA (#22 WEAK GO)：
+      - avg_trade_size IC=-0.030（aggTrades 最強信號）
+      - corr(TSMOM)=0.04, corr(ATR)=0.25（幾乎完全正交）
+      - 7/8 same sign (A3 PASS), A1 4/7 (弱，故用 overlay 而非 filter)
+      - Alpha 在 trade SIZE 而非 OFI direction（whale distribution）
+
+    機制假說：
+      高 avg_trade_size → 機構/鯨魚正在大單交易（分銷或吸籌）
+      → 市場不確定性增加 → 趨勢信號可靠度下降
+      → 適度縮小持倉，等到 avg_trade_size 回歸正常再恢復
+
+    為何用 Overlay 而非 Filter：
+      - A1（年度穩定性）僅 4/7，binary gate 會在弱年丟太多交易
+      - Overlay 是連續縮放，不會完全阻擋交易 → 更穩健
+      - 類比：vol_pause 也是 overlay（降低曝險而非停止交易）
+
+    縮放邏輯：
+      pctrank <= scale_threshold → scale = 1.0（全倉）
+      pctrank = 1.0 → scale = min_scale（最低倉位）
+      中間線性插值
+
+    數據特性：
+      - avg_trade_size 從 aggTrades hourly 聚合計算
+      - 外部 aggregated 數據（獨立時間戳），reindex+ffill 無 intra-bar look-ahead
+      - 路徑：data/binance/futures/aggtrades_agg/{SYMBOL}_hourly.parquet
+
+    Args:
+        raw_pos:          原始持倉信號 [-1, 1]
+        ats_series:       avg_trade_size 值序列（已對齊到 kline index，forward-fill）
+        lookback:         pctrank 回看窗口（預設 720 bars = 30 天 @ 1h）
+        scale_threshold:  開始縮放的 pctrank 閾值（預設 0.50 = P50 以上開始縮）
+        min_scale:        最低縮放比例（預設 0.30 = 最多縮到 30%）
+
+    Returns:
+        縮放後的持倉序列
+    """
+    if ats_series is None or ats_series.empty:
+        return raw_pos
+
+    # 計算 rolling pctrank (0~1)
+    ats_pctrank = ats_series.rolling(
+        lookback, min_periods=max(lookback // 2, 1)
+    ).rank(pct=True)
+
+    # 對齊到 raw_pos index (ffill)
+    pctrank_aligned = ats_pctrank.reindex(raw_pos.index, method="ffill").fillna(0.5)
+
+    # 計算縮放因子：
+    # pctrank <= threshold → scale = 1.0
+    # pctrank = 1.0 → scale = min_scale
+    # 線性插值
+    scale = np.where(
+        pctrank_aligned <= scale_threshold,
+        1.0,
+        1.0 - (1.0 - min_scale) * (pctrank_aligned - scale_threshold) / (1.0 - scale_threshold),
+    )
+    # 確保 scale 在 [min_scale, 1.0] 範圍
+    scale = np.clip(scale, min_scale, 1.0)
+
+    return raw_pos * scale
+
+
+def avg_trade_size_filter(
+    raw_pos: pd.Series,
+    ats_series: pd.Series,
+    lookback: int = 720,
+    max_pctrank: float = 0.80,
+) -> pd.Series:
+    """
+    avg_trade_size Filter：在鯨魚活動極端時禁止新開倉
+
+    與 avg_trade_size_overlay 的區別：
+      - Overlay: 連續縮放（推薦，因 A1 僅 4/7）
+      - Filter: 二元閘門（更激進，僅在極端鯨魚活動時使用）
+
+    規則：
+      - avg_trade_size 的 rolling pctrank > max_pctrank → 禁止新開倉
+      - 已有持倉不受影響（不強制平倉）
+      - 數據缺失時保持原有信號（不阻擋）
+
+    Args:
+        raw_pos:      原始持倉信號 [-1, 1]
+        ats_series:   avg_trade_size 值序列（已對齊到 kline index）
+        lookback:     pctrank 回看窗口（預設 720 bars）
+        max_pctrank:  最高百分位排名閾值（預設 0.80 = P80+ 阻擋）
+
+    Returns:
+        過濾後的持倉序列
+    """
+    if ats_series is None or ats_series.empty:
+        return raw_pos
+
+    # 計算 rolling pctrank (0~1)
+    ats_pctrank = ats_series.rolling(
+        lookback, min_periods=max(lookback // 2, 1)
+    ).rank(pct=True)
+
+    # 對齊到 raw_pos index (ffill)
+    pctrank_aligned = ats_pctrank.reindex(raw_pos.index, method="ffill").fillna(0.0).values
+
+    raw = raw_pos.values.copy()
+    result = np.zeros(len(raw), dtype=float)
+    position_state = 0  # 0=flat, 1=long, -1=short
+
+    for i in range(len(raw)):
+        # 反向閘門：pctrank > max_pctrank → 鯨魚活躍過度，阻擋新倉
+        ats_ok = pctrank_aligned[i] <= max_pctrank
+
+        if raw[i] > 0:
+            if position_state == 1:
+                result[i] = raw[i]
+            elif ats_ok:
+                result[i] = raw[i]
+                position_state = 1
+            else:
+                result[i] = 0.0
+        elif raw[i] < 0:
+            if position_state == -1:
+                result[i] = raw[i]
+            elif ats_ok:
+                result[i] = raw[i]
+                position_state = -1
+            else:
+                result[i] = 0.0
+        else:
+            result[i] = 0.0
+            position_state = 0
+
+    return pd.Series(result, index=raw_pos.index)
+
+
 def funding_rate_filter(
     df: pd.DataFrame,
     raw_pos: pd.Series,
@@ -1217,3 +1358,60 @@ def funding_rate_filter(
             position_state = 0
             
     return pd.Series(result, index=raw_pos.index)
+
+
+# ══════════════════════════════════════════════════════════════
+#  Portfolio Regime Gate — market-wide trend regime detection
+# ══════════════════════════════════════════════════════════════
+
+def compute_portfolio_regime_gate(
+    df_reference: pd.DataFrame,
+    adx_period: int = 14,
+    adx_trend_threshold: float = 25.0,
+    adx_weak_threshold: float = 15.0,
+    er_lookback: int = 20,
+    er_trend_threshold: float = 0.40,
+    er_weak_threshold: float = 0.25,
+) -> pd.Series:
+    """
+    Compute a portfolio-wide regime gate from a reference asset (e.g. BTC).
+
+    Uses ADX (trend strength) and Efficiency Ratio (trending vs mean-reverting)
+    to produce a scaling factor:
+        1.0 — trending market (ADX >= adx_trend AND ER >= er_trend)
+        0.5 — weak/ambiguous trend (either metric above its weak threshold)
+        0.0 — no trend (both below weak thresholds, block new entries)
+
+    The gate is computed on the reference asset's 1h data directly. ADX measures
+    absolute trend strength; ER measures price path efficiency (direct move /
+    total path length). Together they avoid false trending signals from high
+    volatility without direction.
+
+    Args:
+        df_reference: OHLCV DataFrame of the reference asset (e.g. BTCUSDT 1h)
+        adx_period: ADX lookback period
+        adx_trend_threshold: ADX level for "trending" classification
+        adx_weak_threshold: ADX level for "weak trend" classification
+        er_lookback: Efficiency Ratio lookback period
+        er_trend_threshold: ER level for "trending" classification
+        er_weak_threshold: ER level for "weak trend" classification
+
+    Returns:
+        Series of scaling factors (1.0, 0.5, or 0.0) indexed like df_reference
+    """
+    adx_df = calculate_adx(df_reference, period=adx_period)
+    adx = adx_df["ADX"]
+
+    close = df_reference["close"]
+    direction = (close - close.shift(er_lookback)).abs()
+    volatility = close.diff().abs().rolling(er_lookback).sum()
+    er = (direction / volatility.replace(0, np.nan)).fillna(0)
+
+    trending = (adx >= adx_trend_threshold) & (er >= er_trend_threshold)
+    weak = (adx >= adx_weak_threshold) | (er >= er_weak_threshold)
+
+    scale = pd.Series(0.0, index=df_reference.index)
+    scale[weak] = 0.5
+    scale[trending] = 1.0
+
+    return scale

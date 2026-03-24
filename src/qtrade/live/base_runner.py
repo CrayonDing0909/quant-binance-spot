@@ -90,6 +90,7 @@ class BaseRunner(ABC):
         self.max_drawdown_pct = cfg.risk.max_drawdown_pct if cfg.risk else None
         self._circuit_breaker_triggered = False
         self._initial_equity: float | None = None
+        self._circuit_breaker_error_notified = False
 
         # 倉位計算器
         self.position_sizer: Optional[PositionSizer] = None
@@ -128,6 +129,14 @@ class BaseRunner(ABC):
         # Rebalance Band 計數器（監控用）
         self._band_skip_count: int = 0
         self._band_skip_notional_est: float = 0.0
+
+        # ── Live IC Monitor (alpha decay defense) ──
+        self._ic_signal_buffer: dict[str, list[float]] = {s: [] for s in self.symbols}
+        self._ic_return_buffer: dict[str, list[float]] = {s: [] for s in self.symbols}
+        self._ic_last_prices: dict[str, float] = {}
+        self._ic_gate_scales: dict[str, float] = {s: 1.0 for s in self.symbols}
+        self._ic_check_counter: int = 0
+        self._ic_check_interval: int = 24  # check IC every 24 bars (daily)
 
     @property
     def _log(self):
@@ -184,6 +193,170 @@ class BaseRunner(ABC):
             self._log.warning(
                 f"⚠️  Symbol governance: 讀取 artifact 失敗 ({e}) — 回退 base weights"
             )
+
+    # ══════════════════════════════════════════════════════════
+    #  Live IC Monitor — alpha decay defense
+    # ══════════════════════════════════════════════════════════
+
+    def _apply_ic_gate(self, symbol: str, sig: SignalResult) -> SignalResult:
+        """
+        Track signal/return pairs and periodically evaluate IC health.
+
+        Three-layer gate (from alpha-decay-governance.md):
+            Quality:    avg recent IC >= 0.005
+            Stability:  decay <= 60%
+            Confidence: critical alerts <= 2
+
+        Escalation:
+            0 gates failed: scale = 1.0 (full signal)
+            1 gate  failed: scale = 1.0 + WARN via Telegram
+            2 gates failed: scale = 0.5 (REDUCE)
+            3 gates failed: scale = 0.0 (FLATTEN)
+        """
+        price = sig.price
+        if price <= 0:
+            return sig
+
+        # Record return from previous bar
+        prev_price = self._ic_last_prices.get(symbol)
+        if prev_price and prev_price > 0:
+            ret = (price - prev_price) / prev_price
+            self._ic_return_buffer[symbol].append(ret)
+        self._ic_last_prices[symbol] = price
+
+        # Record this bar's signal
+        self._ic_signal_buffer[symbol].append(sig.signal)
+
+        # Keep buffer bounded (180 days * 24 hours = 4320 bars)
+        max_buf = 4320
+        if len(self._ic_signal_buffer[symbol]) > max_buf:
+            self._ic_signal_buffer[symbol] = self._ic_signal_buffer[symbol][-max_buf:]
+            self._ic_return_buffer[symbol] = self._ic_return_buffer[symbol][-max_buf:]
+
+        # Periodic IC check (every _ic_check_interval bars, shared counter)
+        self._ic_check_counter += 1
+        if self._ic_check_counter >= self._ic_check_interval * len(self.symbols):
+            self._ic_check_counter = 0
+            self._run_ic_health_check()
+
+        # Apply current gate scale
+        scale = self._ic_gate_scales.get(symbol, 1.0)
+        if scale < 1.0:
+            sig.signal *= scale
+        return sig
+
+    def _run_ic_health_check(self) -> None:
+        """Evaluate IC health across all symbols and update gate scales."""
+        try:
+            from scipy.stats import spearmanr
+        except ImportError:
+            return
+
+        min_samples = 168  # 1 week minimum
+        total_critical = 0
+        recent_ics = []
+        historical_ics = []
+
+        for symbol in self.symbols:
+            signals = self._ic_signal_buffer.get(symbol, [])
+            returns = self._ic_return_buffer.get(symbol, [])
+
+            n = min(len(signals), len(returns))
+            if n < min_samples:
+                continue
+
+            sig_arr = signals[-n:]
+            # Forward returns: shift signals back by 1 to align with next-bar return
+            ret_arr = returns[-n:]
+
+            # Split into historical (first 2/3) and recent (last 1/3)
+            split = max(min_samples, n * 2 // 3)
+            hist_s, hist_r = sig_arr[:split], ret_arr[:split]
+            rec_s, rec_r = sig_arr[split:], ret_arr[split:]
+
+            if len(rec_s) < 24:
+                continue
+
+            hist_ic, _ = spearmanr(hist_s, hist_r)
+            rec_ic, _ = spearmanr(rec_s, rec_r)
+
+            if not (isinstance(hist_ic, float) and isinstance(rec_ic, float)):
+                continue
+
+            recent_ics.append(rec_ic)
+            historical_ics.append(hist_ic)
+
+            # Per-symbol critical check
+            is_critical = abs(rec_ic) < 0.005
+            if is_critical:
+                total_critical += 1
+
+        if not recent_ics:
+            return
+
+        avg_recent_ic = sum(recent_ics) / len(recent_ics)
+        avg_hist_ic = sum(historical_ics) / len(historical_ics) if historical_ics else 0.01
+
+        # Three-layer gate evaluation
+        gates_failed = 0
+        reasons = []
+
+        # Gate A: Quality
+        if avg_recent_ic < 0.005:
+            gates_failed += 1
+            reasons.append(f"quality(IC={avg_recent_ic:.4f}<0.005)")
+
+        # Gate B: Stability
+        if abs(avg_hist_ic) > 0.01:
+            decay_pct = max(0, (avg_hist_ic - avg_recent_ic) / abs(avg_hist_ic))
+        else:
+            decay_pct = max(0, avg_hist_ic - avg_recent_ic) / 0.02
+        if decay_pct > 0.60:
+            gates_failed += 1
+            reasons.append(f"stability(decay={decay_pct:.0%})")
+
+        # Gate C: Confidence
+        if total_critical > 2:
+            gates_failed += 1
+            reasons.append(f"confidence({total_critical}crit)")
+
+        # Determine scale
+        if gates_failed == 0:
+            new_scale = 1.0
+        elif gates_failed == 1:
+            new_scale = 1.0  # WARN only
+        elif gates_failed == 2:
+            new_scale = 0.5  # REDUCE
+        else:
+            new_scale = 0.0  # FLATTEN
+
+        # Apply and notify on changes
+        for symbol in self.symbols:
+            old_scale = self._ic_gate_scales.get(symbol, 1.0)
+            self._ic_gate_scales[symbol] = new_scale
+
+            if new_scale != old_scale:
+                self._log.warning(
+                    f"🧬 IC gate scale changed for {symbol}: "
+                    f"{old_scale:.1f} → {new_scale:.1f} "
+                    f"(gates_failed={gates_failed}: {', '.join(reasons)})"
+                )
+
+        if gates_failed >= 1 and reasons:
+            level = ["WARN", "WARN", "REDUCE", "FLATTEN"][min(gates_failed, 3)]
+            msg = (
+                f"🧬 <b>IC Health: {level}</b>\n"
+                f"Gates failed: {gates_failed}/3\n"
+                f"Reasons: {', '.join(reasons)}\n"
+                f"Avg recent IC: {avg_recent_ic:+.4f}\n"
+                f"Scale: {new_scale:.1f}x"
+            )
+            self._log.warning(msg.replace("<b>", "").replace("</b>", ""))
+            try:
+                if self.notifier and self.notifier.enabled:
+                    self.notifier.send(msg)
+            except Exception:
+                pass
 
     # ══════════════════════════════════════════════════════════
     #  Ensemble 路由
@@ -736,7 +909,18 @@ class BaseRunner(ABC):
                 self._log.warning(f"⚠️  Drawdown 預警: {drawdown:.1%}")
 
         except Exception as e:
-            self._log.debug(f"熔斷檢查失敗: {e}")
+            self._log.error(f"❌ 熔斷檢查失敗，保守暫停交易: {e}")
+            self._log.error(traceback.format_exc())
+            if not self._circuit_breaker_error_notified and self.notifier:
+                self._circuit_breaker_error_notified = True
+                try:
+                    self.notifier.send_error(
+                        "🚨 Circuit breaker 檢查失敗，已保守暫停交易。\n"
+                        f"原因: {e}"
+                    )
+                except Exception as notify_error:
+                    self._log.debug(f"熔斷異常通知失敗: {notify_error}")
+            return True
         return False
 
     def _check_sl_tp_cooldown(
@@ -1202,6 +1386,13 @@ class BaseRunner(ABC):
             except Exception as e:
                 self._log.error(f"❌ {symbol} 交易執行失敗: {e}")
                 self._log.error(traceback.format_exc())
+                if self.notifier:
+                    try:
+                        self.notifier.send_error(
+                            f"🚨 {symbol} 交易執行失敗，已跳過本次下單: {e}"
+                        )
+                    except Exception as notify_error:
+                        self._log.debug(f"{symbol} 交易失敗通知發送失敗: {notify_error}")
                 return None
 
             if trade:

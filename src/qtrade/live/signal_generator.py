@@ -197,6 +197,34 @@ def generate_signal(
             injected_oi_series=params.get("_oi_series"),
         )
 
+    # ── Regime Gate 後處理 ──────────────────────────────
+    # Portfolio-level regime gate scales all signals based on BTC trend regime.
+    # Applied after overlay so it acts as the outermost defense layer.
+    regime_gate_cfg = params.get("_regime_gate")
+    if regime_gate_cfg and regime_gate_cfg.get("enabled", False):
+        try:
+            from ..strategy.filters import compute_portfolio_regime_gate
+            ref_df = params.get("_regime_gate_ref_df")
+            if ref_df is not None and len(ref_df) > 50:
+                gate = compute_portfolio_regime_gate(
+                    ref_df,
+                    adx_period=regime_gate_cfg.get("adx_period", 14),
+                    adx_trend_threshold=regime_gate_cfg.get("adx_trend_threshold", 25.0),
+                    adx_weak_threshold=regime_gate_cfg.get("adx_weak_threshold", 15.0),
+                    er_lookback=regime_gate_cfg.get("efficiency_ratio_lookback", 20),
+                    er_trend_threshold=regime_gate_cfg.get("er_trend_threshold", 0.40),
+                    er_weak_threshold=regime_gate_cfg.get("er_weak_threshold", 0.25),
+                )
+                latest_gate = float(gate.iloc[-1])
+                if latest_gate < 1.0:
+                    positions = positions * latest_gate
+                    logger.info(
+                        f"  🚦 {symbol}: regime_gate={latest_gate:.1f} "
+                        f"(signal scaled to {float(positions.iloc[-1]):.2f})"
+                    )
+        except Exception as e:
+            logger.warning(f"  ⚠️ {symbol}: regime gate failed: {e}")
+
     # 取最後一根 K 線的信號
     latest_signal = float(positions.iloc[-1])
     latest_price = float(df["close"].iloc[-1])

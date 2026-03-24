@@ -214,6 +214,9 @@ class LiveWatchdog:
         if self.settings.get("oi_freshness_enabled", False):
             check_list.append(("oi_freshness", self._check_oi_freshness()))
 
+        # IC health (alpha decay monitoring)
+        check_list.append(("ic_health", self._check_ic_health()))
+
         for check_name, check_result in check_list:
             checks[check_name] = check_result
             status = check_result.get("status", "warn")
@@ -518,6 +521,38 @@ class LiveWatchdog:
             "source": source,
             "symbols_total": len(symbols),
             "details": detail,
+        }
+
+    def _check_ic_health(self) -> dict[str, Any]:
+        """
+        Check IC gate status from the runner's live IC monitor.
+
+        Reports the current gate scale and any active alpha decay warnings.
+        This is a read-only advisory check — the actual gating happens in
+        base_runner._apply_ic_gate().
+        """
+        runner = self.runner
+        ic_scales = getattr(runner, "_ic_gate_scales", None)
+        if not ic_scales:
+            return {"status": "ok", "message": "IC monitor not initialized"}
+
+        min_scale = min(ic_scales.values()) if ic_scales else 1.0
+        degraded = [s for s, v in ic_scales.items() if v < 1.0]
+
+        if min_scale <= 0.0:
+            status = "critical"
+            msg = f"IC FLATTEN active: {', '.join(degraded)}"
+        elif min_scale < 1.0:
+            status = "warn"
+            msg = f"IC REDUCE active (scale={min_scale:.1f}): {', '.join(degraded)}"
+        else:
+            status = "ok"
+            msg = "IC health normal"
+
+        return {
+            "status": status,
+            "message": msg,
+            "scales": dict(ic_scales),
         }
 
     def _check_oi_freshness(self) -> dict[str, Any]:

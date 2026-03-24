@@ -314,6 +314,14 @@ class WebSocketRunner(BaseRunner):
         if derivatives_data:
             params = {**params, "_derivatives_data": derivatives_data}
 
+        # ── Regime Gate: inject BTC reference data for portfolio-level scaling ──
+        regime_gate_cfg = getattr(self.cfg, '_regime_gate_cfg', None)
+        if regime_gate_cfg and regime_gate_cfg.get("enabled", False):
+            ref_sym = regime_gate_cfg.get("reference_symbol", "BTCUSDT")
+            ref_df = self._kline_cache.get_cached(ref_sym)
+            if ref_df is not None and len(ref_df) > 50:
+                params = {**params, "_regime_gate": regime_gate_cfg, "_regime_gate_ref_df": ref_df}
+
         try:
             sig = generate_signal(
                 symbol=symbol,
@@ -329,6 +337,9 @@ class WebSocketRunner(BaseRunner):
             self._log.error(f"❌ {symbol} 信號生成失敗: {e}")
             self._log.error(traceback.format_exc())
             return
+
+        # ── IC Gate: apply live alpha decay scaling before execution ──
+        sig = self._apply_ic_gate(symbol, sig)
 
         # 使用 BaseRunner 的共享信號處理
         trade = self._process_signal(symbol, sig)

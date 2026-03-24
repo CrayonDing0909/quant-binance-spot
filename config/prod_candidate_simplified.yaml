@@ -206,6 +206,22 @@ strategy:
       oi_confirm_enabled: true
       fr_confirm_enabled: true
 
+  # ── Portfolio Regime Gate (market-wide trend regime detection) ──
+  # Scales ALL positions based on BTC trend regime.
+  # Prevents bleeding during choppy/sideways markets.
+  regime_gate:
+    enabled: true
+    reference_symbol: "BTCUSDT"
+    adx_period: 14
+    adx_trend_threshold: 25      # ADX >= 25 = trending
+    adx_weak_threshold: 15       # ADX >= 15 = weak trend
+    efficiency_ratio_lookback: 20
+    er_trend_threshold: 0.40     # ER >= 0.40 = efficient/trending
+    er_weak_threshold: 0.25      # ER >= 0.25 = weak trend
+    scale_trending: 1.0          # full signal
+    scale_weak: 0.5              # half signal
+    scale_no_trend: 0.0          # block new entries
+
 backtest:
   initial_cash: 10000
   fee_bps: 5
@@ -235,12 +251,19 @@ position_sizing:
 portfolio:
   cash_reserve: 0
   allocation:
+    # 2026-03-24 IC-evidence allocation rebalance:
+    #   ETH:  0.45→0.15 (IC≈0, p=0.89, never statistically significant)
+    #   LINK: 0.35→0.05 (IC reversed to -0.023, 3yr declining, 180% decay)
+    #   AVAX: 0.40→0.20 (62% decay, 2025-2026 consecutive negative yearly IC)
+    #   SOL:  0.40→0.55 (only symbol with stable positive IC +0.023)
+    #   BTC:  0.45→0.45 (unchanged, marginal but overall positive IC)
+    #   DOGE: 0.35→0.35 (unchanged, recent IC positive but 2026 yearly IC warning)
     BTCUSDT: 0.45
-    ETHUSDT: 0.45
-    SOLUSDT: 0.40      # was 0.35, +0.05 from removed symbols
+    ETHUSDT: 0.15
+    SOLUSDT: 0.55
     DOGEUSDT: 0.35
-    AVAXUSDT: 0.40     # was 0.35, +0.05 from removed symbols
-    LINKUSDT: 0.35
+    AVAXUSDT: 0.20
+    LINKUSDT: 0.05
 
 live:
   kline_cache: true
