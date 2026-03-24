@@ -1,0 +1,128 @@
+schema_version: 1
+task_id: research_20260311_102251_macd_rsi_htf_spot_entry
+goal: Evaluate whether the TradingView weekly RSI-oversold + MACD-histogram-reversal logic can form a robust long-only crypto accumulation signal, starting with a faithful Pine replication before any broader cross-market claim.
+mode: research_orchestration_mvp
+created_at: "2026-03-11T10:22:51Z"
+updated_at: "2026-03-24T13:46:00Z"
+current_stage: alpha_research
+status: running
+owner_agent: alpha_researcher
+confidence_level: medium
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-11T15:13:22Z"
+last_heartbeat_at: "2026-03-11T15:13:22Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files:
+    - "tasks/active/20260311_102251_macd_rsi_htf_spot_entry.yaml"
+    - "config/research_macd_rsi_htf_spot_entry.yaml"
+    - "docs/research/20260311_macd_rsi_htf_spot_entry_proposal.md"
+    - "docs/ALPHA_RESEARCH_MAP.md"
+    - "docs/CLI_REFERENCE.md"
+    - ".cursor/rules/recent-changes.mdc"
+    - "data/yfinance/1d/"
+  generated_artifacts:
+    - "tasks/active/20260311_102251_macd_rsi_htf_spot_entry.yaml"
+    - "config/research_macd_rsi_htf_spot_entry.yaml"
+    - "docs/research/20260311_macd_rsi_htf_spot_entry_proposal.md"
+    - "docs/CLI_REFERENCE.md"
+    - "data/binance/spot/1d/BTCUSDT.parquet"
+    - "data/binance/spot/1d/ETHUSDT.parquet"
+    - "data/binance/spot/1d/SOLUSDT.parquet"
+    - "data/binance/spot/1d/DOGEUSDT.parquet"
+    - "data/binance/spot/1d/AVAXUSDT.parquet"
+    - "data/binance/spot/1d/LINKUSDT.parquet"
+    - "data/yfinance/1d/BTC-USD.parquet"
+    - "data/yfinance/1d/ETH-USD.parquet"
+    - "data/yfinance/1d/SOL-USD.parquet"
+    - "data/yfinance/1d/DOGE-USD.parquet"
+    - "data/yfinance/1d/SPY.parquet"
+    - "data/yfinance/1d/QQQ.parquet"
+    - "data/yfinance/1d/IWM.parquet"
+    - "data/yfinance/1d/SOXX.parquet"
+    - "data/yfinance/1d/ARKK.parquet"
+    - "data/yfinance/1d/EWT.parquet"
+    - "data/yfinance/1d/0050.TW.parquet"
+    - "data/yfinance/1d/2330.TW.parquet"
+  tests_run:
+    - "PYTHONPATH=src ./.venv/bin/python scripts/download_data.py -c config/research_macd_rsi_htf_spot_entry.yaml --source binance --interval 1d"
+    - "first-pass weekly/monthly MACD-RSI spot EDA on `data/binance/spot/1d/*.parquet`"
+    - "PYTHONPATH=src ./.venv/bin/python scripts/gen_cli_reference.py"
+    - "faithful TradingView Pine replication on weekly futures/spot data, including `buycondition` and `atrbuycondition`"
+    - "anti-bias corrected weekly execution check at next weekly open, plus BTC/ETH-only and post-2021 robustness slices"
+    - "BTC / ETH / alts concentration-bucket analysis under anti-bias-correct weekly execution timing"
+    - "cross-asset expansion via yfinance on crypto, US ETF, and Taiwan proxy universes"
+    - "signal-vs-baseline comparison: faithful Pine trigger vs unconditional weekly buying across the cross-asset proxy universe"
+  config_changed: true
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "Keep production configs unchanged and preserve this only as a faithful weekly Pine-replication research direction unless stronger evidence appears."
+  steps:
+    - "Do not modify any `prod_*` config during research."
+    - "Do not revert to the earlier strict monthly-trigger interpretation; it is not the same as the user-provided TradingView logic."
+    - "If the faithful weekly variant later fails concentration checks, archive it as a dead-end rather than forcing a retrofit into the current futures-first stack."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: "docs/research/20260311_macd_rsi_htf_spot_entry_proposal.md"
+  notebook: null
+  proposal: "docs/research/20260311_macd_rsi_htf_spot_entry_proposal.md"
+decision:
+  gap: The current repo is optimized around futures-first trend systems, so it lacks an explicitly researched low-frequency recovery-entry archetype that behaves more like a weekly reversal detector than a trend follower.
+  archetype: weekly_histogram_reversal_entry
+  integration_mode: standalone_spot_entry_candidate
+  success_criteria:
+    - Confirm the TradingView Pine logic can be reproduced causally with weekly-open labels and next-bar execution.
+    - Show that the main `buycondition` has better quality than the looser ATR add-on branch.
+    - Establish whether the edge survives outside a small number of alt-led recovery windows before any handoff claim.
+  kill_criteria:
+    - The faithful Pine replication collapses once tested outside a few rebound windows or outside alt-heavy names.
+    - BTC/ETH-only evidence remains too weak to justify a broad crypto accumulation thesis.
+    - The ATR add-on proves to be mostly noise and the core `buycondition` fails robustness checks after concentration analysis.
+  hypothesis: Weekly RSI oversold followed by a MACD histogram local-bottom reversal can identify early crypto recovery windows sooner than a strict MACD line golden cross.
+  data_requirements:
+    - Binance futures and spot OHLCV history with enough daily lookback to build TradingView-style weekly bars
+    - At minimum, local `1d` data for BTCUSDT, ETHUSDT, SOLUSDT, DOGEUSDT, AVAXUSDT, LINKUSDT
+    - Optional longer BTC history via non-Binance sources only if needed to test pre-2017 persistence
+  coverage_gate: Passed for the crypto-first pilot universe after local spot bootstrap and existing futures coverage. Coverage is sufficient for initial Pine replication on weekly bars.
+  eda_findings:
+    - The user-provided TradingView logic is not a strict MACD golden cross; it is `RSI[1] < 30` plus a weekly MACD histogram reversal.
+    - TradingView-style weekly Monday-open labels reproduce the BTC `2022-07-04` signal on both futures and spot data.
+    - After correcting execution timing to the next weekly open, the main `buycondition` still remains positive in both futures and spot aggregates.
+    - The main `buycondition` is materially stronger than the ATR add-on branch in both futures and spot first-pass EDA.
+    - BTC/ETH-only and post-2021 slices remain positive overall, but BTC itself is much weaker than ETH and the strongest outcomes are still concentrated in rebound windows.
+    - Concentration-bucket analysis suggests the signal behaves more like an ETH/majors recovery-entry heuristic than a BTC-led macro timing rule.
+    - Cross-asset expansion shows the same faithful weekly logic is not limited to crypto: broad US ETFs and Taiwan proxies are also directionally positive, although with much smaller magnitude than crypto.
+    - Relative-to-baseline analysis shows the signal can function as an active accumulation trigger on some long-term assets (for example `SPY`, `IWM`, `SOXX`, `2330.TW`), but it does not improve on passive weekly buying for BTC.
+    - The earlier strict monthly interpretation should be considered superseded for this task.
+  handoff_recommendation: continue_alpha_research_no_handoff
+  final_outcome: null
+blockers: []
+notes:
+  - Intake normalized the user's idea into a crypto-first research direction because this repo natively supports Binance market data.
+  - Cross-market applicability to Taiwan equities and US equities is treated as a later validation question, not an initial acceptance criterion.
+  - The direction remains medium confidence because the faithful Pine logic is real, reproducible, survives corrected weekly execution timing, and shows partial cross-asset portability, but still appears regime-concentrated and BTC-light.
+  - `binance_vision` download path failed with an out-of-bounds timestamp error during bootstrap, so the task used the live Binance API instead.
+  - Faithful replication showed that the original TradingView code is a weekly histogram-reversal signal, not a monthly strict MACD-cross signal.
+  - "2026-03-24: ran scan_active_buy_candidates.py with updated yfinance data (12 assets). Result: 0 buy candidates — weekly RSI is not oversold for any tracked asset. Signal is correctly rare (recovery-entry only). Pipeline is operational for ongoing weekly monitoring."
+next_recommended_action: "Research direction validated: the signal is correctly classified as a rare weekly recovery-entry heuristic (0 triggers in current market as of 2026-03-24). The active-buy scan pipeline (scan_active_buy_candidates.py) is operational with 11 assets across crypto/US/TW. Next step: wait for market correction to generate actual buy signals, then evaluate real-time trigger quality. Consider declaring alpha_research complete and handing off to the active-buy app repo for Phase 1 (notification) implementation."
+final_packet:
+  recommendation: null
+  evidence_tier: null
+  blocker_summary: null
+  handoff_decision: null
+  review_summary: null
