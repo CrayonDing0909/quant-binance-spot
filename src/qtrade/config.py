@@ -479,6 +479,8 @@ class AppConfig:
         # portfolio backtest 跑多個 symbol 時，symbol 1 的數據會汙染 symbol 2-N。
         if hasattr(self, '_overlay_cfg') and self._overlay_cfg:
             d["overlay"] = copy.deepcopy(self._overlay_cfg)
+        if hasattr(self, '_regime_gate_cfg') and self._regime_gate_cfg:
+            d["regime_gate"] = copy.deepcopy(self._regime_gate_cfg)
         return d
 
 

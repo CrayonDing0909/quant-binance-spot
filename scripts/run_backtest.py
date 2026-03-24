@@ -187,10 +187,27 @@ def main() -> None:
     # 確定交易對
     symbols = [args.symbol] if args.symbol else cfg.market.symbols
 
+    # ── Regime Gate: pre-load reference klines once ──
+    _regime_gate_ref_df = None
+    _regime_gate_cfg = getattr(cfg, '_regime_gate_cfg', None)
+    if _regime_gate_cfg and _regime_gate_cfg.get("enabled", False):
+        ref_sym = _regime_gate_cfg.get("reference_symbol", "BTCUSDT")
+        ref_path = cfg.data_dir / "binance" / market_type / cfg.market.interval / f"{ref_sym}.parquet"
+        if ref_path.exists():
+            from qtrade.data.storage import load_klines
+            from qtrade.data.quality import clean_data
+            _regime_gate_ref_df = load_klines(ref_path)
+            _regime_gate_ref_df = clean_data(_regime_gate_ref_df, fill_method="forward", remove_outliers=False, remove_duplicates=True)
+            print(f"🚦 Regime gate: loaded {ref_sym} reference ({len(_regime_gate_ref_df)} bars)")
+
     for sym in symbols:
         # ── Ensemble: 檢查是否有 per-symbol 策略路由 ──
         sym_strategy_name = strategy_name
         bt_cfg = cfg.to_backtest_dict(symbol=sym)
+
+        # Inject regime gate reference data
+        if _regime_gate_ref_df is not None:
+            bt_cfg["_regime_gate_ref_df"] = _regime_gate_ref_df
 
         ensemble_override = _load_ensemble_strategy(args.config, sym)
         if ensemble_override:

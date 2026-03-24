@@ -114,8 +114,8 @@ strategy:
           carry_neutral_scale: 0.85
           carry_confirm_smoothing: 24
           composite_ema: 12
-          position_step: 0.1
-          min_change_threshold: 0.05
+          position_step: 0.2       # 2026-03-24: 0.1→0.2 to reduce micro-trades on small account
+          min_change_threshold: 0.15  # 2026-03-24: 0.05→0.15 to reduce fee drag
           htf_filter_enabled: true
 
   symbol_overrides:
@@ -143,8 +143,8 @@ strategy:
             carry_neutral_scale: 0.85
             carry_confirm_smoothing: 24
             composite_ema: 12
-            position_step: 0.1
-            min_change_threshold: 0.05
+            position_step: 0.2       # 2026-03-24: 0.1→0.2
+            min_change_threshold: 0.15  # 2026-03-24: 0.05→0.15
             htf_filter_enabled: true
             htf_4h_ema_fast: 30
             htf_4h_ema_slow: 100
@@ -174,8 +174,8 @@ strategy:
             tsmom_agree_weight: 1.0
             tsmom_disagree_weight: 0.3
             composite_ema: 12
-            position_step: 0.1
-            min_change_threshold: 0.05
+            position_step: 0.2       # 2026-03-24: 0.1→0.2
+            min_change_threshold: 0.15  # 2026-03-24: 0.05→0.15
             htf_filter_enabled: true
 
     # SOL, AVAX, DOGE → inherit default (no overrides needed)
@@ -273,7 +273,7 @@ live:
 
   rebalance_band:
     enabled: true
-    threshold_pct: 0.03
+    threshold_pct: 0.05    # 2026-03-24: 0.03→0.05 to reduce micro-adjustments on small account
     apply_on_same_direction_only: true
 
   symbol_governance:

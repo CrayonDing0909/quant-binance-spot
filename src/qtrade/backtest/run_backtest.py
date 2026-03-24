@@ -525,6 +525,26 @@ def run_symbol_backtest(
             injected_oi_series=cfg.get("_oi_series"),
         )
 
+    # ── Regime Gate 後處理（可選）──────────────────────
+    # Portfolio-level regime gate scales all positions based on reference asset
+    # (e.g. BTC) trend regime. Applied after overlay, same ordering as live.
+    regime_gate_cfg = cfg.get("regime_gate")
+    if regime_gate_cfg and regime_gate_cfg.get("enabled", False):
+        from ..strategy.filters import compute_portfolio_regime_gate
+        ref_df = cfg.get("_regime_gate_ref_df")
+        if ref_df is not None and len(ref_df) > 50:
+            gate = compute_portfolio_regime_gate(
+                ref_df,
+                adx_period=regime_gate_cfg.get("adx_period", 14),
+                adx_trend_threshold=regime_gate_cfg.get("adx_trend_threshold", 25.0),
+                adx_weak_threshold=regime_gate_cfg.get("adx_weak_threshold", 15.0),
+                er_lookback=regime_gate_cfg.get("efficiency_ratio_lookback", 20),
+                er_trend_threshold=regime_gate_cfg.get("er_trend_threshold", 0.40),
+                er_weak_threshold=regime_gate_cfg.get("er_weak_threshold", 0.25),
+            )
+            gate_aligned = gate.reindex(pos.index, method="ffill").fillna(1.0)
+            pos = pos * gate_aligned
+
     # 根據 direction 過濾信號（使用共用函數）
     pos = clip_positions_by_direction(pos, mt, dr)
 
