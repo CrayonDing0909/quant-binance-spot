@@ -1,0 +1,88 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — TSMOM at 15m (fast trend-following)
+# ═══════════════════════════════════════════════════════════════
+# Task: research_20260325_163400_higher_freq_complement
+# Purpose: Test if trend-following alpha survives at 15m with 4x cost
+# Rescaled params: 1h lookbacks × 4 for 15m bars
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  interval: "15m"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "tsmom_carry_v2"
+  display_name: "TSMOM 15m (fast trend)"
+  params:
+    combination_mode: "confirmatory"
+    tier: "default"
+    # Rescaled: 1h params × 4 for 15m bars
+    tsmom_lookback: 672          # 168h × 4 = 672 bars @15m
+    tsmom_vol_target: 0.15
+    tsmom_ema_fast: 80           # 20h × 4
+    tsmom_ema_slow: 200          # 50h × 4
+    tsmom_agree_weight: 1.0
+    tsmom_disagree_weight: 0.3
+    basis_ema_fast: 96           # 24h × 4
+    basis_ema_slow: 672          # 168h × 4
+    basis_tanh_scale: 50.0
+    fr_rolling_window: 288       # 72h × 4
+    oi_z_window: 672             # 168h × 4
+    basis_carry_fr_weight: 0.7
+    basis_carry_basis_weight: 0.3
+    carry_agree_scale: 1.0
+    carry_disagree_scale: 0.7
+    carry_neutral_scale: 0.85
+    carry_confirm_smoothing: 96  # 24h × 4
+    composite_ema: 48            # 12h × 4
+    position_step: 0.2
+    min_change_threshold: 0.15
+    htf_filter_enabled: false    # No HTF filter for 15m standalone test
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: true
+    base_bps: 2.0
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 80             # 20h × 4
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.40
+    ETHUSDT: 0.35
+    SOLUSDT: 0.25
+
+output:
+  report_dir: "./reports"

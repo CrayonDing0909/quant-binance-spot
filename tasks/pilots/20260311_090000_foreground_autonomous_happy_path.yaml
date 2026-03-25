@@ -1,0 +1,78 @@
+schema_version: 1
+task_id: research_20260311_090000_foreground_autonomous_happy_path
+goal: Determine whether a simple crypto spot regime filter idea is strong enough to justify developer handoff without requiring any mid-task review.
+mode: research_orchestration_mvp
+created_at: "2026-03-11T09:00:00Z"
+updated_at: "2026-03-11T09:18:00Z"
+current_stage: stop_or_handoff
+status: completed
+owner_agent: orchestrator
+confidence_level: high
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-11T09:16:00Z"
+last_heartbeat_at: "2026-03-11T09:18:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files: []
+  generated_artifacts:
+    - "tasks/pilots/20260311_090000_foreground_autonomous_happy_path.yaml"
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "If later implementation fails, keep this replay as UX evidence only and leave production unchanged."
+  steps:
+    - "Do not infer any production action from this pilot alone."
+    - "Use the pilot only to show the expected happy-path orchestration behavior."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: null
+  notebook: null
+  proposal: null
+decision:
+  gap: The baseline lacks a simple low-friction accumulation gate for spot-only recovery entries.
+  archetype: spot_entry_filter
+  integration_mode: standalone_spot_candidate
+  success_criteria:
+    - Direction is clear enough to avoid approval gating.
+    - Research can reach one default next action within a single invocation.
+    - Final packet is specific enough that the user does not need a separate status query.
+  kill_criteria:
+    - The direction remains ambiguous after strategist.
+    - Alpha research ends without a single default recommendation.
+  hypothesis: A simple spot regime idea can be framed, researched, and concluded in one invocation when there is no blocker or low-confidence branch.
+  data_requirements:
+    - Existing crypto spot OHLCV data already in repo
+  coverage_gate: Sufficient for a replay pilot because this file demonstrates orchestration behavior, not signal validity.
+  eda_findings:
+    - Strategist resolved the integration mode without needing approval.
+    - Alpha research produced one concrete next action rather than pausing after manifest creation.
+  handoff_recommendation: handoff_to_quant_developer
+  final_outcome: foreground_autonomous_happy_path_completed
+blockers: []
+notes:
+  - This pilot exists to demonstrate the expected `/start-research` happy path.
+  - The orchestrator completed intake, strategist, alpha research, and final packet in one invocation.
+  - No intermediate user-facing response was emitted after manifest creation.
+next_recommended_action: Treat this pilot as the reference behavior for no-blocker, no-review `/start-research` runs.
+final_packet:
+  recommendation: "Continue directly to the final packet boundary when no blocker or review gate exists."
+  evidence_tier: "pilot_replay / foreground_autonomous_happy_path"
+  blocker_summary: null
+  handoff_decision: "No real handoff; this pilot is a UX contract replay."
+  review_summary: "This pilot proves the intended behavior: `/start-research` should not stop after manifest creation when the task is clear and low risk."

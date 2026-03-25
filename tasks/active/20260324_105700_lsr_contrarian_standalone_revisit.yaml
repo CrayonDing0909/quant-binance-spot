@@ -1,0 +1,144 @@
+schema_version: 1
+task_id: research_20260324_105700_lsr_contrarian_standalone_revisit
+goal: "BTC-only LSR contrarian standalone strategy: test mean-reversion thesis with NW envelope as regime/exit anchor, OI/FR confirmation, BTC single-asset focus"
+mode: research_orchestration_mvp
+created_at: "2026-03-24T10:57:00Z"
+updated_at: "2026-03-25T19:00:00Z"
+current_stage: risk_manager
+status: running
+owner_agent: risk-manager
+confidence_level: high
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-25T16:00:00Z"
+last_heartbeat_at: "2026-03-25T16:00:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files:
+    - "tasks/active/20260324_105700_lsr_contrarian_standalone_revisit.yaml"
+    - "docs/research/20260325_lsr_contrarian_research_alignment_proposal.md"
+    - "notebooks/research/20260324_lsr_nw_btc_eda.ipynb"
+    - "notebooks/research/20260325_lsr_alpha_existence.ipynb"
+    - "notebooks/research/20260325_lsr_combined_signal_eda.ipynb"
+    - "notebooks/research/20260325_lsr_entry_timing_cycle1.ipynb"
+    - "notebooks/research/20260325_lsr_exit_design_cycle2.ipynb"
+    - "scripts/research/lsr_exit_design_cycle2.py"
+    - "notebooks/research/20260325_lsr_portfolio_role_cycle3.ipynb"
+    - "scripts/research/lsr_portfolio_role_cycle3.py"
+    - "src/qtrade/strategy/lsr_contrarian_strategy.py"
+    - "config/research_lsr_contrarian_v3.yaml"
+    - "reports/futures/lsr_contrarian/validation/20260325_164342/"
+  generated_artifacts:
+    - "tasks/active/20260324_105700_lsr_contrarian_standalone_revisit.yaml"
+    - "docs/research/20260325_lsr_contrarian_research_alignment_proposal.md"
+    - "notebooks/research/20260325_lsr_entry_timing_cycle1.ipynb"
+    - "notebooks/research/20260325_lsr_exit_design_cycle2.ipynb"
+    - "scripts/research/lsr_exit_design_cycle2.py"
+    - "notebooks/research/20260325_lsr_portfolio_role_cycle3.ipynb"
+    - "scripts/research/lsr_portfolio_role_cycle3.py"
+    - "config/research_lsr_contrarian_v3.yaml"
+  tests_run:
+    - "python -m pytest tests/ -x -q --tb=short (pre-existing failures only, no regressions from v3)"
+    - "PYTHONPATH=src python scripts/run_backtest.py -c config/research_lsr_contrarian_v3.yaml (241 trades, +174.77%, SR 0.85 adjusted)"
+  config_changed: true
+  prod_impact: none
+rollback:
+  type: research_only
+  target: "Keep production unchanged and preserve the 2026-03-25 accepted baseline only as a research candidate until a single-family cycle is completed."
+  steps:
+    - "Do not change any `prod_*` configs during research-flow realignment."
+    - "Treat the 2026-03-24 NW hard-gate result as shelved for that branch only; do not reuse it as the final word on the full LSR direction."
+    - "Use the aligned proposal and updated manifest as the system of record for the next cycle."
+  verified: true
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+artifacts:
+  complement_thesis_brief: "docs/research/20260325_lsr_contrarian_research_alignment_proposal.md"
+  notebook: "notebooks/research/20260325_lsr_portfolio_role_cycle3.ipynb"
+  prior_notebook: "notebooks/research/20260226_lsr_extremes_contrarian.ipynb (existing v1/v2)"
+  eda_script: "scripts/research/eda_lsr_nw_btc.py"
+  proposal: "docs/research/20260325_lsr_contrarian_research_alignment_proposal.md"
+decision:
+  gap: "BTC-only mean-reversion leg remains a live candidate, but the research record needs to separate accepted LSR signal evidence from shelved NW-gated standalone branches and keep the next cycle to one family."
+  archetype: "MR (Mean Reversion) — crowding-driven contrarian"
+  integration_mode: "long_only_satellite_with_symmetric_fallback"
+  success_criteria:
+    - "Keep the accepted baseline explicit: EW pctrank(hl=84) + ADX(14)>25 + v2 swing exits."
+    - "Run only one primary experiment family per cycle from this point onward."
+    - "Next entry-timing cycle must improve conditional expectancy without reducing trade count below viability."
+    - "Any later standalone claim must still keep net expectancy > 0, trades/year >= 50, and 2025-2026 IC < -0.02."
+  kill_criteria:
+    - "Any new cycle mixes signal, entry, exit, sizing, or role in one conclusion."
+    - "Accepted baseline falls below net expectancy <= 0, trades/year < 30, or 2025-2026 IC worse than EW-only."
+    - "Trade count collapses while apparent conditional returns improve."
+  hypothesis: "The accepted LSR baseline is now EW pctrank(hl=84) contrarian gated by ADX(14)>25, but the best trade expression, exit design, and final portfolio role still need to be tested in separate cycles."
+  data_requirements:
+    - "LSR (retail): data/binance/futures/derivatives/lsr/*.parquet (8 symbols, free, already cached)"
+    - "Price 1h klines (already cached)"
+    - "Optional for future cycles: 4h / 1d BTC data for HTF resonance checks"
+    - "Optional for later role/sizing cycle: production baseline signals for orthogonality / overlay ablation"
+    - "All free — Binance Vision + existing parquet"
+  coverage_gate: "BTC 1h LSR + price coverage remains sufficient for 2022-2026 research; the accepted baseline was already validated on the available window."
+  eda_findings:
+    - "Loop A (2026-03-25) PASS: regime decomposition shows trending ADX>25 survives in 2025-2026 with coverage sufficient for a usable filter."
+    - "Loop A (2026-03-25) PASS: EW pctrank(hl=84) is the best normalization and improves 2025-2026 IC versus baseline pctrank(168)."
+    - "Loop A (2026-03-25) PASS: residual/raw IC evidence supports that the LSR alpha is not just lagged price reversal."
+    - "Loop B baseline (2026-03-25) PASS: EW pctrank + ADX>25 reaches 2025-2026 IC = -0.0411, better than EW-only IC = -0.0296."
+    - "Loop B baseline (2026-03-25) PASS: simple state-machine estimate shows ~123.9 trades/year, gross expectancy +0.565%, net expectancy +0.445%, avg hold ~56h."
+    - "2026-03-24 NW hard-gate branch remains shelved for standalone use because it improved IC but collapsed trade frequency."
+    - "The remaining unanswered questions are now family-separated: entry timing, exit design, and portfolio role."
+    - "Cycle 1 (entry_timing) PASS: Row A (HTF resonance) FAIL — killed frequency to 64.8 tr/yr. Row B (persist>=2) PASS — net exp +0.477%, 115.6 tr/yr, count loss 6.7%. Row C (cooldown=24h) PASS — net exp +0.512%, 93.3 tr/yr, eliminated repeated losses. Combined (persist>=2 + cd=24h) PASS — net exp +0.521%, 89.7 tr/yr."
+    - "Cycle 2 (exit_design) PASS: Row A (structural TP) PASS — midpoint TP (pr=0.50) accepted over opposite-extreme; net exp +0.407% (from +0.521%) but MDD improved -19.56% (from -30.68%), hold shortened 44h (from 60h), trades/yr 105.0. Row B (ATR SL) KEEP_BASELINE — ATR 3.0 optimal, tighter stops hurt expectancy, wider stops hurt MDD. Row C (time stop) KEEP_BASELINE — 168h optimal, shorter stops increase dead-trade share without improving expectancy."
+    - "Cycle 3 (portfolio_role) COMPLETE: Row A (standalone) PASS — corr=0.256 to prod BTC (strong diversifier), all years positive, net exp +0.407%, 105 tr/yr. Row B (long-only satellite) PASS — net exp +0.645% (+0.24% vs symmetric), SR 1.52 (vs 1.47), but MDD -26.63% (vs -22.21%), 2022 marginally negative. Row C (overlay) PASS — marginal SR +0.13 on production. CHOSEN ROLE: long_only_satellite (higher per-trade edge; symmetric standalone is the robustness fallback)."
+  handoff_recommendation: "handoff_to_quant_developer_for_v3_implementation"
+  final_outcome: null
+blockers: []
+notes:
+  - "The 2026-03-24 conclusion is preserved as the verdict for the NW hard-gate standalone branch, not the full LSR direction."
+  - "Cycle 1 (entry_timing) accepted: persist>=2 + cooldown=24h."
+  - "Cycle 2 (exit_design) accepted: midpoint TP (pr=0.50), ATR 3.0 SL, 168h time stop."
+  - "Cycle 3 (portfolio_role) accepted: long_only_satellite as primary, symmetric standalone as robustness fallback."
+  - "Correlation to production BTC: 0.256 — strong diversifier."
+  - "All 3 research cycles (entry, exit, role) are COMPLETE. Ready for Quant Developer handoff."
+next_recommended_action: "Risk Manager pre-launch audit COMPLETE. Verdict: APPROVED FOR PAPER TRADING with conditions. Satellite allocation max 5% of total portfolio equity. Leverage 1x. Paper-trading observation 21 days minimum. Circuit breaker: cumulative PnL < -8% → auto-halt. If paper period PASS → promote to active at 5% allocation. Next: @devops to deploy paper-trading runner."
+final_packet:
+  current_status: "All 3 research cycles COMPLETE. Long-only satellite chosen as portfolio role. Ready for Quant Developer handoff."
+  recommendation: "Hand off to @quant-developer for v3 implementation. Primary: long-only satellite. Fallback: symmetric standalone if validation rejects long-only MDD."
+  evidence_tier: "accepted_3_cycles_signal_entry_exit_role"
+  blocker_summary: "No blockers. All research questions answered."
+  handoff_decision: "READY for Quant Developer handoff."
+  review_summary: |
+    1. Loop A (signal): EW pctrank(hl=84) + ADX(14)>25, accepted.
+    2. Cycle 1 (entry): persist>=2 + cooldown=24h, accepted.
+    3. Cycle 2 (exit): midpoint TP (pr=0.50), ATR 3.0 SL, 168h time stop, accepted.
+    4. Cycle 3 (role): long_only_satellite chosen over symmetric standalone and overlay.
+       - Standalone (symmetric): net exp +0.407%, 105 tr/yr, MDD -19.56%, corr=0.256 to prod BTC, all years positive. SR=1.47. PASS.
+       - Long-only satellite: net exp +0.645% (+0.24% vs symmetric), 55.6 tr/yr, SR=1.52. BUT MDD -26.63% and 2022 marginally negative (-0.02%). PASS.
+       - Overlay: marginal SR +0.13 on production. PASS.
+       - Decision: long-only has best per-trade edge (+0.645%). Symmetric standalone is the robustness fallback (better MDD, all years positive).
+    5. Key diversification finding: corr=0.256 to production BTC — strong diversifier regardless of role.
+  recommended_agent: "quant-developer"
+  primary_files:
+    - "docs/research/20260325_lsr_contrarian_research_alignment_proposal.md"
+    - "scripts/research/lsr_portfolio_role_cycle3.py"
+    - "notebooks/research/20260325_lsr_portfolio_role_cycle3.ipynb"
+    - "scripts/research/lsr_exit_design_cycle2.py"
+    - "notebooks/research/20260325_lsr_entry_timing_cycle1.ipynb"
+    - "src/qtrade/strategy/lsr_contrarian_strategy.py"
+  key_decision: "Long-only satellite chosen: +0.24% better net exp per trade, SR 1.52 vs 1.47, but MDD 5pp worse. Symmetric standalone is the robustness fallback."
+  open_risks:
+    - "Long-only MDD (-26.63%) is worse than symmetric (-19.56%). Validation may reject long-only on drawdown grounds."
+    - "Long-only 2022 is marginally negative (-0.02% avg PnL). Bear market performance is a concern."
+    - "Density drops from 105/yr to 55.6/yr in long-only mode. Fewer trades means higher variance in short windows."
+    - "Overlay mode (+0.13 SR) is a viable alternative if standalone/satellite implementation is deprioritized."

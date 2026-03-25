@@ -186,6 +186,26 @@ class TestBaseRunnerCircuitBreaker:
             assert runner._check_circuit_breaker() is True
             assert runner._circuit_breaker_triggered is True
 
+    def test_circuit_breaker_fail_closed_on_exception(self, tmp_path):
+        cfg = _make_mock_config(tmp_path)
+        cfg.risk.max_drawdown_pct = 0.10
+        broker = MagicMock()
+        broker.get_equity.side_effect = RuntimeError("equity API unavailable")
+
+        with patch("qtrade.live.base_runner.TelegramNotifier") as mock_notifier_cls:
+            mock_notifier = MagicMock(enabled=False)
+            mock_notifier_cls.from_config.return_value = mock_notifier
+            from qtrade.live.base_runner import BaseRunner
+
+            class TestRunner(BaseRunner):
+                def run(self):
+                    pass
+
+            runner = TestRunner(cfg, broker, "paper")
+
+            assert runner._check_circuit_breaker() is True
+            mock_notifier.send_error.assert_called_once()
+
 
 class TestBaseRunnerPositionSizing:
     """倉位計算測試"""
@@ -317,3 +337,30 @@ class TestBaseRunnerProcessSignal:
             result = runner._process_signal("BTCUSDT", sig)
             assert result is None  # No trade, signal clipped to 0
             broker.execute_target_position.assert_not_called()
+
+    def test_process_signal_alerts_on_execution_failure(self, tmp_path):
+        cfg = _make_mock_config(tmp_path)
+        broker = _make_mock_broker()
+        broker.get_position_pct.return_value = 0.0
+        broker.execute_target_position.side_effect = RuntimeError("order rejected")
+
+        with patch("qtrade.live.base_runner.TelegramNotifier") as mock_notifier_cls:
+            mock_notifier = MagicMock(enabled=False)
+            mock_notifier_cls.from_config.return_value = mock_notifier
+            from qtrade.live.base_runner import BaseRunner
+
+            class TestRunner(BaseRunner):
+                def run(self):
+                    pass
+
+            runner = TestRunner(cfg, broker, "paper")
+
+            sig = SignalResult(
+                symbol="BTCUSDT", signal=1.0, price=50000.0,
+                timestamp="", strategy="test",
+                indicators={"rsi": 70.0, "adx": 30.0},
+            )
+            result = runner._process_signal("BTCUSDT", sig)
+
+            assert result is None
+            mock_notifier.send_error.assert_called_once()
