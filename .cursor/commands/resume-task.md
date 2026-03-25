@@ -14,7 +14,14 @@
    - Task ID
    - Current stage
    - Status
+   - Blocker / review reason（若無則明寫 `none`）
    - What changed
    - What is running
    - What needs approval
    - Next step
+   - Recommended agent
+   - Primary files / artifacts
+
+補充規則：
+- 若 task 只是「可續跑」而不是正在背景執行，請明說它是 **manifest-based resumable state**，不要暗示有 background worker。
+- 若已進入 `stop_or_handoff`，請把回覆整理成可直接接棒的 handoff packet，而不是只說 manifest 已更新。

@@ -21,7 +21,8 @@
 3. **組合導向** — 每次研究必須有明確的「目標缺口」和「整合目標」（Filter/Overlay/Standalone）。隨機探索 = 浪費時間。
 4. **寧可多做 EDA 也不要 premature handoff** — 歷史成功率 ~20%。每次 premature GO = 2-4h 開發者時間。有疑慮時不 handoff。
 5. **弱信號立即停止** — 若最強原始信號 IC < 0.01，停止探索變體。
-6. **不做 vectorbt 回測** — IC 分析、信號分群收益可以做；`vbt.Portfolio.from_orders()` 和正式績效指標是 Quant Developer 的工作。
+6. **先鎖定實驗家族，再做研究** — 每一輪 research cycle 只能有一個 primary experiment family（signal / entry / exit / sizing / portfolio role）。不要把 TP/SL、HTF、權重一起混著改。
+7. **不做 vectorbt 回測** — IC 分析、信號分群收益可以做；`vbt.Portfolio.from_orders()` 和正式績效指標是 Quant Developer 的工作。
 
 ## Skills（詳細流程在 skill 檔案中）
 
@@ -30,6 +31,7 @@
 | 策略原型分類 + 成本框架 | `.cursor/skills/alpha/archetype-classification.md` | 開始任何新研究 |
 | 因果 IC 驗證協議 | `.cursor/skills/alpha/causal-verification.md` | 每次計算 IC 或做 GO/FAIL 決定 |
 | 組合導向研究協議 + 優先級評分 | `.cursor/skills/alpha/portfolio-research-protocol.md` | 開始新研究方向前 |
+| 系統化實驗設計 | `.cursor/skills/alpha/systematic-experiment-design.md` | 討論 TP/SL / HTF / 權重 / 實驗矩陣時；每次定義新 research cycle 前 |
 | Notebook + Proposal 模板 | `.cursor/skills/alpha/notebook-templates.md` | 建立 Notebook 或撰寫 Proposal |
 | Reopen Framework（proxy-valid / state-invalid） | `.cursor/skills/alpha/reopen-framework.md` | 方向值得保留但尚未能 handoff 時 |
 | Handoff 品質門檻 + 輸出格式 | `.cursor/skills/alpha/handoff-gates.md` | 準備 GO/FAIL 決定或 handoff |
@@ -86,6 +88,8 @@ PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama
 
 ### 分析中
 - [ ] 原型已分類？用了原型專屬方法？
+- [ ] 已寫 Strategy Diagnosis Card？本輪只有一個 primary experiment family？
+- [ ] 目前是在 Loop A（Alpha Existence）還是 Loop B（Trade Expression）？
 - [ ] IC 用了因果 shift？Resample 信號額外 shift？
 - [ ] IC > 0.03 用 2+ 獨立方法交叉驗證？混淆因子已隔離？
 
@@ -96,6 +100,24 @@ PYTHONPATH=src python scripts/fetch_onchain_data.py --source defillama
 ### Session 結束
 - [ ] 更新了 `docs/ALPHA_RESEARCH_MAP.md`（圖譜 + 前沿排序 + 覆蓋地圖）？
 - [ ] 新文獻加入了 `docs/RESEARCH_LITERATURE.md`？
+- [ ] Notebook 最後附上 `## Next Cycle Prompt` — 包含完整可執行 prompt（agent tag + cycle declaration + baseline numbers + matrix + pass/kill + files + deliverable）？
+
+## Next Cycle Prompt Contract
+
+When a research cycle notebook reaches a verdict, you MUST append a `## Next Cycle Prompt` markdown cell containing a complete prompt for the next cycle. This prompt should be copy-paste ready for the user to send in a new chat.
+
+Required contents:
+- `@agent` tag (usually `@alpha-researcher` for the next research cycle)
+- Research Cycle Declaration block (baseline pain, experiment family, loop type, what stays fixed)
+- Accepted baseline numbers from this cycle's verdict
+- Experiment matrix rows from the proposal for the next cycle
+- Pass / Kill rules
+- Relevant files list
+- Deliverable description
+
+If this cycle's verdict is FAIL or if there is no next research cycle, the block should instead contain a handoff prompt to the appropriate agent (developer, risk manager, etc.) or an explicit "SHELVE — no next cycle" notice.
+
+The user can also use `/continue-cycle` to have the orchestrator regenerate this prompt from the task manifest, but having it directly in the notebook output is the fastest path.
 
 ## 關鍵參考文件
 

@@ -36,6 +36,17 @@ notebooks/research/
 6. **Limitations**: Known limitations, potential biases, data defects
 7. **Conclusion**: Whether to proceed to Phase 2
 
+### Optional Section For Dormant / Reopen Candidates
+
+If the direction is promising but blocked before handoff, append:
+
+8. **Reopen Framework**
+   - Evidence tier: `not-proxy-valid` / `proxy-valid / state-invalid` / `state-valid / handoff-blocked` / `handoff-ready`
+   - Phase A status
+   - Phase B status
+   - Phase C status
+   - Exact reopen trigger (what new data or proof is needed)
+
 > **Validation boundary (strict):**
 > - **Can do**: IC analysis, signal-grouped returns, Rank IC, signal autocorrelation, simple long-short grouping (pandas manual calculation in Notebook)
 > - **Should NOT do**: `vbt.Portfolio.from_orders()` full backtest, cost models, Sharpe/MDD/CAGR final metrics, calling `scripts/run_backtest.py`
@@ -93,6 +104,23 @@ File location: `docs/research/YYYYMMDD_<strategy_name>_proposal.md`
 ## 11. Rollback Criteria
 ## 12. Evidence
 ## 13. Blend Configuration (if applicable)
+## 14. Reopen Framework (if not handoff-ready)
+```
+
+### Reopen Framework Block (Proposal)
+
+When the direction is preserved but not handed off, add:
+
+```markdown
+## 14. Reopen Framework
+- **Evidence tier**: `proxy-valid / state-invalid`
+- **Phase A (Proxy Validation)**: PASS
+- **Phase B (State Validation)**: BLOCKED
+- **Phase C (Developer Handoff)**: BLOCKED
+- **Current blockers**:
+  - missing_true_liquidation_state_history
+  - false_breakdown_not_solved
+- **Reopen trigger**: historical liquidation-state data becomes available
 ```
 
 ## Blend Research Guidelines (Multi-Strategy)

@@ -95,7 +95,44 @@ Before using any dataset in research:
 3. If `is_valid == False`, fix data issues before proceeding (or document why you proceed despite issues).
 4. For new data sources not yet integrated, document the ingestion pipeline needed.
 
-## 8. Data Embargo（數據隔離 — 確保真 OOS）
+## 8. Factor Orthogonality Check（因子正交性 — 防止冗餘研究）
+
+**所有新的 research scripts 必須檢查候選信號與既有生產信號的冗餘度。** CI 自動掃描強制執行（`test_factor_orthogonality.py`）。
+
+### 為什麼需要 Orthogonality Check
+
+歷史上 4 個 filter 研究（OI/On-chain/Macro/VPIN）花費 ~16h 開發者時間進行 ablation，最終都因為與 HTF filter 冗餘（over-filter）而 FAIL/KEEP_BASELINE。
+如果在 EDA 階段就用 `marginal_information_ratio()` 量化冗餘度，可以提前 kill 冗餘方向。
+
+### 使用方式
+
+```python
+# 在每個新 research script 中
+from qtrade.validation.factor_orthogonality import (
+    marginal_information_ratio,
+    check_latent_factor_loading,
+)
+
+# 檢查候選信號 vs 既有生產信號
+result = marginal_information_ratio(
+    candidate=candidate_signal,
+    existing_signals={"tsmom": tsmom_signal, "htf": htf_signal, "lsr": lsr_signal},
+    forward_returns=fwd_returns,
+)
+
+# R² > 0.50 → 候選信號 > 50% 被既有因子解釋 → 冗餘
+if result.is_redundant:
+    print(f"⚠️ 候選信號冗餘: R²={result.r_squared:.3f}")
+```
+
+### 規則
+
+1. 所有 `scripts/research_*.py` **必須** import 並使用 `marginal_information_ratio` 或標記 `# ORTHOGONALITY_EXEMPT: <reason>`
+2. Handoff to Quant Dev 前 **必須** 報告 G0 Factor Orthogonality gate（見 `handoff-gates.md`）
+3. `marginal_information_ratio()` R² > 0.50 → HARD STOP，不 handoff
+4. 定期用 `scripts/analyze_factor_geometry.py` 審計整體因子幾何
+
+## 9. Data Embargo（數據隔離 — 確保真 OOS）
 
 **所有新的 research scripts 必須使用 embargo 機制。** CI 自動掃描強制執行（`test_embargo_guard.py`）。
 

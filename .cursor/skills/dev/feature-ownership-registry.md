@@ -7,7 +7,7 @@ alwaysApply: false
 
 > Central directory of every critical module in the system.
 > Every module MUST have an owner, config location, and action protocol.
-> **Last updated**: 2026-03-04
+> **Last updated**: 2026-03-25
 
 ## How to Use This File
 
@@ -33,6 +33,9 @@ alwaysApply: false
 | Red Flags | Quant Researcher | Quant Developer | Researcher: deep investigation required | — | `validation.yaml` → `red_flags` (fallback: defaults in `red_flags.py`) | Per validation run | 2026-03-04 |
 | Regime Analysis | Quant Researcher | Quant Developer | Researcher: check bear/bull/sideways split | — | `validation.yaml` → `market_regimes` | Per validation run | 2026-03-02 |
 | Data Embargo | Quant Researcher | Quant Developer | Block research run if embargo violated | — | `validation.yaml` → `data_embargo` | Monthly (update cutoff) | 2026-03-02 |
+| Factor Orthogonality | Quant Researcher | Quant Developer | Researcher: check factor redundancy; HARD STOP if R²>0.50 | `skills/alpha/handoff-gates.md` (G0) | `validation.yaml` → `factor_orthogonality` | Per new research direction (EDA pre-screen) | 2026-03-05 |
+| Regime-Stratified CPCV | Quant Researcher | Quant Developer | Researcher: check regime dependence (concentration >70%) | — | `validation.yaml` → `factor_orthogonality.regime_concentration_threshold` | Per validation run | 2026-03-05 |
+| Code Safety Guard (Script Coverage) | Quant Developer | Quant Developer | Block CI if `scripts/` bypass `signal_delay`, safe portfolio wrapper, or causal resample alignment | `.cursor/rules/code-safety.mdc`, `.cursor/rules/anti-bias.mdc` | `tests/test_code_safety_guard.py` + `tests/test_resample_shift_guard.py` | Per CI run | 2026-03-11 |
 
 ### Infrastructure / Cost Models
 
@@ -43,12 +46,19 @@ alwaysApply: false
 | HTF Filter (4h + Daily) | Alpha Researcher | Quant Developer | Researcher: check filter still effective | — | `prod_candidate_simplified.yaml` → `strategy.params.htf_filter` | After regime shift | 2026-02-28 |
 | Symbol Governance | Quant Researcher | Quant Developer | Risk: add/remove/reweight symbols | — | `prod_candidate_simplified.yaml` → `market.symbols` + `portfolio.allocation` | Monthly IC scan | 2026-03-04 |
 
+### Research Strategies (Pending Validation)
+
+| Module | Owner (Methodology) | Implementer | Action on Issue | Governance Spec | Config Location | Review Schedule | Last Calibrated |
+|--------|---------------------|-------------|-----------------|-----------------|-----------------|-----------------|-----------------|
+| LSR Contrarian v3 (Satellite) | Alpha Researcher | Quant Developer | Researcher: re-evaluate role decision; fallback to symmetric standalone | `docs/research/20260325_lsr_contrarian_research_alignment_proposal.md` | `config/research_lsr_contrarian_v3.yaml` | Pending Quant Researcher validation (WFA/CPCV/DSR) | 2026-03-25 |
+
 ### Operations
 
 | Module | Owner (Methodology) | Implementer | Action on Issue | Governance Spec | Config Location | Review Schedule | Last Calibrated |
 |--------|---------------------|-------------|-----------------|-----------------|-----------------|-----------------|-----------------|
 | Circuit Breaker | Risk Manager | Quant Developer | Risk: trigger halt | — | `prod_candidate_simplified.yaml` → `risk` | Monthly | 2026-02-28 |
 | Position Sizing | Risk Manager | Quant Developer | Risk: verify Kelly fraction | — | `prod_candidate_simplified.yaml` → `position_sizing` | After strategy change | 2026-02-28 |
+| Active Buy Weekly Scan Export | Alpha Researcher | Quant Developer | Freeze downstream app consumption, regenerate contract artifacts, and review schema/version changes before re-enabling | `docs/ACTIVE_BUY_ARCHITECTURE.md` | `config/research_active_buy_scan.yaml` + `reports/active_buy_scan/` | On signal or schema change | 2026-03-12 |
 
 ---
 

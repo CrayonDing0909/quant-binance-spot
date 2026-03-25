@@ -9,6 +9,47 @@ alwaysApply: false
 
 ## Pipeline (Sequential, All Steps Required)
 
+## Research-to-Validation Boundary
+
+Before full validation starts, verify what kind of experiment is being promoted:
+
+### Loop A: Alpha Existence
+
+This loop proves the raw mechanism exists.
+
+Expected evidence before backtest-heavy work:
+- causal IC / conditional IC
+- year-by-year sign stability
+- event frequency / trades per year
+- pure vs confounded evidence
+- orthogonality pre-screen
+
+If Loop A is weak, do **not** spend validation time on TP/SL or fine entry-timing variants.
+
+### Loop B: Trade Expression
+
+This loop assumes the alpha source is already accepted and asks how to express it.
+
+Allowed families:
+- `entry_timing`
+- `exit_design`
+- `position_sizing`
+- `portfolio_role`
+
+Expected evidence before full validation:
+- comparison against the accepted Loop A baseline
+- explicit `what stayed fixed`
+- clear statement of which single family changed
+- improvement on the target metric without hiding a collapse in trade count or cost robustness
+
+### Hard Rule
+
+Validation should reject packets that say "strategy improved" but cannot tell whether:
+- the raw signal improved, or
+- only the execution layer changed
+
+That is a research hygiene failure, not just a reporting issue.
+
 ### 1. Causality Check
 - Signal generated at `close[i]`, executed at `open[i+1]`?
 - `signal_delay` correctly set?
@@ -90,7 +131,49 @@ On FAIL:
 2. If miscalibration → recalibrate thresholds (see governance spec Section 5)
 3. If real decay → Risk Manager executes action protocol (WARNING / REDUCE / FLATTEN)
 
-### 11. meta_blend Extra Validation
+### 11. Factor Orthogonality Audit (V11 — NEW)
+
+> **Tool**: `src/qtrade/validation/factor_orthogonality.py`
+> **Script**: `scripts/analyze_factor_geometry.py`
+> **Owner**: Quant Researcher runs audit; Alpha Researcher uses in EDA pre-screen
+
+```bash
+# Full factor geometry audit
+PYTHONPATH=src python scripts/analyze_factor_geometry.py -c config/prod_candidate_simplified.yaml
+
+# Per-candidate marginal information ratio (in research scripts)
+from qtrade.validation.factor_orthogonality import marginal_information_ratio
+```
+
+Three checks:
+- **Correlation Matrix**: No pair of production signals should have |corr| > 0.50
+- **PCA Effective Factors**: n_effective_factors >= n_signals × 0.60 (at least 60% independent)
+- **Marginal Info**: Any new candidate signal must have R² < 0.50 against existing signals (G0 gate)
+
+On FAIL:
+1. If correlation matrix shows high pairs: investigate if one signal subsumes the other → ablation to decide which to keep
+2. If PCA effective factors too few: production may have structural redundancy → recommend simplification
+3. If candidate R² > 0.50: do not proceed to ablation — this is the same factor in different form
+
+**Historical Context**: OI/On-chain/Macro/VPIN all passed traditional G1-G6 gates but were structurally redundant with HTF filter. This audit would have caught them at the R² stage, saving ~16h of developer ablation time.
+
+### 12. Regime-Stratified CPCV (V12 — NEW)
+
+> **Tool**: `regime_stratified_cpcv()` in `prado_methods.py`
+
+```bash
+# Integrated into validate.py (coming soon)
+# Or standalone:
+from qtrade.validation.prado_methods import regime_stratified_cpcv
+result = regime_stratified_cpcv(symbol, data_path, cfg, strategy_name, btc_prices)
+```
+
+- Standard CPCV + regime breakdown of OOS performance
+- Checks: `regime_concentration_pct < 0.70` (single regime should not contribute >70% of OOS PnL)
+- `is_regime_dependent = True` → strategy may be a regime proxy, not a robust alpha source
+- Uses `auto_detect_regimes()` from `regime_analysis.py`
+
+### 13. meta_blend Extra Validation
 
 When auditing a `meta_blend` strategy, additionally check:
 
@@ -107,6 +190,16 @@ When auditing a `meta_blend` strategy, additionally check:
 - **BTC Sharpe abnormally low** → almost certainly `auto_delay` double-delay (BTC's `breakout_vol_atr` has built-in delay)
 - **Carry signal structural shorting** → BasisCarry may persistently short in bull market; verify confirmatory mode
 - **Persistent negative IC symbols** → low-cap coins (XRP, LTC) carry unstable; suggest `tsmom_only` tier
+
+## Family-Specific Validation Focus
+
+| Experiment family | What validation should focus on |
+|------------------|---------------------------------|
+| `signal_mechanism` | causality, IC stability, orthogonality, symbol breadth, regime dependence |
+| `entry_timing` | delay stress, false-entry reduction, conditional trade quality, trade count loss |
+| `exit_design` | expectancy, MDD, hold time, tail loss, cost-adjusted edge |
+| `position_sizing` | portfolio Sharpe delta, concentration, turnover, capital efficiency |
+| `portfolio_role` | correlation, marginal SR, blend / overlay ablation, replacement viability |
 
 ## Validation Division of Labor
 

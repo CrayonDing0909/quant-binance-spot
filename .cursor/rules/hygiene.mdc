@@ -74,6 +74,8 @@ When you modify code that a doc describes, update the `Last updated` date in tha
 | `STRATEGY_PORTFOLIO_GOVERNANCE.md` | Strategy portfolio addition/replacement/retirement rules change |
 | `CURSOR_WORKFLOW.md` | Agent roles or workflow changes |
 | `ORCHESTRATION_MVP.md` | Orchestrator state model / commands / stage contracts / approval flow changes |
+| `ACTIVE_BUY_ARCHITECTURE.md` | Active-buy repo boundary, scan/export contract, app responsibilities, or delivery phases change |
+| `ACTIVE_BUY_APP_MVP.md` | App-repo MVP shape, ingest/notify/paper state model, or broker gating policy changes |
 | `RESEARCH_LITERATURE.md` | New literature discovered during research |
 | `ALPHA_RESEARCH_MAP.md` | After any Alpha Research session (new signal tested, direction closed, coverage changed) |
 
