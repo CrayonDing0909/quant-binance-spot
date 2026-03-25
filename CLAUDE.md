@@ -5,11 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Dashboard
 
 ```bash
-# Launch human oversight dashboard
+# Web dashboard (FastAPI + Tailwind, primary — runs on Oracle Cloud)
+PYTHONPATH=src python scripts/dashboard_web.py                          # local, no auth
+DASH_USER=admin DASH_PASS=<pw> PYTHONPATH=src python scripts/dashboard_web.py --host 0.0.0.0  # deployed, with auth
+
+# Streamlit dashboard (local desktop alternative)
 PYTHONPATH=src streamlit run scripts/dashboard.py
 ```
 
-Shows: agent task status, research pipeline, live equity curve, recent trades, pending human decisions.
+Shows: agent tasks, research pipeline, strategy rankings (per-symbol WR%/PnL/DD), equity curve, recent trades, GitHub PR tracking, issue backlog, pending human decisions.
 
 ## gstack
 
