@@ -93,14 +93,23 @@ def load_equity_from_db(db_path: Path, days: int = 60) -> pd.DataFrame:
             df["date"] = pd.to_datetime(df["date"])
             return df.sort_values("date")
         # Fallback: derive daily equity from trades PnL
+        # Filter to simplified config era (after last ADA/BNB trade = htf_lsr era)
         trades = pd.read_sql(
-            "SELECT timestamp, pnl, fee FROM trades WHERE pnl IS NOT NULL ORDER BY id",
+            """SELECT timestamp, pnl, fee FROM trades
+               WHERE pnl IS NOT NULL
+                 AND symbol NOT IN ('ADAUSDT','BNBUSDT')
+               ORDER BY id""",
             con,
         )
         con.close()
         if trades.empty:
             return pd.DataFrame()
         trades["timestamp"] = pd.to_datetime(trades["timestamp"], utc=True)
+        # Only keep trades from simplified era (Mar 4 onwards)
+        cutoff = pd.Timestamp("2026-03-04 07:00:00", tz="UTC")
+        trades = trades[trades["timestamp"] >= cutoff]
+        if trades.empty:
+            return pd.DataFrame()
         trades["date"] = trades["timestamp"].dt.normalize()
         daily = trades.groupby("date").agg(pnl_day=("pnl", "sum"), fee_day=("fee", "sum")).reset_index()
         daily["pnl_day"] = daily["pnl_day"] - daily["fee_day"]
