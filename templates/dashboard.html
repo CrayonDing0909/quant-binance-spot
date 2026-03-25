@@ -296,6 +296,68 @@
           {% endif %}
         </div>
 
+        <!-- GitHub PRs -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200">🔀 Pull Requests</span>
+            <span class="text-2xs text-gray-600">{{ prs|length }}</span>
+          </div>
+          <div class="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
+            {% for pr in prs %}
+            <a href="{{ pr.url }}" target="_blank" class="block task-item pl-2 py-1 hover:bg-card-alt/50 rounded">
+              <div class="flex items-center gap-1.5">
+                <span class="text-2xs font-mono text-gray-600">#{{ pr.number }}</span>
+                <span class="text-2xs text-gray-300 truncate flex-1">{{ pr.title }}</span>
+                {% if pr._status == 'promoted' %}
+                <span class="text-2xs bg-green-900/50 text-green-400 px-1 rounded flex-shrink-0">merged</span>
+                {% elif pr._status == 'abandoned' %}
+                <span class="text-2xs bg-gray-800 text-gray-500 px-1 rounded flex-shrink-0">closed</span>
+                {% else %}
+                <span class="text-2xs bg-accent/20 text-accent px-1 rounded flex-shrink-0">open</span>
+                {% endif %}
+              </div>
+              <div class="flex items-center gap-1 mt-0.5">
+                {% for label in pr._labels %}
+                <span class="text-2xs text-accent/60">{{ label }}</span>
+                {% endfor %}
+                <span class="text-2xs text-gray-600 ml-auto">{{ pr._date }}</span>
+              </div>
+            </a>
+            {% endfor %}
+            {% if not prs %}
+            <div class="text-2xs text-gray-600 text-center py-2">無 PR</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- GitHub Issues (Backlog) -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200">📋 Backlog</span>
+            <span class="text-2xs px-1.5 py-0.5 rounded-full bg-blue-900/30 text-blue-400 font-medium">{{ open_issues }}</span>
+          </div>
+          <div class="space-y-1 max-h-40 overflow-y-auto scrollbar-thin">
+            {% for iss in issues %}
+            <a href="{{ iss.url }}" target="_blank" class="block task-item pl-2 py-0.5 hover:bg-card-alt/50 rounded">
+              <div class="flex items-center gap-1.5">
+                <span class="text-2xs font-mono text-gray-600">#{{ iss.number }}</span>
+                <span class="text-2xs text-gray-400 truncate">{{ iss.title }}</span>
+              </div>
+              {% if iss._labels %}
+              <div class="flex gap-1 mt-0.5">
+                {% for label in iss._labels %}
+                <span class="text-2xs {% if label == 'research' %}text-purple-400{% elif label == 'infra' %}text-green-400{% else %}text-yellow-400{% endif %}">{{ label }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </a>
+            {% endfor %}
+            {% if not issues %}
+            <div class="text-2xs text-gray-600 text-center py-2">無 open issues</div>
+            {% endif %}
+          </div>
+        </div>
+
         <!-- Reports -->
         <div class="bg-card rounded-lg p-3">
           <div class="flex items-center justify-between mb-2">
