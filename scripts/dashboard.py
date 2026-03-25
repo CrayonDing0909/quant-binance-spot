@@ -163,6 +163,8 @@ def stage_emoji(stage: str) -> str:
         "quant_developer": "⚙️",
         "validation": "✅",
         "risk_review": "🛡️",
+        "risk_manager": "🛡️",
+        "stop_or_handoff": "🏁",
         "deployment": "🚀",
         "complete": "🏁",
         "blocked": "🚧",
@@ -256,15 +258,16 @@ with col_agents:
 with col_research:
     st.markdown('<div class="section-header">🔬 研究進度</div>', unsafe_allow_html=True)
 
-    stage_order = ["alpha_research", "quant_developer", "validation", "risk_review", "deployment", "complete"]
+    stage_order = ["alpha_research", "quant_developer", "validation", "risk_review", "risk_manager", "deployment", "stop_or_handoff", "complete"]
 
     for task in tasks:
         tid = task.get("task_id", "")
         stage = task.get("current_stage", "")
         status = task.get("status", "")
         final = task.get("final_packet", {})
-        recommendation = final.get("recommendation", "") if final else ""
-        outcome = task.get("research_findings", {}).get("final_outcome", "") if task.get("research_findings") else ""
+        recommendation = (final.get("recommendation") or "") if final else ""
+        findings = task.get("research_findings") or {}
+        outcome = findings.get("final_outcome") or ""
         short_name = tid.split("_", 3)[-1].replace("_", " ")[:35]
 
         # Stage progress bar
