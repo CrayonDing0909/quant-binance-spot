@@ -48,13 +48,18 @@ python3.11 -m pip install -e .
 PYTHONPATH=src python scripts/<script>.py -c config/<config>.yaml
 
 # Tests
-python -m pytest tests/ -x -q --tb=short
-python -m pytest tests/test_code_safety_guard.py -x -q  # safety guards only
+python -m pytest tests/ -x -q --tb=short                    # all tests
+python -m pytest tests/test_code_safety_guard.py -x -q       # safety guards only
+python -m pytest tests/test_resample_shift_guard.py -x -q    # resample look-ahead guard
+python -m pytest tests/test_specific.py::test_name -x -q     # single test
 
 # Backtest / Validate
 PYTHONPATH=src python scripts/run_backtest.py -c config/prod_candidate_simplified.yaml
 PYTHONPATH=src python scripts/validate.py -c config/prod_candidate_simplified.yaml
 PYTHONPATH=src python scripts/validate.py -c config/research_<name>.yaml --quick
+
+# Sync live trading DB from Oracle Cloud (for dashboard)
+bash scripts/sync_oracle_db.sh
 
 # Auto-generated docs (never edit by hand — regenerate after adding/removing scripts or configs)
 PYTHONPATH=src python scripts/gen_cli_reference.py
@@ -130,6 +135,31 @@ Use `AGENTS.md` for which agent to use when. Use `/start-research`, `/resume-tas
 - Never write direct Binance API calls outside broker classes.
 - Never restart the live runner without checking current positions first.
 - `_apply_position_sizing` clips to `[-1, 1]`, not `[0, 1]`. Spot negative clip happens in `runner.run_once()`, not in position sizing.
+- Production: `scripts/start_live.sh` on Oracle Cloud (canonical startup, `@reboot` cron).
+- Active config: `prod_candidate_simplified.yaml` (6 symbols: BTC, ETH, SOL, DOGE, AVAX, LINK).
+
+### Python Standards
+
+- Absolute imports only: `from qtrade.config import AppConfig` — never relative imports.
+- Logging in `src/qtrade/`: use `from qtrade.utils.log import get_logger` — never `import logging` or `print()`.
+- `print()` only allowed in `scripts/` for CLI output.
+- All strategies use `@register_strategy` decorator; signature `(df, ctx: StrategyContext, params: dict) -> pd.Series`.
+- Type hints on all function signatures. Use `from __future__ import annotations`.
+- Max line length: 120.
+
+### Session-End Checklist
+
+After completing tasks, check if you need to regenerate or update:
+
+| You changed | Must update |
+|---|---|
+| `scripts/` files | `PYTHONPATH=src python scripts/gen_cli_reference.py` |
+| `src/qtrade/data/` or `strategy/` modules | `PYTHONPATH=src python scripts/gen_data_strategy_catalog.py` |
+| Strategy status (promoted/retired) | `.cursor/rules/project-overview.mdc` + `.cursor/agents/devops.md` |
+| Any alpha research | `docs/ALPHA_RESEARCH_MAP.md` |
+| New module/feature | `.cursor/skills/dev/feature-ownership-registry.md` |
+
+Then append a summary to `.cursor/rules/recent-changes.mdc`.
 
 ## Key Reference Docs
 
