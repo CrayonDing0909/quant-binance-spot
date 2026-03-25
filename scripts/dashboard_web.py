@@ -2,17 +2,19 @@
 Quant Trading Dashboard — FastAPI + Tailwind CSS
 Lightweight, mobile-responsive, deployable on Oracle Cloud.
 
-Run locally:
+Run locally (no auth):
     PYTHONPATH=src python scripts/dashboard_web.py
 
-Deploy on Oracle Cloud:
-    PYTHONPATH=src nohup python scripts/dashboard_web.py --host 0.0.0.0 --port 8501 &
+Deploy on Oracle Cloud (with auth):
+    DASH_USER=admin DASH_PASS=<password> PYTHONPATH=src python scripts/dashboard_web.py --host 0.0.0.0 --port 8501
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -21,8 +23,9 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 ROOT = Path(__file__).parent.parent
@@ -30,6 +33,34 @@ sys.path.insert(0, str(ROOT / "src"))
 
 app = FastAPI(title="交易指揮中心")
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
+security = HTTPBasic(auto_error=False)
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+DASH_USER = os.environ.get("DASH_USER", "")
+DASH_PASS = os.environ.get("DASH_PASS", "")
+
+
+def verify_auth(credentials: HTTPBasicCredentials | None = Depends(security)):
+    """If DASH_USER/DASH_PASS are set, require basic auth. Otherwise open."""
+    if not DASH_USER:
+        return  # No auth configured — local dev mode
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    if not (
+        secrets.compare_digest(credentials.username.encode(), DASH_USER.encode())
+        and secrets.compare_digest(credentials.password.encode(), DASH_PASS.encode())
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
 
 # ── Data loaders ─────────────────────────────────────────────────────────────
 
@@ -241,7 +272,7 @@ def load_github_issues() -> list[dict]:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request, _=Depends(verify_auth)):
     tasks = load_tasks()
     cfg = load_prod_config()
     dbs = find_live_dbs()
@@ -333,7 +364,7 @@ async def index(request: Request):
 
 
 @app.get("/api/equity")
-async def api_equity():
+async def api_equity(_=Depends(verify_auth)):
     dbs = find_live_dbs()
     db = None
     for d in dbs:
@@ -346,7 +377,7 @@ async def api_equity():
 
 
 @app.get("/api/trades")
-async def api_trades():
+async def api_trades(_=Depends(verify_auth)):
     dbs = find_live_dbs()
     db = None
     for d in dbs:
