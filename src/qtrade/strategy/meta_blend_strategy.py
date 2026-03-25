@@ -100,6 +100,7 @@ def generate_meta_blend(
     # ── 執行每個子策略 ──
     blended = pd.Series(0.0, index=df.index)
     sub_indicators: dict = {}  # 收集子策略指標
+    sleeve_signals: dict = {}  # 每個子策略的最新信號值
 
     for sub in sub_strategies:
         sub_name = sub["name"]
@@ -117,6 +118,7 @@ def generate_meta_blend(
             sub_func = get_strategy(sub_name)
             sub_signal = sub_func(df, ctx, sub_params)
             blended += sub_weight * sub_signal
+            sleeve_signals[sub_name] = float(sub_signal.iloc[-1])
             logger.debug(
                 f"meta_blend: {sub_name} w={sub_weight:.2f} "
                 f"avg_pos={sub_signal.abs().mean():.3f}"
@@ -133,6 +135,7 @@ def generate_meta_blend(
 
         except Exception as e:
             logger.error(f"meta_blend: 子策略 {sub_name} 失敗: {e}")
+            sleeve_signals[sub_name] = 0.0
             # 失敗的子策略信號為 0，權重自動落在其他策略上
 
     # ── Clip to [-1, 1] ──
@@ -149,5 +152,10 @@ def generate_meta_blend(
     if sub_indicators:
         sub_indicators.pop("_weight", None)
         blended.attrs["indicators"] = sub_indicators
+    else:
+        blended.attrs["indicators"] = {}
+
+    # ── 附帶 sleeve 信號（per-sub-strategy signal breakdown） ──
+    blended.attrs["indicators"]["_sleeve_signals"] = sleeve_signals
 
     return blended

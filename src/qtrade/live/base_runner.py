@@ -1176,6 +1176,13 @@ class BaseRunner(ABC):
             elif abs(raw_signal) < 0.01 and abs(current_pct) > 0.01:
                 action = "CLOSE"
 
+            # Serialize sleeve signals if present
+            import json as _json
+            sleeve_str = ""
+            sleeve_sigs = indicators.get("_sleeve_signals")
+            if sleeve_sigs and isinstance(sleeve_sigs, dict):
+                sleeve_str = _json.dumps(sleeve_sigs)
+
             self.trading_db.log_signal(
                 symbol=symbol,
                 signal_value=raw_signal,
@@ -1189,11 +1196,14 @@ class BaseRunner(ABC):
                 current_pct=current_pct,
                 action=action,
                 timestamp=sig.timestamp,
+                sleeve_signals=sleeve_str,
             )
         except Exception as e:
             self._log.debug(f"信號記錄失敗: {e}")
 
-    def _log_trade_to_db(self, symbol: str, trade, reason: str) -> None:
+    def _log_trade_to_db(
+        self, symbol: str, trade, reason: str, sig: object = None
+    ) -> None:
         if not self.trading_db:
             return
         try:
@@ -1202,6 +1212,15 @@ class BaseRunner(ABC):
             if hasattr(trade, "raw") and trade.raw:
                 order_type = trade.raw.get("_order_type", "MARKET")
                 fee_rate = trade.raw.get("_fee_rate", 0.0004)
+
+            # Determine dominant sleeve from signal
+            sleeve = ""
+            if sig is not None and hasattr(sig, "indicators"):
+                sleeve_sigs = sig.indicators.get("_sleeve_signals")
+                if sleeve_sigs and isinstance(sleeve_sigs, dict):
+                    # Dominant sleeve = sub-strategy with largest |signal|
+                    sleeve = max(sleeve_sigs, key=lambda k: abs(sleeve_sigs[k]))
+
             self.trading_db.log_trade(
                 symbol=symbol,
                 side=trade.side,
@@ -1214,6 +1233,7 @@ class BaseRunner(ABC):
                 order_type=order_type,
                 order_id_hash=getattr(trade, "order_id", "")[:8],
                 position_side=getattr(trade, "position_side", ""),
+                sleeve=sleeve,
             )
         except Exception as e:
             self._log.debug(f"  {symbol}: 交易寫入 DB 失敗: {e}")
@@ -1397,7 +1417,7 @@ class BaseRunner(ABC):
 
             if trade:
                 self.trade_count += 1
-                self._log_trade_to_db(symbol, trade, reason)
+                self._log_trade_to_db(symbol, trade, reason, sig=sig)
 
                 try:
                     leverage = self.cfg.futures.leverage if self.cfg.futures else None

@@ -119,13 +119,16 @@ strategy:
           htf_filter_enabled: true
 
   symbol_overrides:
-    # ── BTC: 100% tsmom_carry_v2 btc_enhanced (720h, 30/100) + HTF daily-dominant ──
+    # ── BTC: 80% tsmom_carry_v2 btc_enhanced + 20% lsr_contrarian satellite ──
+    # 2026-03-25: Added LSR Contrarian as diversification sleeve
+    #   TSMOM SR=2.49, LSR SR=1.52, corr=0.256 → genuine diversification
+    #   Long-only satellite: net exp +0.645%, 55.6 tr/yr
     # Academic support: BTC has longer trend cycles due to institutional adoption
     # Ablation evidence: 720h lookback → +0.38 per-sym SR (1.64→2.02)
     BTCUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
-          weight: 1.0
+          weight: 0.80
           params:
             combination_mode: "confirmatory"
             tier: "btc_enhanced"
@@ -150,6 +153,30 @@ strategy:
             htf_4h_ema_slow: 100
             htf_no_confirm: 0.7
             htf_4h_only_confirm: 0.3
+        - name: "lsr_contrarian"
+          weight: 0.20
+          params:
+            # Signal (v3: EW pctrank)
+            lsr_type: "lsr"
+            lsr_window: 168
+            use_ew_pctrank: true
+            ew_halflife: 84
+            entry_pctile: 0.85
+            # Regime gate
+            adx_gate_enabled: true
+            adx_period: 14
+            adx_threshold: 25.0
+            # Entry (persist + cooldown)
+            persist_bars: 2
+            cooldown_bars: 24
+            # Exit (midpoint TP)
+            tp_mode: "midpoint"
+            sl_atr_mult: 3.0
+            sl_atr_lookback: 14
+            max_hold_bars: 168
+            # Role
+            long_only: true
+            vol_scale_enabled: false
 
     # ── ETH: inherits default (was eth_enhanced, but 2026-03-04 deep IC review
     #    showed signal correlation = 1.000 vs default — w_tsmom/w_oi/w_fr/w_basis
@@ -220,7 +247,7 @@ strategy:
     er_weak_threshold: 0.25      # ER >= 0.25 = weak trend
     scale_trending: 1.0          # full signal
     scale_weak: 0.5              # half signal
-    scale_no_trend: 0.0          # block new entries
+    scale_no_trend: 0.3          # 2026-03-25: 0.0→0.3, ablation B best (SR +10.7%, MDD improved)
 
 backtest:
   initial_cash: 10000

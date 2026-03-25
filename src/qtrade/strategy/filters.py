@@ -1372,15 +1372,18 @@ def compute_portfolio_regime_gate(
     er_lookback: int = 20,
     er_trend_threshold: float = 0.40,
     er_weak_threshold: float = 0.25,
+    scale_trending: float = 1.0,
+    scale_weak: float = 0.5,
+    scale_no_trend: float = 0.0,
 ) -> pd.Series:
     """
     Compute a portfolio-wide regime gate from a reference asset (e.g. BTC).
 
     Uses ADX (trend strength) and Efficiency Ratio (trending vs mean-reverting)
     to produce a scaling factor:
-        1.0 — trending market (ADX >= adx_trend AND ER >= er_trend)
-        0.5 — weak/ambiguous trend (either metric above its weak threshold)
-        0.0 — no trend (both below weak thresholds, block new entries)
+        scale_trending — trending market (ADX >= adx_trend AND ER >= er_trend)
+        scale_weak     — weak/ambiguous trend (either metric above its weak threshold)
+        scale_no_trend — no trend (both below weak thresholds)
 
     The gate is computed on the reference asset's 1h data directly. ADX measures
     absolute trend strength; ER measures price path efficiency (direct move /
@@ -1395,9 +1398,12 @@ def compute_portfolio_regime_gate(
         er_lookback: Efficiency Ratio lookback period
         er_trend_threshold: ER level for "trending" classification
         er_weak_threshold: ER level for "weak trend" classification
+        scale_trending: scaling factor for trending regime (default 1.0)
+        scale_weak: scaling factor for weak trend regime (default 0.5)
+        scale_no_trend: scaling factor for no-trend regime (default 0.0)
 
     Returns:
-        Series of scaling factors (1.0, 0.5, or 0.0) indexed like df_reference
+        Series of scaling factors indexed like df_reference
     """
     adx_df = calculate_adx(df_reference, period=adx_period)
     adx = adx_df["ADX"]
@@ -1410,8 +1416,8 @@ def compute_portfolio_regime_gate(
     trending = (adx >= adx_trend_threshold) & (er >= er_trend_threshold)
     weak = (adx >= adx_weak_threshold) | (er >= er_weak_threshold)
 
-    scale = pd.Series(0.0, index=df_reference.index)
-    scale[weak] = 0.5
-    scale[trending] = 1.0
+    scale = pd.Series(scale_no_trend, index=df_reference.index)
+    scale[weak] = scale_weak
+    scale[trending] = scale_trending
 
     return scale

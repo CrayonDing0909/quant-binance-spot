@@ -43,7 +43,7 @@ class TradingDatabase:
     - 防腐蝕（WAL mode + 原子寫入）
     """
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, db_path: Path | str):
         self.db_path = Path(db_path)
@@ -134,6 +134,25 @@ class TradingDatabase:
                     (self.SCHEMA_VERSION,),
                 )
 
+            # ── Schema migrations ──
+            cur = conn.execute("SELECT version FROM schema_version LIMIT 1")
+            current_version = cur.fetchone()[0]
+
+            if current_version < 2:
+                # v2: Add sleeve tracking columns
+                try:
+                    conn.execute("ALTER TABLE signals ADD COLUMN sleeve_signals TEXT DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+                try:
+                    conn.execute("ALTER TABLE trades ADD COLUMN sleeve TEXT DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+                conn.execute(
+                    "UPDATE schema_version SET version = ?", (2,)
+                )
+                logger.info("📦 DB migrated to schema v2 (sleeve tracking)")
+
             conn.commit()
             logger.info(f"📦 交易資料庫已就緒: {self.db_path}")
         except Exception as e:
@@ -160,9 +179,13 @@ class TradingDatabase:
         order_id_hash: str = "",
         position_side: str = "",
         timestamp: Optional[str] = None,
+        sleeve: str = "",
     ) -> int:
         """
         記錄一筆交易
+
+        Args:
+            sleeve: dominant sub-strategy name (e.g. "tsmom_carry_v2")
 
         Returns:
             新增記錄的 id
@@ -176,17 +199,17 @@ class TradingDatabase:
                 """
                 INSERT INTO trades
                     (timestamp, symbol, side, position_side, qty, price, value,
-                     fee, fee_rate, pnl, reason, order_type, order_id_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     fee, fee_rate, pnl, reason, order_type, order_id_hash, sleeve)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (ts, symbol, side, position_side, qty, price, value,
-                 fee, fee_rate, pnl, reason, order_type, order_id_hash),
+                 fee, fee_rate, pnl, reason, order_type, order_id_hash, sleeve),
             )
             conn.commit()
             trade_id = cur.lastrowid
             logger.debug(
                 f"📝 DB: trade #{trade_id} {side} {symbol} "
-                f"{qty:.6f} @ ${price:,.2f} [{order_type}]"
+                f"{qty:.6f} @ ${price:,.2f} [{order_type}] sleeve={sleeve}"
             )
             return trade_id
         finally:
@@ -207,9 +230,14 @@ class TradingDatabase:
         current_pct: Optional[float] = None,
         action: str = "HOLD",
         timestamp: Optional[str] = None,
+        sleeve_signals: str = "",
     ) -> int:
         """
         記錄一次信號快照
+
+        Args:
+            sleeve_signals: JSON string of per-sub-strategy signals
+                e.g. '{"tsmom_carry_v2": 0.45, "lsr_contrarian": 0.0}'
 
         Returns:
             新增記錄的 id
@@ -222,11 +250,13 @@ class TradingDatabase:
                 """
                 INSERT INTO signals
                     (timestamp, symbol, signal_value, price, rsi, adx, atr,
-                     plus_di, minus_di, funding_rate, target_pct, current_pct, action)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     plus_di, minus_di, funding_rate, target_pct, current_pct,
+                     action, sleeve_signals)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (ts, symbol, signal_value, price, rsi, adx, atr,
-                 plus_di, minus_di, funding_rate, target_pct, current_pct, action),
+                 plus_di, minus_di, funding_rate, target_pct, current_pct,
+                 action, sleeve_signals),
             )
             conn.commit()
             return cur.lastrowid

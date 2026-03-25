@@ -541,6 +541,9 @@ def run_symbol_backtest(
                 er_lookback=regime_gate_cfg.get("efficiency_ratio_lookback", 20),
                 er_trend_threshold=regime_gate_cfg.get("er_trend_threshold", 0.40),
                 er_weak_threshold=regime_gate_cfg.get("er_weak_threshold", 0.25),
+                scale_trending=regime_gate_cfg.get("scale_trending", 1.0),
+                scale_weak=regime_gate_cfg.get("scale_weak", 0.5),
+                scale_no_trend=regime_gate_cfg.get("scale_no_trend", 0.0),
             )
             gate_aligned = gate.reindex(pos.index, method="ffill").fillna(1.0)
             pos = pos * gate_aligned
