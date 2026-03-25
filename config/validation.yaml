@@ -191,7 +191,7 @@ thresholds:
 #   - 更新 cumulative_n_trials = Σ directions[*].estimated_variants
 trial_registry:
   # 累積策略/變體測試數量 — DSR 實際使用此值
-  cumulative_n_trials: 2463
+  cumulative_n_trials: 2543
 
   # 各研究方向明細（供審計追溯）
   directions:
@@ -335,12 +335,47 @@ trial_registry:
       status: "FAIL"
       date: "2026-02-27"
 
+    - id: "#23_tick_avg_trade_size"
+      description: "Tick avg_trade_size filter/overlay ablation"
+      estimated_variants: 40
+      status: "WEAK_GO"
+      date: "2026-03-05"
+
+    - id: "#24_forced_deleveraging_reversal"
+      description: "Forced deleveraging reversal satellite (event map × HTF dependency × entry framing)"
+      estimated_variants: 40
+      status: "SHELVED"
+      date: "2026-03-10"
+
     # ── 新方向加在此處 ──
     # - id: "#XX_new_direction"
     #   description: "..."
     #   estimated_variants: N
     #   status: "FAIL/GO/KEEP_BASELINE"
     #   date: "YYYY-MM-DD"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Factor Orthogonality（因子正交性審計）
+# ══════════════════════════════════════════════════════════════════════════════
+# 用於偵測因子冗餘（同一因子穿不同衣服）。
+# Owner: Quant Researcher（定義門檻） → Alpha Researcher（EDA pre-screen）
+#
+# 歷史教訓：OI/On-chain/Macro/VPIN 4 個 filter 都通過傳統 G1-G6 gates，
+# 但都是 HTF 的冗餘版本（regime quality gate）。如果當時有 R² 檢查，
+# 可以在 EDA 階段就 kill 冗餘方向，省下 ~16h 開發者時間。
+factor_orthogonality:
+  enabled: true
+  # R² 門檻：候選信號被既有因子解釋的比例
+  # > 此值 → 判定為冗餘（不 handoff）
+  r_squared_threshold: 0.50
+  # PCA 解釋變異門檻
+  pca_variance_threshold: 0.95
+  # PC loading 門檻：候選在某 PC 上的 loading > 此值 → 冗餘
+  loading_threshold: 0.70
+  # 冗餘叢集門檻：信號間 |corr| > 此值歸為同一叢集
+  cluster_corr_threshold: 0.30
+  # Regime 集中度門檻：單一 regime 貢獻 > 此值 → regime 依賴
+  regime_concentration_threshold: 0.70
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Data Embargo（研究數據隔離 — 確保真 OOS）

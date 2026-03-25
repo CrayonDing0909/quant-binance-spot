@@ -637,6 +637,64 @@ def load_ofi(
         return None
 
 
+def load_avg_trade_size(
+    symbol: str,
+    data_dir: Path = _BASE_DIR,
+) -> Optional[pd.Series]:
+    """
+    載入 avg_trade_size (= total_volume / num_trades) 從 hourly aggTrades metrics
+
+    avg_trade_size 反映鯨魚交易行為：
+      - 高 avg_trade_size → 大戶在分銷 → 未來收益偏低 (IC=-0.030)
+      - 低 avg_trade_size → 散戶主導 → 正常
+      - corr(TSMOM)=0.04, corr(ATR)=0.25 — 幾乎完全正交
+
+    Returns:
+        avg_trade_size Series (hourly)，或 None
+    """
+    hourly = load_hourly_metrics(symbol, data_dir)
+    if hourly is None:
+        return None
+
+    if "total_volume" not in hourly.columns or "num_trades" not in hourly.columns:
+        logger.warning(f"⚠️  {symbol}: hourly metrics 缺少 total_volume 或 num_trades")
+        return None
+
+    ats = hourly["total_volume"] / hourly["num_trades"].replace(0, np.nan)
+    ats.name = "avg_trade_size"
+    return ats
+
+
+def align_avg_trade_size_to_klines(
+    ats: pd.Series | None,
+    kline_index: pd.DatetimeIndex,
+    max_ffill_bars: int = 4,
+) -> pd.Series | None:
+    """
+    將 avg_trade_size 對齊到 K 線時間軸
+
+    注意：avg_trade_size 是從 aggTrades 聚合的外部數據（有獨立時間戳），
+    reindex+ffill 不涉及 intra-bar look-ahead 問題。
+    """
+    if ats is None or ats.empty:
+        return None
+
+    s = ats.copy()
+    if kline_index.tz is None and s.index.tz is not None:
+        s.index = s.index.tz_localize(None)
+    elif kline_index.tz is not None and s.index.tz is None:
+        s.index = s.index.tz_localize(kline_index.tz)
+
+    aligned = s.reindex(kline_index, method="ffill", limit=max_ffill_bars)
+
+    n_missing = aligned.isna().sum()
+    if n_missing > 0:
+        coverage = (len(aligned) - n_missing) / len(aligned) * 100
+        logger.info(f"📊 avg_trade_size alignment: {coverage:.1f}% coverage")
+
+    return aligned
+
+
 def align_vpin_to_klines(
     vpin: pd.Series | None,
     kline_index: pd.DatetimeIndex,
