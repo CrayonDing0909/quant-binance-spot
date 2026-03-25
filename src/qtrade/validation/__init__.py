@@ -72,9 +72,11 @@ from .cross_asset import (
 from .prado_methods import (
     deflated_sharpe_ratio,
     combinatorial_purged_cv,
+    regime_stratified_cpcv,
     DeflatedSharpeResult,
     PBOResult,
     CPCVResult,
+    RegimeStratifiedCPCVResult,
     run_all_advanced_validation,
 )
 
@@ -107,6 +109,23 @@ from .red_flags import (
     check_red_flags,
     print_red_flags,
     RedFlag,
+)
+
+# Factor Orthogonality Analysis
+from .factor_orthogonality import (
+    compute_signal_correlation_matrix,
+    pca_decomposition,
+    marginal_information_ratio,
+    check_latent_factor_loading,
+    compute_redundancy_clusters,
+    run_factor_geometry_audit,
+    print_factor_geometry_report,
+    print_marginal_info_result,
+    PCAResult,
+    MarginalInfoResult,
+    LatentLoadingResult,
+    RedundancyCluster,
+    FactorGeometryReport,
 )
 
 # Data Embargo (OOS Enforcement)
@@ -159,6 +178,8 @@ __all__ = [
     "DeflatedSharpeResult",
     "PBOResult",
     "CPCVResult",
+    "RegimeStratifiedCPCVResult",
+    "regime_stratified_cpcv",
     "run_all_advanced_validation",
     # Consistency (Live vs Backtest)
     "ConsistencyValidator",
@@ -179,6 +200,20 @@ __all__ = [
     "check_red_flags",
     "print_red_flags",
     "RedFlag",
+    # Factor Orthogonality
+    "compute_signal_correlation_matrix",
+    "pca_decomposition",
+    "marginal_information_ratio",
+    "check_latent_factor_loading",
+    "compute_redundancy_clusters",
+    "run_factor_geometry_audit",
+    "print_factor_geometry_report",
+    "print_marginal_info_result",
+    "PCAResult",
+    "MarginalInfoResult",
+    "LatentLoadingResult",
+    "RedundancyCluster",
+    "FactorGeometryReport",
     # Data Embargo
     "EmbargoConfig",
     "TemporalEmbargoConfig",

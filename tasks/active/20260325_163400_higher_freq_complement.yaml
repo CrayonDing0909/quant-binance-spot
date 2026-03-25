@@ -1,0 +1,144 @@
+schema_version: 1
+task_id: research_20260325_163400_higher_freq_complement
+goal: "Research higher-frequency complement strategies to provide faster feedback loop and income during non-trending regimes"
+mode: research_orchestration_mvp
+created_at: "2026-03-25T08:34:00Z"
+updated_at: "2026-03-25T08:34:00Z"
+current_stage: alpha_research
+status: running
+owner_agent: orchestrator
+confidence_level: medium
+review_required: false
+review_reason: null
+auto_advance: true
+stage_started_at: "2026-03-25T08:34:00Z"
+last_heartbeat_at: "2026-03-25T08:34:00Z"
+heartbeat:
+  interval_minutes: 60
+  timeout_minutes: 180
+code_audit:
+  base_commit: null
+  head_commit: null
+  touched_files:
+    - tasks/active/20260325_163400_higher_freq_complement.yaml
+  generated_artifacts: []
+  tests_run: []
+  config_changed: false
+  prod_impact: none
+rollback:
+  type: research_only
+  target: null
+  steps: []
+  verified: false
+approval:
+  required: false
+  stage: null
+  reason: null
+  requested_at: null
+  resolved_at: null
+required_artifacts:
+  - complement_thesis_brief
+  - feasibility_eda
+artifacts:
+  complement_thesis_brief: "inline — see decision.hypothesis"
+  notebook: null
+  proposal: null
+  feasibility_eda: null
+
+decision:
+  gap: "Slow feedback loop — 1h trend strategy yields ~2-5 trades/week, insufficient for rapid iteration; bleeding during chop regimes"
+  archetype: "mean_reversion + event_driven (higher frequency complement)"
+  integration_mode: "standalone_satellite"
+  success_criteria:
+    - "Post-cost SR > 0.5 at primary timeframe"
+    - "corr < 0.3 with production TSMOM signal"
+    - "Trades/year > 200 per symbol for meaningful feedback"
+    - "Gross expectancy per trade > 0 (MR Iron Rule)"
+    - "Cost stress 2x still positive"
+  kill_criteria:
+    - "Gross PnL/trade < 0 before costs (MR archetype kill)"
+    - "corr > 0.5 with production (no diversification value)"
+    - "Post-cost SR < 0 at 1x cost (net alpha negative)"
+    - "All candidate directions FAIL → pivot to pair spread research"
+  hypothesis: |
+    Production TSMOM bleeds during chop regimes and provides slow feedback (~2-5 trades/week).
+    A higher-frequency complement strategy targeting DIFFERENT market behavior (mean-reversion,
+    liquidity sweeps, event-driven reversals) at 15m-1h timeframe can:
+    (a) provide 10-20x more trades for faster learning,
+    (b) generate income during non-trending regimes,
+    (c) improve portfolio diversification via low/negative correlation with TSMOM.
+
+    Three candidate directions to evaluate:
+    1. mean_revert_liquidity (15m liquidity sweep MR) — CODE EXISTS, never formally tested
+    2. tsmom_mr_composite (1h TSMOM+MR+Reversal blend) — CODE EXISTS, never tested
+    3. Crypto pair spread reversion (BTC/ETH etc.) — NOT IMPLEMENTED, genuinely new alpha
+
+    Phase 0 parallel action: Implement LSR Contrarian satellite (already HANDOFF READY, separate task).
+
+  data_requirements:
+    - "15m klines for 6 production symbols (BTCUSDT, ETHUSDT, SOLUSDT, DOGEUSDT, AVAXUSDT, LINKUSDT)"
+    - "1h klines (already available)"
+    - "Funding rate data (already available)"
+  coverage_gate: ">= 70% for 15m data, target >= 90%"
+  eda_findings:
+    - "15m MR Liquidity Sweep: FAIL — gross expectancy negative across all 3 symbols (BTC -0.002, ETH -0.002, SOL -0.004). MR Iron Rule violated. Win rate 26-29% (expected 55-70%). Crypto positive skew structurally kills absolute price MR at 15m. Diversification confirmed (corr -0.05 to -0.11) but alpha deeply negative."
+    - "15m TSMOM Rescaled: FAIL — ~15K trades/yr per symbol (43/day, massive cost drag). Avg SR=0.262 (marginal). Correlation with prod 0.63-0.82 (no diversification). BTC negative SR. Essentially same signal as 1h but noisier and more expensive."
+    - "Crypto Pair Spread (BTC/ETH, BTC/SOL, ETH/SOL): WEAK GO — IC(z_168h→24h) = +0.035 to +0.057 (all 3 pairs). Positive gross expectancy on all z-score variants (z1.5/z2.0/z2.5). BTC/ETH z2.0: 234 trades/yr, WR=38%, gross_exp=+0.007. CAVEAT: Hurst=0.97 (long-term trending), but short-term z-score deviations DO mean-revert around rolling window. Needs proper cost-adjusted hedged backtest."
+  handoff_recommendation: "pair_spread_to_quant_developer"
+  final_outcome: "2 directions FAIL, 1 direction WEAK GO (pair spread). LSR Contrarian satellite implementation parallel track."
+
+blockers: []
+
+notes:
+  - "Portfolio Strategist diagnosis: primary weakness is chop-regime bleed + slow feedback, not signal quality issue"
+  - "Complementary Strategy Design skill: sideways chop → MR archetype, standalone satellite mode"
+  - "Archetype Classification: MR at 15m needs SR > 2.0 to cover 4x cost; liquidity sweep may have lower turnover than generic MR"
+  - "mean_revert_liquidity.py already implements 15m liquidity sweep with explicit TP/SL — fastest path to test"
+  - "tsmom_mr_composite.py implements blended approach — lower risk but fewer additional trades"
+  - "BB MR FAILED at 1h (8/8 negative gross PnL) — but liquidity sweep targets specific events, not generic reversion"
+  - "7 rounds of 1h microstructure research all FAILED — sub-hourly may have different dynamics"
+  - "User priority: faster feedback > maximum alpha. Acceptable tradeoff: lower SR if more trades"
+
+next_recommended_action: |
+  Quant Developer → implement pair spread strategy:
+  1. Build PairSpreadStrategy with hedged position sizing and proper cost modeling
+  2. Full cost-adjusted backtest (4 legs per trade: open A, open B, close A, close B)
+  3. Year-by-year stability check
+  4. Walk-forward validation
+  5. Correlation analysis with production TSMOM at portfolio level
+  Parallel: Implement LSR Contrarian satellite (separate task, HANDOFF READY)
+
+final_packet:
+  current_status: "alpha_research_complete — 3 directions tested, 1 WEAK GO"
+  recommendation: |
+    PAIR SPREAD is the only viable higher-frequency direction.
+    BTC/ETH, BTC/SOL, ETH/SOL log-spread z-score shows IC=0.035-0.057
+    and positive gross expectancy across all pairs/thresholds tested.
+    ~60-350 trades/yr depending on pair and threshold (vs ~50 for current prod).
+    Needs proper hedged-cost backtest to confirm net viability.
+
+    LSR Contrarian satellite (separate task) adds ~105 trades/yr of uncorrelated alpha.
+    Combined portfolio: prod TSMOM + LSR Contrarian + pair spread would provide
+    significantly faster feedback and multi-source diversification.
+  evidence_tier: "proxy-valid / state-invalid"
+  blocker_summary: "Pair spread needs proper implementation with hedged cost model. No implementation exists yet."
+  handoff_decision: "handoff_to_quant_developer (pair spread implementation + LSR Contrarian from separate task)"
+  review_summary: |
+    15m MR Liquidity Sweep: FAIL (gross exp negative, MR Iron Rule violated)
+    15m TSMOM Rescaled: FAIL (no diversification, corr 0.63-0.82, massive cost)
+    Pair Spread z-score: WEAK GO (IC>0.03, positive gross exp, needs cost-adjusted backtest)
+  recommended_agent: "quant-developer"
+  primary_files:
+    - tasks/active/20260325_163400_higher_freq_complement.yaml
+    - scripts/research/pair_spread_eda.py
+    - scripts/research/mr_liquidity_15m_feasibility.py
+    - scripts/research/tsmom_15m_feasibility.py
+    - config/research_mr_liquidity_15m.yaml
+    - config/research_tsmom_15m.yaml
+  key_decision: "Pair spread is the only viable higher-frequency complement. MR and fast TSMOM both FAIL."
+  open_risks:
+    - "Hurst=0.97 means spread trends long-term. Z-score trades SHORT-TERM deviations around rolling mean, but regime shifts could invalidate this."
+    - "Win rate 32-38% is low for MR (expected 55-70%). May indicate edge is in tail wins, not consistency."
+    - "Cost modeling incomplete: 4 legs per trade = ~32 bps round trip. Gross exp ~0.7% per trade leaves thin margin."
+    - "Pair spread requires simultaneous long/short execution. Implementation complexity higher than single-asset strategies."
+    - "Funding rate differential between pairs adds carry cost/income that is not yet modeled."

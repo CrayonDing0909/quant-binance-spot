@@ -104,6 +104,22 @@ Rollback L2: prod_candidate_htf_lsr.yaml (SR=3.77)
 | 每日報表 | `PYTHONPATH=src python scripts/daily_report.py -c config/prod_candidate_simplified.yaml` |
 | 交易查詢 | `PYTHONPATH=src python scripts/query_db.py -c config/prod_candidate_simplified.yaml summary` |
 | Alpha Decay | `PYTHONPATH=src python scripts/monitor_alpha_decay.py -c config/prod_candidate_simplified.yaml` |
+| Signal Replay | `PYTHONPATH=src python scripts/verify_signal_replay.py -c config/prod_candidate_simplified.yaml --days 1` |
+
+### Signal Replay Cron 自動化
+
+`scripts/verify_signal_replay.py` 每天 UTC 01:00 自動比對回測信號與 SQLite 實盤記錄。
+
+Oracle Cloud crontab 設定：
+
+```bash
+# 每天 01:00 UTC 執行信號重播驗證
+0 1 * * * cd ~/quant-binance-spot && source .venv/bin/activate && PYTHONPATH=src python scripts/verify_signal_replay.py -c config/prod_candidate_simplified.yaml --days 1 --notify --quiet >> ~/logs/cron_signal_replay.log 2>&1
+```
+
+> PASS = 0 方向性錯誤 + match_rate > 85%
+> WARN/FAIL 時自動發送 Telegram 通知
+> 日誌：`~/logs/cron_signal_replay.log`
 
 ### Alpha Decay Cron 自動化
 

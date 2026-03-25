@@ -23,6 +23,7 @@ Hyperopt 參數優化示例腳本
     - risk_adjusted: 複合目標（綜合多個指標）
 """
 import argparse
+import copy
 import sys
 from pathlib import Path
 
@@ -34,13 +35,15 @@ from qtrade.backtest.hyperopt_engine import (
     ParamSpace,
     RSI_ADX_ATR_PARAM_SPACE,
 )
+from qtrade.config import load_config
 from qtrade.data.storage import find_klines_file
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Hyperopt Parameter Optimization")
-    parser.add_argument("--symbol", default="BTCUSDT", help="交易對")
-    parser.add_argument("--strategy", default="rsi_adx_atr", help="策略名稱")
+    parser.add_argument("-c", "--config", help="可選：使用現有 YAML config 作為 shared backtest 基礎配置")
+    parser.add_argument("--symbol", help="交易對（未提供時：config 第一個 symbol，或預設 BTCUSDT）")
+    parser.add_argument("--strategy", help="策略名稱（legacy 模式未提供時預設 rsi_adx_atr）")
     parser.add_argument("--trials", type=int, default=100, help="優化迭代次數")
     parser.add_argument("--objective", default="sharpe_ratio", 
                        choices=["sharpe_ratio", "sortino_ratio", "total_return", 
@@ -48,10 +51,10 @@ def parse_args():
                                "calmar_ratio", "risk_adjusted"],
                        help="優化目標")
     parser.add_argument("--n-jobs", type=int, default=1, help="並行數（-1=所有CPU）")
-    parser.add_argument("--market-type", default="spot", choices=["spot", "futures"])
-    parser.add_argument("--direction", default="both", 
+    parser.add_argument("--market-type", choices=["spot", "futures"])
+    parser.add_argument("--direction",
                        choices=["both", "long_only", "short_only"])
-    parser.add_argument("--interval", default="1h", help="K 線週期")
+    parser.add_argument("--interval", help="K 線週期（legacy 模式未提供時預設 1h）")
     parser.add_argument("--no-plot", action="store_true", help="不顯示圖表")
     parser.add_argument("--seed", type=int, default=42, help="隨機種子")
     return parser.parse_args()
@@ -59,41 +62,86 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    cfg_obj = load_config(args.config) if args.config else None
+    if cfg_obj is not None:
+        symbol = args.symbol or cfg_obj.market.symbols[0]
+        strategy_name = cfg_obj.strategy.name
+        market_type = cfg_obj.market_type_str
+        direction = cfg_obj.direction
+        interval = cfg_obj.market.interval
+        base_cfg = copy.deepcopy(cfg_obj.to_backtest_dict(symbol=symbol))
+        data_dir = cfg_obj.data_dir
+        data_path = cfg_obj.resolve_kline_path(symbol)
+    else:
+        symbol = args.symbol or "BTCUSDT"
+        strategy_name = args.strategy or "rsi_adx_atr"
+        market_type = args.market_type or "spot"
+        direction = args.direction or "both"
+        interval = args.interval or "1h"
+        data_dir = Path(__file__).parent.parent / "data"
+        base_cfg = {
+            "strategy_name": strategy_name,
+            "strategy_params": {},
+            "initial_cash": 10000,
+            "fee_bps": 10,
+            "slippage_bps": 5,
+            "interval": interval,
+            "market_type": market_type,
+            "direction": direction,
+            "trade_on": "next_open",
+            "validate_data": True,
+            "clean_data_before": True,
+            "start": None,
+            "end": None,
+            "position_sizing": {
+                "method": "fixed",
+                "position_pct": 1.0,
+                "kelly_fraction": 0.25,
+                "target_volatility": 0.15,
+                "vol_lookback": 168,
+            },
+            "funding_rate": {
+                "enabled": False,
+                "default_rate_8h": 0.0001,
+                "use_historical": True,
+            },
+            "slippage_model": {
+                "enabled": False,
+                "base_bps": 2.0,
+                "impact_coefficient": 0.1,
+                "impact_power": 0.5,
+                "adv_lookback": 20,
+                "participation_rate": 0.10,
+            },
+        }
+        data_path = find_klines_file(data_dir, symbol, interval)
     
     print("=" * 60)
     print("🎯 Hyperopt Parameter Optimization")
     print("=" * 60)
-    print(f"Symbol: {args.symbol}")
-    print(f"Strategy: {args.strategy}")
+    print(f"Symbol: {symbol}")
+    print(f"Strategy: {strategy_name}")
     print(f"Objective: {args.objective}")
     print(f"Trials: {args.trials}")
     print(f"Parallel Jobs: {args.n_jobs}")
+    if args.config:
+        print(f"Config: {args.config}")
     print("=" * 60)
     
-    # ── 配置 ──
-    base_cfg = {
-        "initial_cash": 10000,
-        "fee_bps": 10,      # 0.1%
-        "slippage_bps": 5,  # 0.05%
-        "interval": args.interval,
-        "market_type": args.market_type,
-        "direction": args.direction,
-        "strategy_params": {},  # 會被 Hyperopt 覆蓋
-    }
-    
-    # ── 尋找數據文件 ──
-    data_dir = Path(__file__).parent.parent / "data"
-    data_path = find_klines_file(data_dir, args.symbol, args.interval)
-    
     if data_path is None:
-        print(f"❌ 找不到 {args.symbol} {args.interval} 的數據文件")
-        print(f"   請先運行: python scripts/download_data.py --symbol {args.symbol}")
+        print(f"❌ 找不到 {symbol} {interval} 的數據文件")
+        print(f"   請先準備對應的 K 線資料或提供正確的 config")
+        sys.exit(1)
+
+    if not data_path.exists():
+        print(f"❌ 數據文件不存在: {data_path}")
         sys.exit(1)
     
     print(f"📊 數據文件: {data_path}")
     
     # ── 參數空間 ──
-    if args.strategy == "rsi_adx_atr":
+    if strategy_name == "rsi_adx_atr":
         param_space = RSI_ADX_ATR_PARAM_SPACE
     else:
         # 自定義參數空間示例
@@ -105,14 +153,15 @@ def main():
     print(f"🔧 參數空間: {list(param_space.keys())}")
     
     # ── 創建引擎並優化 ──
-    engine = HyperoptEngine(
-        strategy_name=args.strategy,
+    engine = HyperoptEngine.from_single_symbol(
+        strategy_name=strategy_name,
         data_path=data_path,
         base_cfg=base_cfg,
         param_space=param_space,
-        symbol=args.symbol,
-        market_type=args.market_type,
-        direction=args.direction,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        data_dir=data_dir,
     )
     
     result = engine.optimize(
@@ -154,11 +203,11 @@ def main():
     
     # 保存最佳參數
     import json
-    best_params_file = output_dir / f"{args.symbol}_{args.strategy}_best_params.json"
+    best_params_file = output_dir / f"{symbol}_{strategy_name}_best_params.json"
     with open(best_params_file, "w") as f:
         json.dump({
-            "symbol": args.symbol,
-            "strategy": args.strategy,
+            "symbol": symbol,
+            "strategy": strategy_name,
             "objective": args.objective,
             "best_value": result.best_value,
             "best_params": result.best_params,
@@ -167,7 +216,7 @@ def main():
     print(f"\n✅ 最佳參數已保存: {best_params_file}")
     
     # 保存所有試驗結果
-    trials_file = output_dir / f"{args.symbol}_{args.strategy}_trials.csv"
+    trials_file = output_dir / f"{symbol}_{strategy_name}_trials.csv"
     result.all_trials.to_csv(trials_file, index=False)
     print(f"✅ 試驗結果已保存: {trials_file}")
     

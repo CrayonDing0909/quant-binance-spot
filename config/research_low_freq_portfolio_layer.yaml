@@ -1,0 +1,36 @@
+research:
+  name: "low_freq_portfolio_layer"
+  baseline_config: "config/prod_candidate_simplified.yaml"
+  output_subdir: "low_freq_portfolio_layer"
+
+comparison:
+  include_overlay_matched: true
+  include_naked: true
+
+experiments:
+  - name: "risk_regime_only"
+    description: "Use only the risk-regime scalar as a portfolio layer to reduce chop damage without adding momentum rotation."
+    portfolio_layer:
+      strategy_name: "low_freq_portfolio"
+      params:
+        use_risk_regime: true
+        use_momentum_rotation: false
+        use_onchain: false
+        adx_period: 14
+        vol_lookback: 20
+        vol_percentile_window: 252
+
+  - name: "risk_regime_plus_momentum_conservative"
+    description: "Sensitivity check: add slow momentum rotation with a small positive threshold to further de-risk weak environments."
+    portfolio_layer:
+      strategy_name: "low_freq_portfolio"
+      params:
+        use_risk_regime: true
+        use_momentum_rotation: true
+        use_onchain: false
+        adx_period: 14
+        vol_lookback: 20
+        vol_percentile_window: 252
+        momentum_lookback: 720
+        momentum_short: 168
+        momentum_threshold: 0.01

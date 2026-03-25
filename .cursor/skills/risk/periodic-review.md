@@ -38,6 +38,16 @@ PYTHONPATH=src python scripts/trade_review.py \
 # 5. Backtest↔Live consistency replay (run for each live strategy)
 PYTHONPATH=src python scripts/validate_live_consistency.py \
   -c config/prod_candidate_simplified.yaml -v
+
+# 6. Signal Replay Verification (automated via cron — check latest report)
+#    Cron: daily UTC 01:00, see devops.md
+#    Reports: reports/signal_replay/ (optional --output)
+#    If manual check needed:
+PYTHONPATH=src python scripts/verify_signal_replay.py \
+  -c config/prod_candidate_simplified.yaml --days 7
+# PASS: 0 direction mismatches, match_rate > 85%
+# WARN: 1-2 direction mismatches or match_rate 70-85% → investigate data freshness
+# FAIL: ≥3 direction mismatches or match_rate < 70% → escalate to Developer immediately
 ```
 
 ### Step 6: Live vs Backtest Drift Check (after 14+ days of live data)
@@ -65,6 +75,8 @@ If deviation exceeds threshold, escalate per governance doc:
 | Signal flip frequency | Abnormally high | Possible signal noise increase |
 | Consistency check FAIL | Any FAIL item | Notify Developer; overlay inconsistency needs immediate fix |
 | consistency_rate | < 95% | Mark WARNING, notify Researcher for IC analysis |
+| Signal Replay match rate | < 70% or >=3 dir_mismatch | FAIL: escalate to Developer; code bug likely |
+| Signal Replay match rate | 70-85% | WARN: check data freshness; may be stale parquet |
 | Trade review live/backtest deviation | live SR / backtest SR < 0.30 | Trigger strategy review (see STRATEGY_PORTFOLIO_GOVERNANCE.md R2) |
 | Consecutive losses | > 5 trades and not consolidation | Mark WARNING, trigger alpha decay scan |
 

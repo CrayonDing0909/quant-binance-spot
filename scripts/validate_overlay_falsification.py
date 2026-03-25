@@ -488,6 +488,7 @@ def test_T3_delay_stress(
         from qtrade.backtest.run_backtest import (
             clip_positions_by_direction, to_vbt_direction,
             _apply_date_filter, _bps_to_pct, validate_backtest_config,
+            safe_portfolio_from_orders,
         )
         from qtrade.data.quality import clean_data
         from qtrade.backtest.metrics import benchmark_buy_and_hold
@@ -498,8 +499,6 @@ def test_T3_delay_stress(
         from qtrade.data.funding_rate import (
             load_funding_rates, get_funding_rate_path, align_funding_to_klines,
         )
-        import vectorbt as vbt
-
         # Apply direction clip
         mt = bt_cfg.get("market_type", "futures")
         dr = bt_cfg.get("direction", "both")
@@ -513,22 +512,19 @@ def test_T3_delay_stress(
             df_filtered, pos_final_filtered, start_str, end_str,
         )
 
-        close = df_filtered["close"]
-        open_ = df_filtered["open"]
         fee = _bps_to_pct(bt_cfg["fee_bps"])
         slippage = _bps_to_pct(bt_cfg["slippage_bps"])
         vbt_direction = to_vbt_direction(dr)
 
-        pf = vbt.Portfolio.from_orders(
-            close=close,
-            size=pos_final_filtered,
-            size_type="targetpercent",
-            price=open_,
-            fees=fee,
+        pf = safe_portfolio_from_orders(
+            df=df_filtered,
+            pos=pos_final_filtered,
+            fee=fee,
             slippage=slippage,
             init_cash=bt_cfg["initial_cash"],
             freq=bt_cfg.get("interval", "1h"),
             direction=vbt_direction,
+            exit_exec_prices=pos_final_filtered.attrs.get("exit_exec_prices"),
         )
 
         # Funding cost

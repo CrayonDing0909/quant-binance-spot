@@ -1,0 +1,41 @@
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - DOGEUSDT
+    - AVAXUSDT
+    - LINKUSDT
+  interval: "1d"
+  auxiliary_intervals: ["1w", "1M"]
+  start: "2017-08-17"
+  end: null
+  market_type: "spot"
+
+strategy:
+  name: "rsi_adx_atr"
+  display_name: "Research Bootstrap - HTF MACD RSI Spot Entry"
+  params:
+    rsi_period: 14
+    rsi_mode: "static"
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 10
+  slippage_bps: 5
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+
+portfolio:
+  cash_reserve: 0.0
+
+risk:
+  max_drawdown_pct: 0.20
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+output:
+  report_dir: "./reports/research/macd_rsi_htf_spot_entry"

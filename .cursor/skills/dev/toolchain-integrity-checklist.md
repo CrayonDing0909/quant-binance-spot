@@ -1,6 +1,6 @@
 # Toolchain Integrity Checklist
 
-> **Last updated**: 2026-02-28
+> **Last updated**: 2026-03-10
 
 在依賴任何工具的輸出做決策之前，先做以下快速健全性檢查。
 本 checklist 的目標是防止「工具本身有 bug → 得出錯誤結論」的情況。
@@ -101,7 +101,35 @@
 
 ---
 
-## 6. 自動化檢查
+## 6. Signal Replay Verification（信號重播驗證）
+
+> Script: `scripts/verify_signal_replay.py`
+> Cron: 每天 UTC 01:00 自動執行（見 `devops.md`）
+
+### Pre-Flight
+- [ ] 本地 kline parquet 已更新（或 cron 會自動更新）
+- [ ] SQLite DB 可存取（`reports/futures/meta_blend/live/trading.db`）
+- [ ] Config 與生產一致（`prod_candidate_simplified.yaml`）
+
+### 結果判讀
+- [ ] PASS: 0 direction mismatches，match_rate > 85% → 正常
+- [ ] NO_BAR 數量: 因 parquet 未包含最近幾小時數據，預期 < 15%
+- [ ] MINOR_DIFF: 浮點差 0.1~0.3，通常因數據微小差異，可接受
+- [ ] DIRECTION_MISMATCH: **需立即調查** — 方向性錯誤 = 可能 code bug
+- [ ] MAGNITUDE_MISMATCH: 差距 > 0.3，檢查 overlay 數據或 derivatives cache 是否異常
+
+### 常見陷阱
+
+| 症狀 | 根因 | 修復 |
+|------|------|------|
+| 大量 NO_BAR | parquet 數據過舊 | 先跑 `download_klines_data.py` 更新數據 |
+| 全幣種 DIRECTION_MISMATCH | config 版本不同 | 確認使用的 config 與 Oracle Cloud 一致 |
+| 單幣種 MAGNITUDE_MISMATCH | overlay LSR 數據本地/live 不同 | 正常：LSR 在 live 是 API 即時抓取 |
+| match_rate 低於 50% | 策略已更新但 DB 記錄了舊策略信號 | 正常：deploy 後前幾天會有新舊混合 |
+
+---
+
+## 7. 自動化檢查
 
 以下測試會在 CI 中自動驗證上述規則：
 

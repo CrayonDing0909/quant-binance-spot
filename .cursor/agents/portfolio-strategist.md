@@ -14,6 +14,7 @@ model: fast
 3. **研究路線排序**：維護「先研究什麼、不研究什麼」的 backlog
 4. **Handoff 協調**：把目標缺口、成功條件、整合模式交給 Alpha Researcher / Quant Developer / Quant Researcher
 5. **組合層把關**：在花開發者時間前，先判斷新方向是否真的能補足 `Baseline`
+6. **實驗範圍鎖定**：在研究開始前先指定本輪 primary experiment family，避免 Researcher 同時混改 signal / entry / exit / sizing
 
 ## 你不做的事
 
@@ -48,6 +49,7 @@ model: fast
 | 互補策略設計 | `.cursor/skills/portfolio/complementary-strategy-design.md` | 要把 weakness 轉成研究方向時 |
 | 邊際貢獻框架 | `.cursor/skills/portfolio/marginal-contribution-framework.md` | 比較候選策略是否值得投入時 |
 | 研究路線治理 | `.cursor/skills/portfolio/research-roadmap-governance.md` | 排序 backlog / 指派其他 agent 時 |
+| 系統化實驗設計 | `.cursor/skills/alpha/systematic-experiment-design.md` | 要把模糊想法轉成可驗證的單一研究 cycle 時 |
 | 策略組合治理 | `docs/STRATEGY_PORTFOLIO_GOVERNANCE.md` | 決定是 blend、replace 還是 satellite 時 |
 
 ## 標準輸出
@@ -65,7 +67,14 @@ model: fast
    - 整合模式（Filter / Overlay / Standalone / Portfolio Layer）
    - 成功條件與 kill criteria
 
-3. **Research Routing Memo**
+3. **Strategy Diagnosis Card**
+   - baseline pain
+   - pain regime
+   - primary experiment family
+   - what stays fixed
+   - pass / kill rule
+
+4. **Research Routing Memo**
    - 交給哪個 agent
    - 需要的輸入資料
    - 預期輸出
@@ -101,6 +110,7 @@ model: fast
 
 ### 指派前
 - [ ] 我有把 success metric 寫清楚（例如回撤改善、相關性上限、trade count 下限）？
+- [ ] 我有幫本輪 research lock 一個 primary experiment family，而不是把多個問題混在一起？
 - [ ] 我有避免把獨立方向硬塞成 TSMOM 配件？
 - [ ] 我有明確指出誰做 EDA、誰做回測、誰做驗證？
 

@@ -22,6 +22,22 @@ alwaysApply: false
 | **Entropy Regime (PE/SE/ApEn)** | 2026-03-02 | Crypto 1h price entropy has zero predictive power (all IC < 0.01). Unlike VP (vol proxy, corr=0.71), entropy IS independent from vol (corr < 0.2), but simply contains no useful information for 1h forward returns. 1h crypto returns are too noisy for ordinal/distributional entropy to capture regime shifts | Before researching "complexity" or "information-theoretic" signals on crypto 1h, verify base IC > 0.01 first. Confounding-first design saved time (30min vs hours) | Alpha ~30min |
 | **Orderflow Composite Standalone (taker_vol_ratio proxy)** | 2026-03-02 | taker_vol_ratio 是小時級 buy/sell 聚合比率，IC(24h)=+0.003 太弱。即使策略邏輯正確（contrarian mode 8/8 positive pre-cost SR）且與 TSMOM 幾乎完全正交（corr=-0.023），alpha 仍不夠覆蓋交易成本（年化成本 ~143% >> alpha ~5.7%）。**根因是數據解析度而非策略邏輯**：taker_vol_ratio 在小時聚合時丟失逐筆交易的 informed/noise trading 信息。Tick-level OFI (Cont 2014) 數據已在 aggTrades pipeline 中可用，理論上信息量更大 | Proxy 數據（aggregated ratio）用於建立獨立策略前，必須先驗證 raw IC > 0.01。如果小時級 proxy IC < 0.005，不要嘗試構建策略，改用 tick-level 數據。corr(TSMOM) 低不等於有足夠 alpha | Alpha+Dev ~6h |
 
+## Meta-Lessons (Cross-Cutting Patterns)
+
+### Factor Redundancy — "同一因子穿不同衣服"
+
+**Pattern**: 4 filters (OI/On-chain/Macro/VPIN) all showed standalone SR improvement over HTF baseline, but ALL degraded when stacked with HTF. Combined developer time wasted: ~16h.
+
+**Root Cause**: These signals (OI regime, On-chain TVL momentum, GLD/VIX macro regime, VPIN) all function as "regime quality gates" — they filter out low-conviction bars. HTF filter already does this. Stacking multiple regime gates causes over-filtering (reduced time-in-market → insufficient trades).
+
+**Prevention Framework** (added 2026-03-05):
+1. **Before EDA**: Answer 3 economic intuition questions (causal-verification.md §0)
+2. **During EDA**: Run `marginal_information_ratio()` against production signals. R² > 0.50 → HARD STOP
+3. **Before handoff**: G0 Factor Orthogonality gate (handoff-gates.md)
+4. **Periodic audit**: `scripts/analyze_factor_geometry.py` to detect creeping redundancy
+
+**Detection Heuristic**: If a signal's integration mode is "Filter" and it targets "low-conviction bars" or "regime quality" → very likely redundant with existing HTF filter. Test REPLACEMENT (new → old) before ADDITION (new + old).
+
 ## Maintenance Rules
 
 - After each confirmed FAIL, **must** add a row to this table

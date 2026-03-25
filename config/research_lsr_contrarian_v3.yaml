@@ -1,0 +1,92 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — LSR Contrarian v3 (Long-Only Satellite, BTC-only)
+# ═══════════════════════════════════════════════════════════════
+# Task:    research_20260324_105700_lsr_contrarian_standalone_revisit
+# Origin:  3 research cycles (entry → exit → role)
+# Role:    Long-only satellite (symmetric standalone is fallback)
+#
+# RESEARCH EVIDENCE:
+#   Cycle 1 (entry):  persist>=2 + cooldown=24h  → net exp +0.521%, 89.7 tr/yr
+#   Cycle 2 (exit):   midpoint TP + ATR 3.0 + 168h → net exp +0.407%, MDD -19.56%
+#   Cycle 3 (role):   long-only satellite → net exp +0.645%, SR 1.52, 55.6 tr/yr
+#                     corr to prod BTC = 0.256 (strong diversifier)
+#
+# Symmetric standalone fallback (long_only: false):
+#   net exp +0.407%, SR 1.47, 105.0 tr/yr, MDD -19.56%, all years positive
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+  interval: "1h"
+  start: "2020-10-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "long_only"    # satellite role
+
+strategy:
+  name: "lsr_contrarian"
+  display_name: "LSR Contrarian v3 (Long-Only Satellite)"
+  params:
+    # ── Signal (v3: EW pctrank) ──
+    lsr_type: "lsr"
+    lsr_window: 168
+    use_ew_pctrank: true
+    ew_halflife: 84
+    entry_pctile: 0.85
+
+    # ── Regime gate (v3) ──
+    adx_gate_enabled: true
+    adx_period: 14
+    adx_threshold: 25.0
+
+    # ── Entry (v3: persist + cooldown) ──
+    persist_bars: 2
+    cooldown_bars: 24
+
+    # ── Exit (v3: midpoint TP) ──
+    tp_mode: "midpoint"
+    tp_pctile: 0.25          # only used when tp_mode=opposite_extreme
+    sl_atr_mult: 3.0
+    sl_atr_lookback: 14
+    max_hold_bars: 168
+
+    # ── Role (v3) ──
+    long_only: true
+
+    # ── Vol scaling (disabled — research used unscaled) ──
+    vol_scale_enabled: false
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 1.0
+
+output:
+  report_dir: "./reports"

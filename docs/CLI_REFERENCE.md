@@ -1,6 +1,6 @@
 # Project Map & CLI Reference
 
-> **Auto-generated**: 2026-03-05 by `scripts/gen_cli_reference.py`
+> **Auto-generated**: 2026-03-25 by `scripts/gen_cli_reference.py`
 > **Production config**: `config/prod_live_R3C_E3.yaml`
 > **Strategy template**: `config/futures_tsmom.yaml` (TSMOM EMA base definition)
 >
@@ -64,16 +64,23 @@
 
 | Script | Description |
 |--------|-------------|
+| `analyze_factor_geometry.py` | 因子幾何審計工具 — 偵測因子冗餘與潛在重疊 |
 | `cleanup_data.py` | 數據清理工具 — 釋放磁碟空間 |
 | `compare_strategies.py` | 策略組合比較工具 — 邊際 Sharpe 分析 + 最佳權重配置 |
+| `compute_governance_metrics.py` | Compute governance metrics from trading.db |
 | `download_aggtrades_data.py` | Download aggTrades from Binance Vision and compute VPIN/CVD/OFI metrics |
 | `fetch_derivatives_data.py` | Binance 衍生品數據下載工具（LSR, Taker Vol, CVD） |
 | `fetch_liquidation_data.py` | 清算/爆倉數據下載工具 |
 | `fetch_onchain_data.py` | 鏈上數據探索工具（DeFi Llama / CryptoQuant / Glassnode） |
 | `gen_data_strategy_catalog.py` | Auto-generate docs/DATA_STRATEGY_CATALOG.md by scanning src/qtrade/data/ and strategy/. |
 | `generate_blend_config.py` | 從比較報告或手動指定生成 meta_blend YAML 配置 |
+| `research_avg_trade_size_ablation.py` | avg_trade_size Overlay/Filter Ablation — Quant Developer (#22 Handoff) |
+| `research_forced_deleveraging_reversal.py` | Forced deleveraging reversal EDA |
+| `research_low_freq_portfolio_layer.py` | Evaluate low_freq_portfolio as a portfolio exposure layer over the frozen production baseline. |
 | `research_tick_ofi_eda.py` | Tick-level OFI EDA — Alpha Research #22 |
+| `scan_active_buy_candidates.py` | Scan weekly active-buy candidates and export a contract for a separate app repo. |
 | `trade_review.py` | 交易復盤工具 — 診斷信號與執行差異 |
+| `verify_signal_replay.py` | 信號重播驗證 — 比對回測信號與實盤 SQLite 記錄 |
 | `cron_alpha_decay.sh` | Alpha Decay 自動化監控 — 每週 cron 執行 |
 
 > **Archive**: 38 completed research/migration scripts in `scripts/archive/`. These are preserved for reference but no longer part of the active workflow.
@@ -107,6 +114,15 @@
 | `futures_multi_strat_ensemble.yaml` | `config/futures_multi_strat_ensemble.yaml` |
 | `futures_nwkl.yaml` | `config/futures_nwkl.yaml` |
 | `futures_tsmom.yaml` | `config/futures_tsmom.yaml` |
+
+### Research (active experiments)
+
+| Config | File |
+|--------|------|
+| `research_active_buy_scan.yaml` | `config/research_active_buy_scan.yaml` |
+| `research_low_freq_portfolio_layer.yaml` | `config/research_low_freq_portfolio_layer.yaml` |
+| `research_lsr_contrarian_v3.yaml` | `config/research_lsr_contrarian_v3.yaml` |
+| `research_macd_rsi_htf_spot_entry.yaml` | `config/research_macd_rsi_htf_spot_entry.yaml` |
 
 ### Utility
 
@@ -198,10 +214,13 @@ PYTHONPATH=src python scripts/gen_cli_reference.py
 
 | Doc | Description |
 |-----|-------------|
-| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-03-05 (Production 6-Symbol deploy 2026-03-04, observation → 2026-03-18. ADA/BNB removed (no IC), ETH simplified, vol-based slippage enabled. Portfolio SR=3.17 realistic cost) |
+| [`ACTIVE_BUY_APP_MVP.md`](docs/ACTIVE_BUY_APP_MVP.md) | > **Last updated**: 2026-03-12 |
+| [`ACTIVE_BUY_ARCHITECTURE.md`](docs/ACTIVE_BUY_ARCHITECTURE.md) | > **Last updated**: 2026-03-12 |
+| [`ALPHA_RESEARCH_MAP.md`](docs/ALPHA_RESEARCH_MAP.md) | > **Last updated**: 2026-03-25 (LSR contrarian standalone revisit ALL 3 CYCLES COMPLETE. Cycle 3 portfolio_role: long-only satellite chosen (net exp +0.645%, SR 1.52, corr=0.256 to prod). Symmetric standalone is robustness fallback. HANDOFF READY → @quant-developer for v3 implementation) |
 | [`CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) | Project Map & CLI Reference |
 | [`CURSOR_WORKFLOW.md`](docs/CURSOR_WORKFLOW.md) | Cursor Agent 工作流指南 |
 | [`DATA_STRATEGY_CATALOG.md`](docs/DATA_STRATEGY_CATALOG.md) | Data & Strategy Catalog |
+| [`ORCHESTRATION_MVP.md`](docs/ORCHESTRATION_MVP.md) | Research Orchestration MVP |
 | [`R3C_STRATEGY_OVERVIEW.md`](docs/R3C_STRATEGY_OVERVIEW.md) | R3C Universe 策略總覽（小白友善版） |
 | [`RESEARCH_LITERATURE.md`](docs/RESEARCH_LITERATURE.md) | > **Last updated**: 2026-03-02 |
 | [`STRATEGY_DEV_PLAYBOOK_R2_1.md`](docs/STRATEGY_DEV_PLAYBOOK_R2_1.md) | Strategy Development Playbook (R2.1) |

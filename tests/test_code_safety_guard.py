@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 SRC_ROOT = Path(__file__).parent.parent / "src" / "qtrade"
+SCRIPTS_ROOT = Path(__file__).parent.parent / "scripts"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -237,6 +238,42 @@ def _find_missing_signal_delay() -> list[tuple[str, int, str]]:
                 first_line = block.split("\n")[0].strip()
                 violations.append((rel, lineno, first_line))
 
+    if SCRIPTS_ROOT.exists():
+        for py_file in SCRIPTS_ROOT.rglob("*.py"):
+            if "__pycache__" in str(py_file):
+                continue
+
+            try:
+                content = py_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+            rel = f"scripts/{py_file.relative_to(SCRIPTS_ROOT)}"
+
+            for m in re.finditer(r"StrategyContext\s*\(", content):
+                start = m.start()
+                depth = 0
+                end = start
+                for j in range(m.end(), min(m.end() + 500, len(content))):
+                    ch = content[j]
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        if depth == 0:
+                            end = j + 1
+                            break
+                        depth -= 1
+
+                block = content[start:end]
+                line_start = content.rfind("\n", 0, start) + 1
+                line_prefix = content[line_start:start].strip()
+                if line_prefix.startswith("#") or line_prefix.startswith('"""') or line_prefix.startswith("'"):
+                    continue
+                if "signal_delay" not in block:
+                    lineno = content[:start].count("\n") + 1
+                    first_line = block.split("\n")[0].strip()
+                    violations.append((rel, lineno, first_line))
+
     return violations
 
 
@@ -398,6 +435,27 @@ def _find_direct_vbt_portfolio() -> list[tuple[str, int, str]]:
                 if "import" in stripped:
                     continue
                 violations.append((rel, i, stripped))
+
+    if SCRIPTS_ROOT.exists():
+        for py_file in SCRIPTS_ROOT.rglob("*.py"):
+            if "__pycache__" in str(py_file):
+                continue
+
+            rel = f"scripts/{py_file.relative_to(SCRIPTS_ROOT)}"
+
+            try:
+                lines = py_file.read_text(encoding="utf-8").split("\n")
+            except Exception:
+                continue
+
+            for i, line in enumerate(lines, start=1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if "vbt.Portfolio.from_orders(" in stripped or "Portfolio.from_orders(" in stripped:
+                    if "import" in stripped:
+                        continue
+                    violations.append((rel, i, stripped))
     return violations
 
 

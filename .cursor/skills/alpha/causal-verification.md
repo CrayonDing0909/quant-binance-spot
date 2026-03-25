@@ -8,6 +8,23 @@ alwaysApply: false
 > Loaded by Alpha Researcher whenever computing IC or making GO/FAIL decisions.
 > **Every IC calculation error propagates to handoff decisions, wasting 2-4h of developer time.**
 
+## Section 0: Economic Intuition Pre-Check (Mandatory Before Any IC Computation)
+
+Before computing ANY IC or running ANY EDA, **answer these 3 questions in writing** (in Notebook or Proposal):
+
+| # | Question | Required Answer |
+|---|----------|----------------|
+| Q1 | **Who is the counterparty?** | "This signal profits because [specific agent] systematically mis-prices [specific risk/information]." Example: "Large avg_trade_size signals smart money distribution → retail buyers become bag holders." |
+| Q2 | **Why doesn't it get arbitraged away?** | Structural reason: capacity constraint, latency, regulatory barrier, behavioral bias, or information asymmetry. Example: "Retail traders lack access to real-time aggTrades data and cannot observe whale distribution patterns." |
+| Q3 | **Under what market regime does this mechanism break?** | Explicit regime where the economic intuition fails. Example: "During extreme liquidation cascades (>20% hourly drop), large trades reflect forced selling, not informed distribution." |
+
+**Hard Rule**: If you cannot write a coherent Q1 answer, **do not start EDA**. Statistical mining without economic intuition has a historical CPCV pass rate of ~15% vs ~45% for economically-motivated factors (based on project track record).
+
+**Anti-Pattern Examples**:
+- ❌ "I'll compute IC for 50 features and pick the best one" → statistical mining
+- ❌ "Entropy should work because information theory" → no counterparty identified
+- ✅ "OI drop + price crash = forced liquidation → smart money buys the dip" → clear mechanism
+
 ## Causal IC Computation Rules (Mandatory)
 
 1. **Signal-Return Alignment**: All IC must use `signal[t]` vs `return[t+1]`.

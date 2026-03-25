@@ -1,0 +1,95 @@
+signal:
+  family: "pine_weekly_histogram_reversal"
+  timeframe: "1w"
+  execution_timing: "next_weekly_open"
+  rsi_threshold: 30.0
+  include_atr_branch: true
+
+ranking:
+  oversold_weight: 0.60
+  histogram_reversal_weight: 0.25
+  atr_bonus_weight: 0.15
+
+output:
+  output_dir: "./reports/active_buy_scan"
+  formats: ["json", "csv"]
+  include_no_action: true
+  digest:
+    title: "Active Buy Weekly Digest"
+    output_file: "latest_digest.md"
+    only_buy_candidates: true
+    max_per_group: 5
+    tier_order: ["core", "satellite", "experimental", "avoid"]
+
+execution:
+  broker_auto_enabled: false
+  paper_trade_tags: ["suitable"]
+  broker_auto_tags: []
+  broker_auto_tiers: []
+
+universe:
+  groups:
+    crypto_quality:
+      asset_class: "crypto"
+      data_source: "parquet"
+      data_root: "./data/yfinance/1d"
+      symbols:
+        - symbol: "BTC-USD"
+          research_tag: "experimental"
+          watchlist_tier: "satellite"
+          notes: "Signal is reproducible, but current evidence does not beat passive weekly buying."
+        - symbol: "ETH-USD"
+          research_tag: "suitable"
+          watchlist_tier: "core"
+          notes: "Current research suggests a stronger recovery-entry fit than BTC."
+        - symbol: "SOL-USD"
+          research_tag: "experimental"
+          watchlist_tier: "experimental"
+          notes: "Strong signal in research, but still a higher-beta crypto case."
+    us_core:
+      asset_class: "equity_etf"
+      data_source: "parquet"
+      data_root: "./data/yfinance/1d"
+      symbols:
+        - symbol: "SPY"
+          research_tag: "suitable"
+          watchlist_tier: "core"
+          notes: "Promising long-term active accumulation candidate."
+        - symbol: "IWM"
+          research_tag: "suitable"
+          watchlist_tier: "satellite"
+          notes: "Cyclical small-cap proxy with positive active-buy improvement."
+        - symbol: "QQQ"
+          research_tag: "experimental"
+          watchlist_tier: "satellite"
+          notes: "Directionally positive, but only marginally better than baseline."
+    us_growth:
+      asset_class: "equity_etf"
+      data_source: "parquet"
+      data_root: "./data/yfinance/1d"
+      symbols:
+        - symbol: "SOXX"
+          research_tag: "suitable"
+          watchlist_tier: "core"
+          notes: "One of the cleaner equity use cases in current research."
+        - symbol: "ARKK"
+          research_tag: "avoid"
+          watchlist_tier: "avoid"
+          notes: "Weak post-2021 behavior in current research."
+    taiwan_quality:
+      asset_class: "equity_taiwan"
+      data_source: "parquet"
+      data_root: "./data/yfinance/1d"
+      symbols:
+        - symbol: "2330.TW"
+          research_tag: "suitable"
+          watchlist_tier: "core"
+          notes: "Strong Taiwan single-name proxy in current research."
+        - symbol: "0050.TW"
+          research_tag: "experimental"
+          watchlist_tier: "satellite"
+          notes: "Directionally positive, but weaker in recent sample."
+        - symbol: "EWT"
+          research_tag: "experimental"
+          watchlist_tier: "experimental"
+          notes: "Broad Taiwan ETF proxy with weaker post-2021 evidence."

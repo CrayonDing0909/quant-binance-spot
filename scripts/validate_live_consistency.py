@@ -151,6 +151,7 @@ class ConsistencyChecker:
             interval=self.cfg.market.interval,
             market_type=self.cfg.market_type_str,
             direction=self.cfg.direction,
+            signal_delay=1,  # Backtest path: signal on close, execute on next open
         )
 
         # 實盤 signal_generator 的邏輯
@@ -159,6 +160,7 @@ class ConsistencyChecker:
             interval=self.cfg.market.interval,
             market_type=self.cfg.market_type_str,
             direction=self.cfg.direction,
+            signal_delay=0,  # Live path: execute immediately on the latest completed bar
         )
 
         issues = []
@@ -224,6 +226,7 @@ class ConsistencyChecker:
             interval=self.cfg.market.interval,
             market_type=self.cfg.market_type_str,
             direction=self.cfg.direction,
+            signal_delay=0,  # Live-consistency check compares current-bar live-style execution
         )
 
         strategy_func = get_strategy(self.cfg.strategy.name)
@@ -498,7 +501,7 @@ class ConsistencyChecker:
     def check_fee_match(self):
         """檢查回測手續費與交易所費率是否匹配"""
         fee_bps = self.cfg.backtest.fee_bps
-        fee_pct = fee_bps / 100
+        fee_pct = fee_bps / 10_000
 
         # Binance Futures 費率參考
         binance_taker = 4  # bps (0.04%)

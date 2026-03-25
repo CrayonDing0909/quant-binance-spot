@@ -380,6 +380,178 @@ def combinatorial_purged_cv(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 4. Regime-Stratified CPCV
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class RegimeStratifiedCPCVResult:
+    """Regime 分層 CPCV 結果"""
+    per_regime_sharpe: Dict[str, float]     # {regime_name: avg OOS Sharpe}
+    regime_profit_concentration: float       # 最大 regime 獲利佔比 [0, 1]
+    dominant_regime: str                     # 獲利最集中的 regime
+    is_regime_dependent: bool               # 是否 regime 依賴
+    concentration_threshold: float           # 使用的集中度門檻
+    n_regimes_covered: int                  # test folds 覆蓋的 regime 數
+    overall_oos_sharpe: float               # 全體 OOS Sharpe
+
+
+def regime_stratified_cpcv(
+    symbol: str,
+    data_path: Path,
+    cfg: dict,
+    strategy_name: str,
+    btc_prices: Optional[pd.Series] = None,
+    n_splits: int = 6,
+    n_test_splits: int = 2,
+    purge_bars: int = 10,
+    embargo_bars: int = 10,
+    concentration_threshold: float = 0.70,
+    data_dir: Path | None = None,
+) -> RegimeStratifiedCPCVResult:
+    """
+    Regime-Stratified Combinatorial Purged Cross-Validation
+
+    在標準 CPCV 基礎上，額外分析每個 regime（牛/熊/盤整）的
+    OOS Sharpe。若 > 70% 獲利來自單一 regime → 標記為 regime 依賴。
+
+    Args:
+        symbol: 交易對
+        data_path: K 線數據文件路徑
+        cfg: 回測配置（to_backtest_dict 格式）
+        strategy_name: 策略名稱
+        btc_prices: BTC 收盤價序列（用於 regime 偵測，可選）
+        n_splits: 將數據分成幾個區間
+        n_test_splits: 每次使用幾個區間作為測試集
+        purge_bars: Purge bar 數
+        embargo_bars: Embargo bar 數
+        concentration_threshold: regime 集中度門檻 (default 0.70)
+        data_dir: 數據根目錄
+
+    Returns:
+        RegimeStratifiedCPCVResult
+    """
+    from ..backtest.run_backtest import run_symbol_backtest
+    from .regime_analysis import auto_detect_regimes
+
+    # ── Step 1: 在完整數據上跑一次回測 ──────────────────
+    full_cfg = {k: v for k, v in cfg.items() if k not in ("start", "end")}
+
+    print(f"  Regime-CPCV: 在完整數據上運行策略...")
+    res = run_symbol_backtest(
+        symbol, data_path, full_cfg, strategy_name,
+        data_dir=data_dir,
+    )
+    returns = res.pf.returns()
+    n = len(returns)
+    split_size = n // n_splits
+
+    # ── Step 2: 偵測 regimes ──────────────────────────
+    if btc_prices is not None:
+        regimes_raw = auto_detect_regimes(btc_prices)
+    else:
+        # 嘗試從 equity 推斷（簡化版）
+        equity = res.pf.value()
+        regimes_raw = auto_detect_regimes(equity)
+
+    # 將 regime labels 映射到 returns index
+    regime_labels = pd.Series("sideways", index=returns.index)
+    for r in regimes_raw:
+        start = pd.Timestamp(r["start"])
+        end = pd.Timestamp(r["end"])
+        if hasattr(returns.index, 'tz') and returns.index.tz is not None:
+            if start.tz is None:
+                start = start.tz_localize(returns.index.tz)
+            if end.tz is None:
+                end = end.tz_localize(returns.index.tz)
+        mask = (returns.index >= start) & (returns.index <= end)
+        regime_name = r["name"].split("_")[0]  # extract "bear", "bull", "sideways"
+        regime_labels[mask] = regime_name
+
+    # ── Step 3: 標準 CPCV + regime 標註 ──────────────
+    test_combinations = list(combinations(range(n_splits), n_test_splits))
+    n_combinations = len(test_combinations)
+
+    print(f"  Regime-CPCV: {n_splits} splits, {n_test_splits} test splits")
+    print(f"  總組合數: {n_combinations}")
+
+    # 收集每個 regime 的 test returns
+    regime_test_returns: Dict[str, List[pd.Series]] = {}
+
+    for test_indices in test_combinations:
+        test_rets_list = []
+
+        for j in range(n_splits):
+            seg_start = j * split_size
+            seg_end = (j + 1) * split_size if j < n_splits - 1 else n
+
+            if j in test_indices:
+                actual_start = seg_start + embargo_bars
+                if actual_start < seg_end:
+                    test_rets_list.append(returns.iloc[actual_start:seg_end])
+
+        if not test_rets_list:
+            continue
+
+        test_ret = pd.concat(test_rets_list)
+        if len(test_ret) < 50:
+            continue
+
+        # 按 regime 分類
+        test_regimes = regime_labels.reindex(test_ret.index).fillna("sideways")
+        for regime_name in test_regimes.unique():
+            regime_mask = test_regimes == regime_name
+            regime_ret = test_ret[regime_mask]
+            if len(regime_ret) >= 10:
+                regime_test_returns.setdefault(regime_name, []).append(regime_ret)
+
+    # ── Step 4: 計算每個 regime 的 OOS Sharpe ────────
+    per_regime_sharpe: Dict[str, float] = {}
+    per_regime_total_return: Dict[str, float] = {}
+
+    for regime_name, returns_list in regime_test_returns.items():
+        all_ret = pd.concat(returns_list)
+        sr = _annualized_sharpe(all_ret)
+        per_regime_sharpe[regime_name] = round(sr, 4)
+        per_regime_total_return[regime_name] = float(all_ret.sum())
+
+    # ── Step 5: 計算 regime 集中度 ──────────────────
+    total_abs_return = sum(abs(v) for v in per_regime_total_return.values())
+    if total_abs_return > 0:
+        regime_concentration = {
+            k: abs(v) / total_abs_return
+            for k, v in per_regime_total_return.items()
+        }
+    else:
+        regime_concentration = {k: 0.0 for k in per_regime_total_return}
+
+    max_regime = max(regime_concentration, key=regime_concentration.get) if regime_concentration else "unknown"
+    max_concentration = regime_concentration.get(max_regime, 0.0)
+
+    # Overall OOS Sharpe
+    all_test_rets = []
+    for rl in regime_test_returns.values():
+        all_test_rets.extend(rl)
+    overall_oos = _annualized_sharpe(pd.concat(all_test_rets)) if all_test_rets else 0.0
+
+    print(f"  Regime-CPCV 結果:")
+    for rn, sr in per_regime_sharpe.items():
+        pct = regime_concentration.get(rn, 0) * 100
+        print(f"    {rn}: SR={sr:.2f}, 獲利佔比={pct:.1f}%")
+    print(f"  Regime 集中度: {max_regime} = {max_concentration:.1%}")
+    print(f"  判定: {'REGIME_DEPENDENT' if max_concentration > concentration_threshold else 'OK'}")
+
+    return RegimeStratifiedCPCVResult(
+        per_regime_sharpe=per_regime_sharpe,
+        regime_profit_concentration=round(max_concentration, 4),
+        dominant_regime=max_regime,
+        is_regime_dependent=max_concentration > concentration_threshold,
+        concentration_threshold=concentration_threshold,
+        n_regimes_covered=len(per_regime_sharpe),
+        overall_oos_sharpe=round(overall_oos, 4),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 便捷函數
 # ══════════════════════════════════════════════════════════════════════════════
 

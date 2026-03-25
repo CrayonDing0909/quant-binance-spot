@@ -9,12 +9,13 @@ alwaysApply: false
 
 ## Research Pre-Check (Step 0 — Before Archetype Classification)
 
-**Must complete these 5 steps before starting new research:**
+**Must complete these 6 steps before starting new research:**
 
 1. **Read Alpha Research Map** — Open [docs/ALPHA_RESEARCH_MAP.md](mdc:docs/ALPHA_RESEARCH_MAP.md)
    - Check coverage map: which dimensions are covered? which are blank?
    - Check data-signal taxonomy: has this data-signal combo been tested? results?
    - Check research frontier ranking: what are the top-ranked directions?
+   - **NEW**: Check Section 2E (Latent Factor Decomposition) — how many effective independent factors exist?
 
 2. **Specify Target Gap** — In Notebook and Proposal, explicitly write:
    > "This research fills **[item #X: gap name]** in the Alpha Coverage Map"
@@ -34,11 +35,80 @@ alwaysApply: false
 5. **Declare Integration Target** — Before starting:
    > "This signal is expected to be used as **[Filter / Overlay / Standalone / Portfolio Layer]**"
 
+6. **Factor Orthogonality Pre-Screen (NEW — 2026-03-05)** — Before deep EDA:
+   ```python
+   from qtrade.validation.factor_orthogonality import marginal_information_ratio
+   
+   result = marginal_information_ratio(
+       candidate=preliminary_signal,
+       existing_signals=production_signals,
+       forward_returns=fwd_returns,
+   )
+   # R² > 0.50 → signal is >50% redundant with existing factors → STOP
+   # Residual IC < 0.005 → even the "new" part has no alpha → STOP
+   ```
+   > "This signal's R² against existing production signals is **X.XX** (threshold 0.50). The residual IC is **X.XXXX**."
+   
+   If R² > 0.50, **do not proceed to full EDA**. Instead:
+   - Compute the residual signal and test that instead
+   - Or abandon this direction (it's the same factor wearing different clothes)
+
 ### "Don't Research" Is a Valid Option
 
 If the highest-scored candidate in the frontier ranking < 3.0, and all coverage gaps face data quality or alpha uncertainty issues, **"no new research this cycle" is valid**.
 
 Focus instead on: improving existing overlay params, enhancing data coverage, updating the research map.
+
+## Research Cycle Lock (Mandatory Before Deep EDA)
+
+Before you open a notebook or start variant exploration, explicitly lock the current cycle to:
+
+1. **One primary experiment family**
+   - `signal_mechanism`
+   - `entry_timing`
+   - `exit_design`
+   - `position_sizing`
+   - `portfolio_role`
+
+2. **One loop type**
+   - `Loop A: Alpha Existence`
+   - `Loop B: Trade Expression`
+
+3. **One held-constant baseline**
+   - symbol universe
+   - timeframe
+   - cost assumptions
+   - current entry / exit / sizing logic not under test
+
+### Required research-cycle declaration
+
+Write this near the top of the Notebook / Proposal:
+
+```markdown
+## Research Cycle Declaration
+
+- Baseline pain:
+- Primary experiment family:
+- Loop type:
+- Economic mechanism:
+- What stays fixed:
+- Pass rule:
+- Kill rule:
+```
+
+### Decision Rules
+
+- If you are testing whether the raw alpha exists, this is **Loop A**. Do **not** discuss TP/SL optimization yet.
+- If the raw alpha has not cleared causal IC / conditional evidence / frequency thresholds, stop. No expression-loop exploration.
+- If the raw alpha is accepted and you are improving entry / exit / sizing, this is **Loop B**.
+- If more than one experiment family is changing, split the work into multiple cycles. Do not write a mixed conclusion.
+
+### Anti-Pattern Examples
+
+- ❌ "Let's change LSR weighting, HTF confirmation, and TP target together"
+- ❌ "The signal is weak, but maybe a better SL will save it"
+- ✅ "Hold signal definition fixed; compare three exit structures"
+- ✅ "Hold exits fixed; test whether HTF resonance improves entry quality"
 
 ## Signal Integration Decision Tree
 

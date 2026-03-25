@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — Mean Reversion Liquidity Sweep (15m)
+# ═══════════════════════════════════════════════════════════════
+# Task: research_20260325_163400_higher_freq_complement
+# Purpose: Evaluate 15m liquidity sweep MR as higher-frequency complement
+# Strategy code: src/qtrade/strategy/mean_revert_liquidity.py
+#
+# This is a RESEARCH config — do NOT modify prod_*.yaml
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  interval: "15m"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 3
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "mean_revert_liquidity"
+  display_name: "Liquidity Sweep MR (15m)"
+  params:
+    key_level_bars: 96       # 24h @15m
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    tp_pct: 0.015            # 1.5% take profit
+    sl_pct: 0.010            # 1.0% stop loss
+    max_hold_bars: 12        # 3h @15m time-stop
+    cooldown_bars: 4         # 1h @15m cooldown
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: true
+    base_bps: 2.0
+    impact_coefficient: 0.1
+    impact_power: 0.5
+    adv_lookback: 20
+    participation_rate: 0.10
+
+risk:
+  max_drawdown_pct: 0.40
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.40
+    ETHUSDT: 0.35
+    SOLUSDT: 0.25
+
+output:
+  report_dir: "./reports"

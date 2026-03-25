@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 SRC_ROOT = Path(__file__).parent.parent / "src" / "qtrade"
+SCRIPTS_ROOT = Path(__file__).parent.parent / "scripts"
 
 # ── 白名單：這些檔案中的 reindex(method="ffill") 是安全的（外部資料對齊） ──
 # key = 相對於 SRC_ROOT 的路徑, value = 白名單原因
@@ -137,6 +138,44 @@ def _find_dangerous_reindex_patterns() -> list[tuple[str, int, str]]:
     return violations
 
 
+def _find_dangerous_reindex_patterns_in_scripts() -> list[tuple[str, int, str]]:
+    """掃描 scripts/ 中的 resample + reindex(ffill) look-ahead 風險。"""
+    violations = []
+
+    if not SCRIPTS_ROOT.exists():
+        return violations
+
+    for py_file in SCRIPTS_ROOT.rglob("*.py"):
+        if "__pycache__" in str(py_file):
+            continue
+
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        rel_path = f"scripts/{py_file.relative_to(SCRIPTS_ROOT)}"
+        lines = content.split("\n")
+
+        for i, line in enumerate(lines, start=1):
+            if not re.search(r'\.reindex\(.*method\s*=\s*["\']ffill["\']', line):
+                continue
+
+            context_start = max(0, i - 11)
+            context = "\n".join(lines[context_start:i - 1])
+            if "shift(1)" in context or "causal_resample_align" in context:
+                continue
+
+            fn_context_start = max(0, i - 30)
+            fn_context = "\n".join(lines[fn_context_start:i])
+            if "resample" not in fn_context and "_resample_ohlcv" not in fn_context:
+                continue
+
+            violations.append((rel_path, i, line.strip()))
+
+    return violations
+
+
 class TestResampleShiftGuard:
     """CI 級自動掃描：偵測未加 shift(1) 的 resample+reindex 模式"""
 
@@ -154,6 +193,7 @@ class TestResampleShiftGuard:
             3. 如果確認是安全場景（外部資料對齊），加入 WHITELIST
         """
         violations = _find_dangerous_reindex_patterns()
+        violations.extend(_find_dangerous_reindex_patterns_in_scripts())
 
         if violations:
             msg_lines = [

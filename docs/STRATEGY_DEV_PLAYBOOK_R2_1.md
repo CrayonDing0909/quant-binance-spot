@@ -1,6 +1,6 @@
 # Strategy Development Playbook (R2.1)
 
-> **Last updated**: 2026-03-03 (Validation Matrix 新增 Alpha Decay gate)
+> **Last updated**: 2026-03-10 (Research reopen framework 新增 evidence-tier 分層)
 
 This playbook captures the end-to-end process used to evolve from R1 -> R2 -> R2.1.
 Use this as the default template for all future strategy research and production rollout.
@@ -117,6 +117,38 @@ Use only these verdicts:
 - `KEEP_BASELINE` (no promotion)
 - `NEED_MORE_WORK` (promising but incomplete)
 - `FAIL` (reject hypothesis)
+
+### Stage F.5: Reopen Framework (Research Evidence Tier)
+
+When a direction is worth preserving but cannot be handed off yet, record an **evidence tier** in addition to the final verdict.
+
+This layer does **not** replace Stage F verdicts. It answers:
+
+- how far the thesis survived
+- what evidence is still missing
+- what exact trigger should reopen the direction
+
+Use one of these labels:
+
+- `not-proxy-valid`
+- `proxy-valid / state-invalid`
+- `state-valid / handoff-blocked`
+- `handoff-ready`
+
+Typical usage:
+
+- `SHELVED` + `proxy-valid / state-invalid`
+  - proxy/common-window evidence is real
+  - but state-based validation is impossible or missing
+- `NEED_MORE_WORK` + `state-valid / handoff-blocked`
+  - state evidence exists
+  - but target buckets / concentration / overlap still fail handoff quality
+
+Every reopen candidate should also define:
+
+1. Phase A `Proxy Validation`
+2. Phase B `State Validation`
+3. Phase C `Developer Handoff`
 
 ### Stage G: Rollout
 

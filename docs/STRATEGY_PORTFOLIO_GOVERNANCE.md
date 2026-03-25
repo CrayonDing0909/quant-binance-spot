@@ -1,6 +1,6 @@
 # 策略組合治理規範 (Strategy Portfolio Governance)
 
-> **Last updated**: 2026-03-03 (修正歸檔腳本 ghost references)
+> **Last updated**: 2026-03-10 (新增 Portfolio Strategist 角色，補齊 Baseline 弱點診斷與互補策略設計 ownership)
 
 本文件定義多策略組合的治理規則：新策略如何納入、何時替換、如何決定 meta_blend vs. 獨立 Runner。
 與幣種層級治理互補（原 `R3C_SYMBOL_GOVERNANCE_SPEC.md` 已歸檔至 `docs/archive/`，當前 symbol governance 由 Feature Ownership Registry 管理），本文件聚焦**策略層級**治理。
@@ -15,11 +15,22 @@
 4. **可逆性**：退場流程必須可逆，策略可重新啟用
 5. **數據驅動**：所有決策必須附帶量化證據，禁止「感覺不錯就上」
 
+### 1.1) 角色分工
+
+| 角色 | 在策略組合治理中的責任 |
+|------|----------------------|
+| **Portfolio Strategist** | 拆解 `Baseline` 弱點、定義 target gap、決定新方向是 Filter / Overlay / Standalone / Portfolio Layer |
+| **Alpha Researcher** | 依 target gap 做 EDA / Proposal，驗證是否存在候選 alpha |
+| **Quant Developer** | 實作候選策略、跑正式回測與 ablation |
+| **Quant Researcher** | 驗證真假 alpha、判定是否值得納入 |
+| **Risk Manager** | 決定是否能上線、何時 reduce / retire |
+
 ---
 
 ## 2) 策略納入標準（Addition Criteria）
 
-新策略必須**全部通過**以下門檻才能納入組合：
+新策略必須**全部通過**以下門檻才能納入組合。
+在這之前，應先由 **Portfolio Strategist** 明確定義它要補的 target gap，避免把所有新方向都視為 `Baseline` 的小配件。
 
 | # | 門檻 | 閾值 | 說明 |
 |---|------|------|------|
@@ -55,8 +66,9 @@ scripts/compare_strategies.py
 ### 審查流程
 
 1. 觸發條件觸發 → Risk Manager 發起審查
-2. Quant Researcher 重跑驗證（含最近數據）
-3. 決策：`KEEP` / `REDUCE_WEIGHT` / `RETIRE`
+2. Portfolio Strategist 判斷這是 alpha 衰退、架構失配，還是需要新的互補策略
+3. Quant Researcher 重跑驗證（含最近數據）
+4. 決策：`KEEP` / `REDUCE_WEIGHT` / `RETIRE`
 
 ---
 
@@ -171,7 +183,7 @@ strategy_portfolio:
 |------|---------|--------|------|
 | **每週** | 各策略滾動 SR、MDD、交易數 | Risk Manager | — |
 | **每月** | MC 重跑 + 相關性矩陣 + Kelly 校準 + 邊際貢獻 | Risk Manager | 如發現 alpha decay 異常，交 Quant Researcher 做深度 IC 分析 |
-| **每季** | 全組合 re-optimization、策略淘汰評估 | Risk Manager (召集) | 全團隊參與 |
+| **每季** | 全組合 re-optimization、策略淘汰評估、Baseline gap 重排 | Risk Manager (召集) | Portfolio Strategist + 全團隊參與 |
 
 > **分工原則**：月度審查由 Risk Manager 主導（執行 MC + 相關性 + Kelly），涵蓋組合風險面向。
 > 如果月度審查發現 alpha decay 跡象（如 IC 持續下降、滾動 SR 惡化），

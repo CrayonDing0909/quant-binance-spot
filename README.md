@@ -117,6 +117,8 @@ Full rules live in:
 - `docs/STRATEGY_DEV_PLAYBOOK_R2_1.md`
 - `docs/ALPHA_RESEARCH_MAP.md`
 - `docs/STRATEGY_PORTFOLIO_GOVERNANCE.md`
+- `docs/ACTIVE_BUY_ARCHITECTURE.md` (for the planned cross-asset active-buy product boundary and scan/export contract)
+- `docs/ACTIVE_BUY_APP_MVP.md` (for the separate app repo MVP shape: ingest, notify, paper state, and broker gating)
 
 ## Important Notes
 

@@ -19,7 +19,7 @@
 
 ## 開發流程
 
-1. **確認假說**（Mode A: Alpha Researcher Proposal / Mode B: 自行定義小改進）
+1. **確認假說**（Mode A: Portfolio Strategist thesis + Alpha Researcher Proposal / Mode B: 自行定義小改進）
 2. **建立研究配置**：`config/research_<name>.yaml`
 3. **實作策略**：`@register_strategy` 註冊，`generate_signal(df, ctx, params) -> pd.Series`
 4. **撰寫測試**：`tests/test_<name>_no_lookahead.py`

@@ -38,6 +38,12 @@ Binance Spot/Futures quantitative trading system. Python 3.11, vectorbt-based ba
 - Use `cfg.to_backtest_dict()` — never manually assemble
 - Research: `config/research_*.yaml` — NEVER modify `prod_*` during research
 
+## Experimental Product Boundary
+
+- Cross-asset active-buy / accumulation products should use this repo as the **research and signal-definition core**
+- Watchlists, notifications, paper execution, and broker automation should live in a **separate app repo**
+- Reference: `docs/ACTIVE_BUY_ARCHITECTURE.md`
+
 ## 7-Agent Workflow
 
 ```
@@ -48,13 +54,19 @@ Orchestrator → Portfolio Strategist → Alpha Researcher → Quant Developer �
 
 | Agent | Scope |
 |-------|-------|
-| Orchestrator | Research task intake, routing, task state/rollback tracking, heartbeat visibility, low-confidence review gating |
+| Orchestrator | Research task intake, **foreground-autonomous** stage execution inside active chat, task state/rollback tracking, heartbeat visibility, low-confidence review gating, manifest-based resume across chats |
 | Portfolio Strategist | Baseline weakness diagnosis, complementary strategy design, research routing |
 | Alpha Researcher | Strategy discovery, EDA, Proposal |
 | Quant Developer | Implementation, backtest, config freeze |
 | Quant Researcher | Full validation (WFA/CPCV/DSR), verdict |
 | Risk Manager | Pre-launch audit, periodic review |
 | DevOps | Deployment, monitoring, data management |
+
+## Continuation Model
+
+- Research orchestration is **foreground-autonomous**, not a background queue.
+- `tasks/active/*.yaml` is the continuity layer across chats; it preserves resumable state, not a live worker.
+- If the user wants the agent to keep working after a chat boundary, default to `/resume-task` or a direct continuation prompt with `task_id`.
 
 ## Directory Map
 

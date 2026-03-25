@@ -665,6 +665,37 @@ def _load_and_align_vpin(
     return aligned
 
 
+def _load_and_align_avg_trade_size(
+    symbol: str,
+    kline_index: pd.DatetimeIndex,
+    data_dir: str | Path = "data",
+) -> Optional[pd.Series]:
+    """載入 avg_trade_size 並對齊到 kline index
+
+    avg_trade_size = total_volume / num_trades，反映鯨魚交易行為。
+    從 aggTrades hourly metrics 計算，有獨立時間戳，
+    reindex+ffill 不涉及 intra-bar look-ahead。
+
+    路徑：{data_dir}/binance/futures/aggtrades_agg/{SYMBOL}_hourly.parquet
+    """
+    from ..data.agg_trades import load_avg_trade_size, align_avg_trade_size_to_klines
+
+    aggtrades_dir = Path(data_dir) / "binance" / "futures" / "aggtrades_agg"
+    ats = load_avg_trade_size(symbol, data_dir=aggtrades_dir)
+    if ats is None:
+        logger.info(f"tsmom_carry_v2: {symbol} 無 avg_trade_size 數據")
+        return None
+
+    aligned = align_avg_trade_size_to_klines(ats, kline_index, max_ffill_bars=4)
+    if aligned is None or aligned.isna().all():
+        logger.warning(f"tsmom_carry_v2: {symbol} avg_trade_size 對齊後全為 NaN")
+        return None
+
+    coverage = aligned.notna().mean() * 100
+    logger.info(f"tsmom_carry_v2: {symbol} avg_trade_size loaded ({coverage:.1f}% coverage)")
+    return aligned
+
+
 # ══════════════════════════════════════════════════════════════
 #  策略: TSMOM + Carry V2（Per-Symbol 多因子複合）
 # ══════════════════════════════════════════════════════════════
@@ -965,6 +996,51 @@ def generate_tsmom_carry_v2(
         else:
             logger.warning(
                 f"  VPIN regime filter [{ctx.symbol}]: VPIN 數據不可用，跳過過濾"
+            )
+
+    # ══════════════════════════════════════════════════
+    # avg_trade_size Overlay (opt-in, default disabled)
+    # Source: Alpha Researcher Tick OFI EDA (2026-03-05), #22 WEAK GO
+    # Result: IC=-0.030, corr(TSMOM)=0.04, 7/8 same sign
+    #   Alpha 在 trade SIZE 而非 OFI direction（whale distribution）
+    #   A1 4/7 → overlay（連續縮放）優於 filter（binary gate）
+    # ══════════════════════════════════════════════════
+    ats_overlay_enabled = params.get("ats_overlay_enabled", False)
+    ats_filter_enabled = params.get("ats_filter_enabled", False)
+    if ats_overlay_enabled or ats_filter_enabled:
+        ats_series = _load_and_align_avg_trade_size(ctx.symbol, df.index, data_dir)
+        if ats_series is not None:
+            if ats_overlay_enabled:
+                from .filters import avg_trade_size_overlay
+                ats_lookback = int(params.get("ats_lookback", 720))
+                ats_scale_threshold = float(params.get("ats_scale_threshold", 0.50))
+                ats_min_scale = float(params.get("ats_min_scale", 0.30))
+                raw_pos = avg_trade_size_overlay(
+                    raw_pos, ats_series,
+                    lookback=ats_lookback,
+                    scale_threshold=ats_scale_threshold,
+                    min_scale=ats_min_scale,
+                )
+                logger.info(
+                    f"  avg_trade_size overlay [{ctx.symbol}]: lookback={ats_lookback}, "
+                    f"threshold={ats_scale_threshold}, min_scale={ats_min_scale}"
+                )
+            elif ats_filter_enabled:
+                from .filters import avg_trade_size_filter
+                ats_lookback = int(params.get("ats_lookback", 720))
+                ats_max_pctrank = float(params.get("ats_max_pctrank", 0.80))
+                raw_pos = avg_trade_size_filter(
+                    raw_pos, ats_series,
+                    lookback=ats_lookback,
+                    max_pctrank=ats_max_pctrank,
+                )
+                logger.info(
+                    f"  avg_trade_size filter [{ctx.symbol}]: lookback={ats_lookback}, "
+                    f"max_pctrank={ats_max_pctrank}"
+                )
+        else:
+            logger.warning(
+                f"  avg_trade_size [{ctx.symbol}]: 數據不可用，跳過"
             )
 
     # ══════════════════════════════════════════════════

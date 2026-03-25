@@ -57,11 +57,17 @@ blockers: []
 notes: []
 next_recommended_action: "<what should happen next>"
 final_packet:
+  current_status: null
   recommendation: null
   evidence_tier: null
   blocker_summary: null
   handoff_decision: null
   review_summary: null
+  recommended_agent: null
+  primary_files:
+    - null
+  key_decision: null
+  open_risks: []
 
 # blockers entry shape example:
 # - kind: data_gap
