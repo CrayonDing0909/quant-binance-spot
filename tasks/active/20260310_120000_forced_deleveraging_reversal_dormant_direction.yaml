@@ -64,14 +64,14 @@ decision:
     - Common-window OI and LSR replay support on the reopening window
   coverage_gate: 2022+ common-data window is usable, but true historical liquidation-state remains unavailable and is the active blocker.
   eda_findings:
-    - Best surviving proxy trigger is `cascade_end` with `no_htf_gate`
+    - "Best surviving proxy trigger is `cascade_end` with `no_htf_gate`"
     - Mean TIM is in the portfolio-meaningful zone and baseline correlation is low
-    - `panic_liquidation` remains weak and true state validation is still blocked
+    - "`panic_liquidation` remains weak and true state validation is still blocked"
   handoff_recommendation: do_not_handoff_preserve_as_dormant_direction
   final_outcome: approved_as_dormant_reopen_candidate
 blockers:
   - kind: state_validation_gap
-    reason: True historical liquidation-state data does not exist, so the thesis remains `proxy-valid / state-invalid`.
+    reason: "True historical liquidation-state data does not exist, so the thesis remains `proxy-valid / state-invalid`."
     unblock_condition: Historical liquidation-state becomes available and the same trigger family survives state-based rerun.
 notes:
   - Intake reused existing proposal and notebook rather than starting a fresh EDA pass.

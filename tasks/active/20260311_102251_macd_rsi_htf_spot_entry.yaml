@@ -116,7 +116,7 @@ notes:
   - Intake normalized the user's idea into a crypto-first research direction because this repo natively supports Binance market data.
   - Cross-market applicability to Taiwan equities and US equities is treated as a later validation question, not an initial acceptance criterion.
   - The direction remains medium confidence because the faithful Pine logic is real, reproducible, survives corrected weekly execution timing, and shows partial cross-asset portability, but still appears regime-concentrated and BTC-light.
-  - `binance_vision` download path failed with an out-of-bounds timestamp error during bootstrap, so the task used the live Binance API instead.
+  - "`binance_vision` download path failed with an out-of-bounds timestamp error during bootstrap, so the task used the live Binance API instead."
   - Faithful replication showed that the original TradingView code is a weekly histogram-reversal signal, not a monthly strict MACD-cross signal.
   - "2026-03-24: ran scan_active_buy_candidates.py with updated yfinance data (12 assets). Result: 0 buy candidates — weekly RSI is not oversold for any tracked asset. Signal is correctly rare (recovery-entry only). Pipeline is operational for ongoing weekly monitoring."
 next_recommended_action: "Research direction validated: the signal is correctly classified as a rare weekly recovery-entry heuristic (0 triggers in current market as of 2026-03-24). The active-buy scan pipeline (scan_active_buy_candidates.py) is operational with 11 assets across crypto/US/TW. Next step: wait for market correction to generate actual buy signals, then evaluate real-time trigger quality. Consider declaring alpha_research complete and handing off to the active-buy app repo for Phase 1 (notification) implementation."
