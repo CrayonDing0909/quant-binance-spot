@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # EMBARGO_EXEMPT: EDA uses aggTrades data (not kline), temporal embargo not applicable to pre-aggregated tick data
+# ORTHOGONALITY_EXEMPT: EDA phase — orthogonality checked inline (corr(TSMOM)=0.04, corr(ATR)=0.25)
 """
 Tick-level OFI EDA — Alpha Research #22
 
