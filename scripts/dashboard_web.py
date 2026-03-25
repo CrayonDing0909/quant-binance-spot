@@ -122,6 +122,69 @@ def find_live_dbs() -> list[Path]:
     return sorted((ROOT / "reports").rglob("trading.db"))
 
 
+def load_symbol_rankings(db_path: Path) -> list[dict]:
+    """Per-symbol performance for the strategy ranking table."""
+    if not db_path or not db_path.exists():
+        return []
+    try:
+        con = sqlite3.connect(db_path)
+        df = pd.read_sql(
+            """SELECT symbol, side, pnl, fee FROM trades
+               WHERE symbol NOT IN ('ADAUSDT','BNBUSDT')
+               ORDER BY id""",
+            con,
+        )
+        con.close()
+        if df.empty:
+            return []
+
+        results = []
+        for sym, grp in df.groupby("symbol"):
+            closed = grp[grp["pnl"].notna()]
+            total_trades = len(closed)
+            if total_trades == 0:
+                continue
+            net_pnl = closed["pnl"].sum() - closed["fee"].sum()
+            wins = (closed["pnl"] > 0).sum()
+            wr = wins / total_trades * 100 if total_trades > 0 else 0
+            # Simple max drawdown from cumulative pnl
+            cum = (closed["pnl"] - closed["fee"]).cumsum()
+            peak = cum.cummax()
+            dd = (cum - peak).min()
+            results.append({
+                "symbol": sym.replace("USDT", ""),
+                "trades": total_trades,
+                "wr": round(wr, 1),
+                "pnl": round(net_pnl, 2),
+                "dd": round(dd, 2),
+            })
+        return sorted(results, key=lambda x: x["pnl"], reverse=True)
+    except Exception:
+        return []
+
+
+def load_reports() -> list[dict]:
+    """Scan reports/ for recent validation/research outputs."""
+    reports = []
+    for d in sorted((ROOT / "reports").iterdir(), reverse=True):
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        # Find markdown reports
+        for md in sorted(d.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:2]:
+            try:
+                first_line = md.read_text().split("\n", 1)[0].strip("# ").strip()
+            except Exception:
+                first_line = md.stem
+            reports.append({
+                "category": d.name,
+                "title": first_line[:60],
+                "path": str(md.relative_to(ROOT)),
+            })
+        if len(reports) >= 8:
+            break
+    return reports
+
+
 # ── API endpoints ────────────────────────────────────────────────────────────
 
 
@@ -140,6 +203,8 @@ async def index(request: Request):
 
     equity = load_equity(db) if db else []
     trades = load_recent_trades(db, limit=15) if db else []
+    rankings = load_symbol_rankings(db)
+    reports = load_reports()
 
     running = sum(1 for t in tasks if t.get("status") == "running")
     needs_review = sum(
@@ -202,6 +267,9 @@ async def index(request: Request):
         "interval": cfg.get("interval", "—"),
         "leverage": cfg.get("leverage", "—"),
         "research_cfgs": [p.name for p in sorted((ROOT / "config").glob("research_*.yaml"))],
+        "rankings": rankings,
+        "reports": reports,
+        "completed_count": sum(1 for t in tasks if t.get("status") == "completed"),
     }
     return templates.TemplateResponse(request, "dashboard.html", context=context)
 

@@ -14,252 +14,350 @@
       theme: {
         extend: {
           colors: {
-            surface: '#0f0f1a',
-            card: '#1a1a2e',
-            'card-alt': '#16213e',
+            surface: '#0a0a14',
+            card: '#12121f',
+            'card-alt': '#191930',
             accent: '#7c3aed',
             'accent-dim': '#5b21b6',
             gain: '#22c55e',
             loss: '#ef4444',
             warn: '#f59e0b',
+            trophy: '#fbbf24',
+          },
+          fontSize: {
+            '2xs': '0.65rem',
           }
         }
       }
     }
   </script>
   <style>
-    body { background: #0f0f1a; }
-    .scrollbar-thin::-webkit-scrollbar { width: 4px; }
-    .scrollbar-thin::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+    body { background: #0a0a14; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+    .scrollbar-thin::-webkit-scrollbar { width: 3px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #2d2d4a; border-radius: 2px; }
+    .task-item { border-left: 2px solid transparent; transition: border-color 0.15s; }
+    .task-item:hover { border-left-color: #7c3aed; }
     @supports (padding: env(safe-area-inset-bottom)) {
       .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
     }
   </style>
 </head>
-<body class="text-gray-200 min-h-screen safe-bottom">
+<body class="text-gray-300 min-h-screen safe-bottom text-sm">
 
-  <!-- Header -->
-  <header class="sticky top-0 z-50 bg-surface/80 backdrop-blur-md border-b border-gray-800">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+  <!-- ═══ Header ═══ -->
+  <header class="sticky top-0 z-50 bg-surface/90 backdrop-blur-md border-b border-gray-800/60">
+    <div class="max-w-[1400px] mx-auto px-3 py-2.5 flex items-center justify-between">
       <div class="flex items-center gap-2">
-        <span class="text-xl">🎯</span>
-        <h1 class="text-lg font-bold tracking-tight">交易指揮中心</h1>
+        <span class="text-lg">🎯</span>
+        <h1 class="text-base font-bold tracking-tight text-white">交易指揮中心</h1>
       </div>
-      <div class="flex items-center gap-3 text-xs">
-        <span class="text-gray-500">{{ now }}</span>
-        <button onclick="location.reload()" class="text-gray-400 hover:text-white transition-colors">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-          </svg>
-        </button>
+      <!-- Status Badges -->
+      <div class="flex items-center gap-2">
+        <span class="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full bg-accent/20 text-accent font-medium">{{ running }} 執行中</span>
+        {% if completed_count > 0 %}
+        <span class="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full bg-green-900/30 text-green-400 font-medium">{{ completed_count }} 完成</span>
+        {% endif %}
+        {% if needs_review > 0 %}
+        <span class="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full bg-red-900/30 text-red-400 font-medium">{{ needs_review }} 待審</span>
+        {% endif %}
+        <span class="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full bg-blue-900/30 text-blue-400 font-medium">{{ research_count }} 研究</span>
+        <span class="text-2xs text-gray-600 ml-2">{{ now }}</span>
+        <button onclick="location.reload()" class="text-gray-500 hover:text-white ml-1" title="重新整理">↻</button>
       </div>
     </div>
   </header>
 
-  <!-- Status Bar -->
-  <div class="max-w-7xl mx-auto px-4 py-3">
-    <div class="grid grid-cols-4 gap-2 sm:gap-3">
-      <div class="bg-card rounded-lg p-3 text-center">
-        <div class="text-2xl font-bold text-accent">{{ running }}</div>
-        <div class="text-[10px] sm:text-xs text-gray-500 mt-1">執行中</div>
-      </div>
-      <div class="bg-card rounded-lg p-3 text-center">
-        <div class="text-2xl font-bold {% if needs_review > 0 %}text-warn{% else %}text-gain{% endif %}">{{ needs_review }}</div>
-        <div class="text-[10px] sm:text-xs text-gray-500 mt-1">待審核</div>
-      </div>
-      <div class="bg-card rounded-lg p-3 text-center">
-        <div class="text-2xl font-bold text-blue-400">{{ research_count }}</div>
-        <div class="text-[10px] sm:text-xs text-gray-500 mt-1">研究中</div>
-      </div>
-      <div class="bg-card rounded-lg p-3 text-center">
-        <div class="text-2xl font-bold {% if blocked > 0 %}text-loss{% else %}text-gray-600{% endif %}">{{ blocked }}</div>
-        <div class="text-[10px] sm:text-xs text-gray-500 mt-1">封鎖</div>
-      </div>
-    </div>
-  </div>
+  <!-- ═══ Main 4-Column Layout ═══ -->
+  <main class="max-w-[1400px] mx-auto px-3 py-3">
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-3" style="grid-template-columns: 1fr 1fr 1.3fr 1fr;">
 
-  <!-- Main Content -->
-  <main class="max-w-7xl mx-auto px-4 pb-8">
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- ═══ Col 1: Agent Tasks ═══ -->
+      <div class="space-y-3">
+        {% for t in tasks %}
+        {% if t.status == 'running' %}
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200 truncate">
+              {% if t.current_stage == 'alpha_research' %}🔬{% elif t.current_stage == 'risk_manager' %}🛡️{% elif t.current_stage == 'stop_or_handoff' %}🏁{% else %}⚙️{% endif %}
+              {{ t._short_name }}
+            </span>
+            <span class="text-2xs font-bold text-gain tracking-wider">WORKING</span>
+          </div>
+          <p class="text-2xs text-gray-500 leading-relaxed mb-2 line-clamp-2">{{ t.goal or '' }}</p>
+          <!-- Sub-items from notes -->
+          {% set notes = t.get('notes') or [] %}
+          {% if notes %}
+          <div class="space-y-0.5 mt-2">
+            {% for note in notes[-4:] %}
+            <div class="flex items-start gap-1.5 text-2xs">
+              <span class="text-gray-600 mt-0.5">✓</span>
+              <span class="text-gray-500 line-clamp-1">{{ note[:55] }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          <!-- Progress -->
+          <div class="mt-2">
+            <div class="w-full bg-gray-800 rounded-full h-1">
+              <div class="bg-accent h-1 rounded-full" style="width:{{ t._pct }}%"></div>
+            </div>
+            <div class="flex justify-between mt-1 text-2xs text-gray-600">
+              <span>{{ t.current_stage or '—' }}</span>
+              <span>{{ t._pct }}%</span>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+        {% endfor %}
 
-      <!-- Equity Curve -->
-      <section class="bg-card rounded-xl p-4 lg:col-span-2">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-accent">📊 策略績效</h2>
-          {% if equity %}
-          <div class="flex gap-4 text-xs">
+        <!-- Completed tasks (collapsed) -->
+        {% set done_tasks = [] %}
+        {% for t in tasks if t.status == 'completed' %}
+        {% if done_tasks.append(t) %}{% endif %}
+        {% endfor %}
+        {% if done_tasks %}
+        <div class="bg-card rounded-lg p-3">
+          <div class="text-xs font-semibold text-gray-400 mb-2">🏁 已完成 ({{ done_tasks|length }})</div>
+          <div class="space-y-1">
+            {% for t in done_tasks %}
+            <div class="task-item pl-2 flex items-center justify-between text-2xs">
+              <span class="text-gray-500 truncate">{{ t._short_name }}</span>
+              {% if t._verdict == 'GO' %}
+              <span class="text-gain font-medium">GO</span>
+              {% elif t._verdict == 'WEAK GO' %}
+              <span class="text-warn font-medium">WEAK</span>
+              {% elif t._verdict == 'FAIL' %}
+              <span class="text-loss font-medium">FAIL</span>
+              {% else %}
+              <span class="text-gray-600">DONE</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- Research Configs -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="text-xs font-semibold text-gray-400 mb-2">📄 Research Configs</div>
+          <div class="space-y-0.5">
+            {% for c in research_cfgs %}
+            <div class="text-2xs text-accent/70 font-mono truncate">{{ c }}</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Col 2: Equity + Trades ═══ -->
+      <div class="space-y-3">
+        <!-- Equity Chart -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200">📊 Equity</span>
+            {% if equity %}
             {% set latest = equity[-1] %}
             {% set e0 = equity[0].equity %}
             {% set ret = ((latest.equity / e0) - 1) * 100 if e0 > 0 else 0 %}
-            <span class="text-gray-400">Equity <span class="text-white font-mono">${{ "%.0f"|format(latest.equity) }}</span></span>
-            <span class="{% if ret >= 0 %}text-gain{% else %}text-loss{% endif %} font-mono">{{ "%+.2f"|format(ret) }}%</span>
-            <span class="text-gray-400">DD <span class="text-loss font-mono">{{ "%.1f"|format(latest.drawdown_pct) }}%</span></span>
-          </div>
-          {% endif %}
-        </div>
-        <div class="h-40 sm:h-52">
-          <canvas id="equityChart"></canvas>
-        </div>
-        {% if symbols %}
-        <div class="flex flex-wrap gap-1.5 mt-3">
-          {% for sym in symbols %}
-          <span class="text-[10px] bg-accent/20 text-accent px-2 py-0.5 rounded-full">{{ sym }}</span>
-          {% endfor %}
-          <span class="text-[10px] text-gray-600 ml-2">{{ interval }} · {{ leverage }}x</span>
-        </div>
-        {% endif %}
-      </section>
-
-      <!-- Agent Tasks -->
-      <section class="bg-card rounded-xl p-4">
-        <h2 class="text-sm font-semibold text-accent mb-3">🤖 Agent 任務</h2>
-        <div class="space-y-2 max-h-80 overflow-y-auto scrollbar-thin">
-          {% for t in tasks %}
-          <div class="bg-card-alt rounded-lg p-3">
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium truncate flex-1 mr-2">{{ t._short_name }}</span>
-              <div class="flex items-center gap-1.5 flex-shrink-0">
-                {% if t._verdict == 'GO' %}
-                <span class="text-[10px] bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded">GO</span>
-                {% elif t._verdict == 'WEAK GO' %}
-                <span class="text-[10px] bg-yellow-900/50 text-yellow-400 px-1.5 py-0.5 rounded">WEAK GO</span>
-                {% elif t._verdict == 'FAIL' %}
-                <span class="text-[10px] bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded">FAIL</span>
-                {% endif %}
-                {% if t.status == 'running' %}
-                <span class="text-[10px] text-gain font-medium">RUN</span>
-                {% elif t.status == 'completed' %}
-                <span class="text-[10px] text-gray-500">DONE</span>
-                {% elif t.status == 'blocked' %}
-                <span class="text-[10px] text-loss font-medium">BLOCK</span>
-                {% else %}
-                <span class="text-[10px] text-gray-500">{{ t.status|upper }}</span>
-                {% endif %}
-              </div>
-            </div>
-            <div class="mt-2">
-              <div class="w-full bg-gray-800 rounded-full h-1">
-                <div class="bg-accent h-1 rounded-full transition-all" style="width:{{ t._pct }}%"></div>
-              </div>
-              <div class="flex justify-between mt-1">
-                <span class="text-[10px] text-gray-600">{{ t.current_stage or '—' }}</span>
-                <span class="text-[10px] text-gray-600">{{ t._pct }}%</span>
-              </div>
-            </div>
-          </div>
-          {% endfor %}
-          {% if not tasks %}
-          <p class="text-xs text-gray-600 text-center py-4">目前沒有任務</p>
-          {% endif %}
-        </div>
-      </section>
-
-      <!-- Decisions + Findings -->
-      <section class="bg-card rounded-xl p-4">
-        <h2 class="text-sm font-semibold text-accent mb-3">⚠️ 待你決策</h2>
-        {% if decisions %}
-        <div class="space-y-2 mb-4">
-          {% for d in decisions %}
-          <div class="bg-red-950/30 border border-red-900/40 rounded-lg p-3">
-            <div class="text-xs font-medium text-red-300">🚨 {{ d._short_name }}</div>
-            {% set reason = (d.approval or {}).get('reason', d.get('review_reason', '需要人工審核')) %}
-            <div class="text-[10px] text-gray-400 mt-1">{{ reason }}</div>
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="text-xs text-gain mb-4 py-2">✅ 無待決策項目</div>
-        {% endif %}
-
-        <h2 class="text-sm font-semibold text-accent mb-3">🔍 最新發現</h2>
-        <div class="space-y-1 max-h-40 overflow-y-auto scrollbar-thin">
-          {% for f in findings %}
-          <div class="text-[11px] text-gray-400 py-0.5">
-            {% if 'FAIL' in f.signal %}
-            <span class="text-loss">✗</span>
-            {% elif 'GO' in f.signal %}
-            <span class="text-gain">✓</span>
-            {% else %}
-            <span class="text-warn">⚠</span>
+            <span class="text-2xs font-mono {% if ret >= 0 %}text-gain{% else %}text-loss{% endif %}">{{ "%+.2f"|format(ret) }}%</span>
             {% endif %}
-            <span class="truncate">{{ f.signal[:80] }}</span>
           </div>
-          {% endfor %}
-          {% if not findings %}
-          <p class="text-[10px] text-gray-600 text-center py-2">暫無研究發現</p>
+          {% if equity %}
+          <div class="flex gap-3 mb-2 text-2xs">
+            <span class="text-gray-500">$<span class="text-white font-mono">{{ "%.0f"|format(latest.equity) }}</span></span>
+            <span class="text-gray-500">DD <span class="text-loss font-mono">{{ "%.1f"|format(latest.drawdown_pct) }}%</span></span>
+          </div>
+          {% endif %}
+          <div class="h-32">
+            <canvas id="equityChart"></canvas>
+          </div>
+          {% if symbols %}
+          <div class="flex flex-wrap gap-1 mt-2">
+            {% for sym in symbols %}
+            <span class="text-2xs bg-accent/10 text-accent/80 px-1.5 py-0.5 rounded">{{ sym }}</span>
+            {% endfor %}
+            <span class="text-2xs text-gray-600 ml-1">{{ interval }} · {{ leverage }}x</span>
+          </div>
           {% endif %}
         </div>
-      </section>
 
-      <!-- Recent Trades -->
-      <section class="bg-card rounded-xl p-4 lg:col-span-2">
-        <h2 class="text-sm font-semibold text-accent mb-3">💹 最近交易</h2>
-        <div class="overflow-x-auto">
-          <table class="w-full text-xs">
+        <!-- Recent Trades -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="text-xs font-semibold text-gray-200 mb-2">💹 最近交易</div>
+          <div class="space-y-0.5 max-h-60 overflow-y-auto scrollbar-thin">
+            {% for t in trades %}
+            <div class="flex items-center text-2xs py-0.5 hover:bg-card-alt/50 rounded px-1">
+              <span class="text-gray-600 font-mono w-20 flex-shrink-0">{{ t.timestamp }}</span>
+              <span class="w-10 flex-shrink-0 font-medium">{{ t.symbol|replace('USDT','') }}</span>
+              <span class="w-8 flex-shrink-0 {% if t.side == 'BUY' %}text-gain{% else %}text-loss{% endif %}">{{ t.side }}</span>
+              <span class="flex-1 text-right font-mono {% if t.pnl.startswith('+') %}text-gain{% elif t.pnl.startswith('-') %}text-loss{% else %}text-gray-600{% endif %}">{{ t.pnl }}</span>
+            </div>
+            {% endfor %}
+            {% if not trades %}
+            <div class="text-2xs text-gray-600 text-center py-3">無交易記錄</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Col 3: Strategy Rankings ═══ -->
+      <div class="space-y-3">
+        <div class="bg-card rounded-lg p-3">
+          <div class="text-xs font-semibold text-gray-200 mb-3">🏆 策略排名</div>
+          {% if rankings %}
+          <table class="w-full text-2xs">
             <thead>
               <tr class="text-gray-500 border-b border-gray-800">
-                <th class="text-left py-2 font-medium">時間</th>
-                <th class="text-left py-2 font-medium">幣種</th>
-                <th class="text-left py-2 font-medium">方向</th>
-                <th class="text-right py-2 font-medium">價格</th>
-                <th class="text-right py-2 font-medium">PnL</th>
+                <th class="text-left py-1.5 w-6">#</th>
+                <th class="text-left py-1.5">幣種</th>
+                <th class="text-right py-1.5">筆數</th>
+                <th class="text-right py-1.5">WR%</th>
+                <th class="text-right py-1.5">利潤</th>
+                <th class="text-right py-1.5">DD</th>
               </tr>
             </thead>
             <tbody>
-              {% for t in trades %}
-              <tr class="border-b border-gray-800/50 hover:bg-card-alt/50">
-                <td class="py-1.5 text-gray-500 font-mono">{{ t.timestamp }}</td>
-                <td class="py-1.5 font-medium">{{ t.symbol|replace('USDT','') }}</td>
-                <td class="py-1.5">
-                  {% if t.side == 'BUY' %}
-                  <span class="text-gain">BUY</span>
-                  {% else %}
-                  <span class="text-loss">SELL</span>
-                  {% endif %}
+              {% for r in rankings %}
+              <tr class="border-b border-gray-800/40 hover:bg-card-alt/50">
+                <td class="py-1.5 text-gray-600">
+                  {% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}
                 </td>
-                <td class="py-1.5 text-right font-mono">{{ "%.2f"|format(t.price) }}</td>
-                <td class="py-1.5 text-right font-mono {% if t.pnl.startswith('+') %}text-gain{% elif t.pnl.startswith('-') %}text-loss{% else %}text-gray-600{% endif %}">
-                  {{ t.pnl }}
-                </td>
+                <td class="py-1.5 font-medium text-gray-200">{{ r.symbol }}</td>
+                <td class="py-1.5 text-right font-mono text-gray-400">{{ r.trades }}</td>
+                <td class="py-1.5 text-right font-mono {% if r.wr >= 50 %}text-gain{% elif r.wr >= 30 %}text-warn{% else %}text-loss{% endif %}">{{ r.wr }}%</td>
+                <td class="py-1.5 text-right font-mono font-medium {% if r.pnl >= 0 %}text-gain{% else %}text-loss{% endif %}">{{ "%+.1f"|format(r.pnl) }}</td>
+                <td class="py-1.5 text-right font-mono text-loss">{{ "%.1f"|format(r.dd) }}</td>
               </tr>
               {% endfor %}
-              {% if not trades %}
-              <tr><td colspan="5" class="text-center text-gray-600 py-4">無交易記錄</td></tr>
-              {% endif %}
             </tbody>
+            <tfoot>
+              <tr class="border-t border-gray-700">
+                <td colspan="2" class="py-1.5 font-medium text-gray-300">合計</td>
+                <td class="py-1.5 text-right font-mono text-gray-300">{{ rankings|sum(attribute='trades') }}</td>
+                <td class="py-1.5 text-right font-mono text-gray-400">—</td>
+                {% set total_pnl = rankings|sum(attribute='pnl') %}
+                <td class="py-1.5 text-right font-mono font-bold {% if total_pnl >= 0 %}text-gain{% else %}text-loss{% endif %}">{{ "%+.1f"|format(total_pnl) }}</td>
+                <td class="py-1.5 text-right font-mono text-gray-400">—</td>
+              </tr>
+            </tfoot>
           </table>
+          {% else %}
+          <div class="text-2xs text-gray-600 text-center py-4">無排名數據</div>
+          {% endif %}
         </div>
-      </section>
 
-      <!-- Research Configs -->
-      <section class="bg-card rounded-xl p-4 lg:col-span-2">
-        <h2 class="text-sm font-semibold text-accent mb-3">📄 Research Configs</h2>
-        <div class="flex flex-wrap gap-2">
-          {% for c in research_cfgs %}
-          <span class="text-[10px] bg-accent/10 text-accent/80 px-2 py-1 rounded-md font-mono">{{ c }}</span>
-          {% endfor %}
+        <!-- Research Pipeline -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="text-xs font-semibold text-gray-200 mb-2">🔬 研究 Pipeline</div>
+          <div class="space-y-2">
+            {% for t in tasks %}
+            <div class="flex items-center gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-2xs text-gray-300 truncate">{{ t._short_name }}</span>
+                  {% if t._verdict == 'GO' %}
+                  <span class="text-2xs bg-green-900/50 text-green-400 px-1 rounded flex-shrink-0">GO</span>
+                  {% elif t._verdict == 'WEAK GO' %}
+                  <span class="text-2xs bg-yellow-900/50 text-yellow-400 px-1 rounded flex-shrink-0">WEAK</span>
+                  {% elif t._verdict == 'FAIL' %}
+                  <span class="text-2xs bg-red-900/50 text-red-400 px-1 rounded flex-shrink-0">FAIL</span>
+                  {% endif %}
+                </div>
+                <div class="w-full bg-gray-800 rounded-full h-0.5 mt-1">
+                  <div class="bg-accent h-0.5 rounded-full" style="width:{{ t._pct }}%"></div>
+                </div>
+              </div>
+              <span class="text-2xs text-gray-600 flex-shrink-0 w-8 text-right">{{ t._pct }}%</span>
+            </div>
+            {% endfor %}
+          </div>
         </div>
-      </section>
+      </div>
+
+      <!-- ═══ Col 4: Decisions + Reports ═══ -->
+      <div class="space-y-3">
+        <!-- Decisions -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200">⚠️ 待審核</span>
+            <span class="text-2xs px-1.5 py-0.5 rounded-full {% if needs_review > 0 %}bg-red-900/40 text-red-400{% else %}bg-green-900/30 text-green-400{% endif %} font-medium">{{ needs_review }}</span>
+          </div>
+          {% if decisions %}
+          <div class="space-y-2">
+            {% for d in decisions %}
+            <div class="bg-red-950/20 border border-red-900/30 rounded p-2">
+              <div class="text-2xs font-medium text-red-300">🚨 {{ d._short_name }}</div>
+              {% set reason = (d.approval or {}).get('reason', d.get('review_reason', '需要人工審核')) %}
+              <div class="text-2xs text-gray-500 mt-0.5">{{ reason }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-2xs text-gain py-1">✅ 全部已讀</div>
+          {% endif %}
+        </div>
+
+        <!-- Reports -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200">📁 歷史報告</span>
+            <span class="text-2xs text-gray-600">{{ reports|length }}</span>
+          </div>
+          <div class="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
+            {% for r in reports %}
+            <div class="task-item pl-2 py-0.5">
+              <div class="text-2xs text-gray-400 truncate">
+                <span class="text-accent/60">{{ r.category }}/</span> {{ r.title }}
+              </div>
+            </div>
+            {% endfor %}
+            {% if not reports %}
+            <div class="text-2xs text-gray-600 text-center py-2">無報告</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Findings -->
+        <div class="bg-card rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-200">🔍 發現</span>
+            <span class="text-2xs text-gray-600">{{ findings|length }}</span>
+          </div>
+          <div class="space-y-1 max-h-40 overflow-y-auto scrollbar-thin">
+            {% for f in findings %}
+            <div class="text-2xs text-gray-500 py-0.5 leading-relaxed">
+              {% if 'FAIL' in f.signal %}
+              <span class="text-loss">✗</span>
+              {% elif 'GO' in f.signal %}
+              <span class="text-gain">✓</span>
+              {% else %}
+              <span class="text-warn">⚠</span>
+              {% endif %}
+              {{ f.signal[:70] }}
+            </div>
+            {% endfor %}
+            {% if not findings %}
+            <div class="text-2xs text-gray-600 text-center py-2">暫無</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
 
     </div>
   </main>
 
-  <!-- Footer -->
-  <footer class="max-w-7xl mx-auto px-4 py-4 border-t border-gray-800">
-    <div class="flex flex-col sm:flex-row gap-2 text-[10px] text-gray-600">
-      <span>👤 人類：GO/NO-GO 決策、資本配置、風險上限</span>
-      <span class="hidden sm:inline">·</span>
-      <span>🤖 Agent：研究執行、回測、驗證、程式碼審查</span>
-    </div>
+  <!-- ═══ Footer ═══ -->
+  <footer class="max-w-[1400px] mx-auto px-3 py-2 border-t border-gray-800/50 text-2xs text-gray-600 flex justify-between">
+    <span>👤 決策 · 資本配置 · 風險上限</span>
+    <span>🤖 研究 · 回測 · 驗證 · 審查</span>
   </footer>
 
-  <!-- Chart.js -->
+  <!-- ═══ Chart.js ═══ -->
   <script>
     const equityData = {{ equity|tojson }};
     if (equityData.length > 0) {
       const ctx = document.getElementById('equityChart').getContext('2d');
-      const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-      gradient.addColorStop(0, 'rgba(124, 58, 237, 0.3)');
+      const gradient = ctx.createLinearGradient(0, 0, 0, 140);
+      gradient.addColorStop(0, 'rgba(124, 58, 237, 0.25)');
       gradient.addColorStop(1, 'rgba(124, 58, 237, 0.0)');
 
       new Chart(ctx, {
@@ -270,36 +368,29 @@
             data: equityData.map(d => d.equity),
             borderColor: '#7c3aed',
             backgroundColor: gradient,
-            borderWidth: 2,
+            borderWidth: 1.5,
             fill: true,
             tension: 0.3,
             pointRadius: 0,
-            pointHitRadius: 10,
+            pointHitRadius: 8,
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
+          plugins: { legend: { display: false }, tooltip: {
+            backgroundColor: '#1a1a2e', titleColor: '#9ca3af', bodyColor: '#e5e7eb',
+            borderColor: '#374151', borderWidth: 1, padding: 8,
+            callbacks: { label: ctx => '$' + ctx.parsed.y.toFixed(0) }
+          }},
           scales: {
-            x: {
-              ticks: { color: '#4b5563', font: { size: 10 }, maxTicksLimit: 8 },
-              grid: { display: false },
-            },
-            y: {
-              ticks: {
-                color: '#4b5563', font: { size: 10 },
-                callback: v => '$' + v.toLocaleString()
-              },
-              grid: { color: '#1f2937' },
-            }
+            x: { ticks: { color: '#374151', font: { size: 9 }, maxTicksLimit: 6 }, grid: { display: false } },
+            y: { ticks: { color: '#374151', font: { size: 9 }, callback: v => '$' + v.toLocaleString() }, grid: { color: '#1a1a2e' } }
           },
           interaction: { intersect: false, mode: 'index' },
         }
       });
     }
-
-    // Auto-refresh every 5 minutes
     setTimeout(() => location.reload(), 300000);
   </script>
 </body>
