@@ -12,7 +12,9 @@ Deploy on Oracle Cloud:
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -185,6 +187,56 @@ def load_reports() -> list[dict]:
     return reports
 
 
+def load_github_prs() -> list[dict]:
+    """Fetch PRs from GitHub via gh CLI."""
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "list", "--state", "all", "--limit", "20",
+             "--json", "number,title,state,labels,updatedAt,url,mergedAt,closedAt"],
+            capture_output=True, text=True, timeout=10, cwd=ROOT,
+        )
+        if result.returncode != 0:
+            return []
+        prs = json.loads(result.stdout)
+        for pr in prs:
+            labels = [l.get("name", "") for l in pr.get("labels", [])]
+            pr["_labels"] = labels
+            pr["_is_research"] = "research" in labels
+            if pr.get("state") == "MERGED":
+                pr["_status"] = "promoted"
+                pr["_color"] = "gain"
+            elif pr.get("state") == "CLOSED":
+                pr["_status"] = "abandoned"
+                pr["_color"] = "gray-500"
+            else:
+                pr["_status"] = "in progress"
+                pr["_color"] = "accent"
+            # Parse date
+            date_str = pr.get("mergedAt") or pr.get("closedAt") or pr.get("updatedAt") or ""
+            pr["_date"] = date_str[:10] if date_str else ""
+        return prs
+    except Exception:
+        return []
+
+
+def load_github_issues() -> list[dict]:
+    """Fetch open issues from GitHub via gh CLI."""
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "list", "--state", "open", "--limit", "20",
+             "--json", "number,title,labels,updatedAt,url"],
+            capture_output=True, text=True, timeout=10, cwd=ROOT,
+        )
+        if result.returncode != 0:
+            return []
+        issues = json.loads(result.stdout)
+        for iss in issues:
+            iss["_labels"] = [l.get("name", "") for l in iss.get("labels", [])]
+        return issues
+    except Exception:
+        return []
+
+
 # ── API endpoints ────────────────────────────────────────────────────────────
 
 
@@ -205,6 +257,8 @@ async def index(request: Request):
     trades = load_recent_trades(db, limit=15) if db else []
     rankings = load_symbol_rankings(db)
     reports = load_reports()
+    prs = load_github_prs()
+    issues = load_github_issues()
 
     running = sum(1 for t in tasks if t.get("status") == "running")
     needs_review = sum(
@@ -269,6 +323,10 @@ async def index(request: Request):
         "research_cfgs": [p.name for p in sorted((ROOT / "config").glob("research_*.yaml"))],
         "rankings": rankings,
         "reports": reports,
+        "prs": prs,
+        "issues": issues,
+        "open_issues": len(issues),
+        "closed_prs": sum(1 for p in prs if p.get("state") in ("MERGED", "CLOSED")),
         "completed_count": sum(1 for t in tasks if t.get("status") == "completed"),
     }
     return templates.TemplateResponse(request, "dashboard.html", context=context)
