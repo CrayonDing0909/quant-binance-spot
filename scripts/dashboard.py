@@ -77,19 +77,40 @@ def load_tasks() -> list[dict]:
 
 
 @st.cache_data(ttl=60)
-def load_equity_from_db(db_path: Path, days: int = 30) -> pd.DataFrame:
+def load_equity_from_db(db_path: Path, days: int = 60) -> pd.DataFrame:
     if not db_path.exists():
         return pd.DataFrame()
     try:
         con = sqlite3.connect(db_path)
+        # Try daily_equity first
         df = pd.read_sql(
             f"SELECT date, equity, pnl_day, cumulative_pnl, drawdown_pct "
             f"FROM daily_equity ORDER BY date DESC LIMIT {days}",
             con,
         )
+        if not df.empty:
+            con.close()
+            df["date"] = pd.to_datetime(df["date"])
+            return df.sort_values("date")
+        # Fallback: derive daily equity from trades PnL
+        trades = pd.read_sql(
+            "SELECT timestamp, pnl, fee FROM trades WHERE pnl IS NOT NULL ORDER BY id",
+            con,
+        )
         con.close()
-        df["date"] = pd.to_datetime(df["date"])
-        return df.sort_values("date")
+        if trades.empty:
+            return pd.DataFrame()
+        trades["timestamp"] = pd.to_datetime(trades["timestamp"], utc=True)
+        trades["date"] = trades["timestamp"].dt.normalize()
+        daily = trades.groupby("date").agg(pnl_day=("pnl", "sum"), fee_day=("fee", "sum")).reset_index()
+        daily["pnl_day"] = daily["pnl_day"] - daily["fee_day"]
+        initial_cash = 10000.0
+        daily["cumulative_pnl"] = daily["pnl_day"].cumsum()
+        daily["equity"] = initial_cash + daily["cumulative_pnl"]
+        peak = daily["equity"].cummax()
+        daily["drawdown_pct"] = ((daily["equity"] - peak) / peak * 100).round(2)
+        daily["date"] = daily["date"].dt.tz_localize(None)
+        return daily[["date", "equity", "pnl_day", "cumulative_pnl", "drawdown_pct"]].tail(days)
     except Exception:
         return pd.DataFrame()
 
