@@ -1,6 +1,6 @@
 # Research Orchestration MVP
 
-> **Last updated**: 2026-03-10
+> **Last updated**: 2026-03-11
 
 > Cursor-first 的研究編排規格。目標是把使用者從「手動選 agent + 補 prompt + 追進度」轉成「只給目標，系統自動串 stage；只有低信心或高風險時才 review」。
 
@@ -11,6 +11,7 @@
 ### Included
 
 - `@orchestrator` 單一研究入口
+- active chat 內的 **foreground-autonomous** 多 stage 執行
 - `tasks/active/*.yaml` task manifest
 - 結構化 stage outputs
 - heartbeat / liveness state
@@ -21,8 +22,34 @@
 
 - Discord / Telegram 控制面
 - 工程實作與維運的完整 orchestration
-- 背景 task queue / 多任務排程
+- **background queue / 多任務排程**
 - 自動 deploy / 自動 freeze
+
+---
+
+## 1.1 Execution Modes
+
+### `foreground_autonomous`（本輪要做到的）
+
+- 一次 `/start-research` invocation 內，orchestrator 應在同一個 chat session 連續跑
+  `intake -> strategist -> alpha_research -> stop_or_handoff`
+- 每完成一個 stage 都先更新 manifest，再決定是否繼續
+- 只有以下情況才提前停下來回覆使用者：
+  - `confidence_level = low`
+  - 有明確 blocker
+  - 需要 approval
+  - 已產出 final packet
+
+### `background_queue`（仍 deferred）
+
+- 背景 daemon / worker
+- chat 結束後自動續跑
+- 多任務 scheduler
+- 無使用者新訊息時的 async progress push
+
+因此這個 MVP 的正確語意是：
+- **在 chat 活著時要盡量一口氣跑完**
+- **chat 結束後靠 manifest 續跑，而不是假裝有背景 worker**
 
 ---
 
@@ -32,7 +59,7 @@
 
 1. 使用者只描述目標
 2. `@orchestrator` 建 task manifest
-3. 系統自動串 intake、strategist、alpha research、summary
+3. 系統在**同一個 active chat invocation** 內自動串 intake、strategist、alpha research、summary
 4. 只有低信心 / blocker / 高風險時才中途 ask
 5. 每個 task 都留下可追溯、可回退的 manifest
 6. 任務若過夜仍可用 `/task-status` 確認是不是還活著
@@ -52,6 +79,8 @@ flowchart TD
     review --> alphaResearch
     alphaResearch --> summary["SummaryOrHandoff"]
 ```
+
+> 預設執行模式是 **foreground-autonomous**：不是只建立 manifest，而是要在同一次互動裡持續往下跑，直到碰到 stopper 或 final packet。
 
 ---
 
@@ -127,7 +156,7 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
 **Exit criteria**
 - goal 已正規化
 - manifest 已建立
-- 已決定是否進 strategist stage
+- 若無 blocker，立即進 strategist stage
 
 ### 7.2 strategist
 
@@ -147,6 +176,7 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
 - 已足夠提交 `research_direction_approval`
   或
 - 已明確標示 blocker / stop reason
+- 若 `confidence_level != low` 且無 blocker，**同一 invocation 內立即進 alpha_research**
 
 ### 7.3 low_confidence_review
 
@@ -155,6 +185,7 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
 
 **Exit criteria**
 - 使用者 `approve` / `reject` / `narrow_scope` / `broaden_scope` / `cancel`
+- 若使用者批准，下一個 invocation 應從被卡住的 stage 直接續跑，而不是重做 intake
 
 ### 7.4 alpha_research
 
@@ -174,6 +205,7 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
   - `handoff_to_quant_developer`
   - `need_direction_change`
   - `stop_and_archive`
+- 若 verdict 已明確，**同一 invocation 內立即寫入 stop_or_handoff**
 
 ### 7.5 stop_or_handoff
 
@@ -184,6 +216,30 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
 - 任務標為 `completed`
 - summary 與推薦下一步已寫回 manifest
 
+**Required final packet shape**
+- `current_status`
+- `key_decision`
+- `recommendation`
+- `recommended_agent`
+- `primary_files`
+- `open_risks`
+- `next_recommended_action`
+
+`stop_or_handoff` 的目標不是只更新 manifest，而是產出一個可直接交棒或結案的 handoff packet。
+
+### 7.6 Foreground Execution Loop
+
+`/start-research` 與 orchestrator 的預設執行 loop 應為：
+
+1. 建立 manifest
+2. 執行 intake
+3. 若 clear，立刻執行 strategist
+4. 若仍 clear，立刻執行 alpha research
+5. 若 verdict 明確，立刻寫入 `stop_or_handoff`
+6. 只有在 `blocked` / `awaiting_approval` / `completed` 時才對使用者輸出邊界回覆
+
+manifest 是 ledger，不是 execution 的替代品。
+
 ---
 
 ## 8. Heartbeat And Timeout Policy
@@ -193,6 +249,7 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
 - 預設 interval：60 分鐘
 - 任何超過 60 分鐘的 stage，都要刷新 `last_heartbeat_at`
 - heartbeat 也可附帶簡短 progress note
+- `running` 表示 task 仍有效且可續跑，不保證有背景程序正在執行
 
 ### Timeout
 
@@ -212,6 +269,8 @@ Research V2 的原則是：`research_direction_approval` 改成 exception-based 
 ### Auto-advance default
 
 預設自動前進。只有 `confidence_level = low` 才把使用者拉進流程中。
+這裡的「自動前進」指的是 **同一個 active chat invocation 內的連續 stage 執行**，
+不是背景 queue。
 
 ### High confidence
 
@@ -301,7 +360,7 @@ Task manifest 是 system of record。至少要能回答：
 
 | Command | Purpose |
 |---------|---------|
-| `/start-research` | 建 manifest + intake + 自動串 stage；只有 low confidence 才回來 ask |
+| `/start-research` | 建 manifest，並在同一 invocation 內持續跑到 blocker / review / final packet 邊界；只有 low confidence 才回來 ask |
 | `/task-status` | 回報 liveness / blocker / review / rollback 狀態 |
 | `/approve-stage` | 對 gate 做 approve/reject/scope change |
 | `/resume-task` | 讓 `paused` / `blocked` / `stalled` 的任務續跑 |
@@ -310,13 +369,14 @@ Task manifest 是 system of record。至少要能回答：
 
 ## 14. Pilot Replay Notes
 
-Pilot replay 使用 3 個真實研究主題測試三種核心狀態：
+Pilot replay 使用 4 個樣本測試四種核心狀態：
 
 | Pilot | Tested state | What it taught us |
 |------|--------------|-------------------|
 | `macro_regime_awaiting_direction_approval` | `awaiting_approval` | strategist 結束後必須先停在方向批准，不應直接展開跨市場資料 fanout |
 | `forced_deleveraging_reversal_blocked` | `blocked` | blocker 必須明寫成「缺什麼資料 / 目前怎麼補 / 不補會怎樣」，不能只讓 task 無聲停住 |
 | `tick_ofi_handoff_ready` | `completed` | research 結束時一定要有單一 `handoff_recommendation`，避免使用者自己整理下一步 |
+| `foreground_autonomous_happy_path` | `completed` | `/start-research` 的 happy path 應在單次 invocation 內跑完 intake → strategist → alpha research → final packet |
 
 因此 V2 對 manifest 又補了 4 個操作性要求：
 
@@ -324,5 +384,6 @@ Pilot replay 使用 3 個真實研究主題測試三種核心狀態：
 2. `blockers` 要可承載具體原因與解除條件
 3. `next_recommended_action` 必須只有一個預設推薦動作
 4. `final_packet` 要讓使用者能直接做最終判斷，不需要自己整理
+5. `/resume-task` 與 `/start-research` 的 completed 邊界回覆，都應穩定包含 `Recommended agent` 與 `Primary files / artifacts`
 
 範例放在 `tasks/pilots/`。

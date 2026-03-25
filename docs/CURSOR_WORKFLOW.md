@@ -1,6 +1,6 @@
 # Cursor Agent 工作流指南
 
-> **Last updated**: 2026-03-10 (Orchestrator 升級為 V2：低信心才 review，task manifest 改為 rollback-aware system of record)
+> **Last updated**: 2026-03-24 (clarify foreground-autonomous vs manifest-based resume；補齊 resume UX 與 specialist handoff 邊界)
 
 > 日常開發時的 prompt 參考。7 個 Agent、什麼時候用誰、怎麼下 prompt。
 > 研究任務預設優先走 `@orchestrator` + slash commands；需要直接找專家時，再手動指定其他 agent。
@@ -19,6 +19,16 @@
 你**不需要**再為每一步手動挑 agent、補同樣的上下文、追 heartbeat 或整理 handoff 結果。
 這些動作由 `@orchestrator` 負責；只有在你想直接找某個專家 agent 深聊時，才手動切換。
 
+這裡的「自動」現在有明確邊界：
+- **會自動**：在同一個 active chat invocation 內一路跑多個 stage
+- **不會自動**：在你不發新訊息時有背景 worker 繼續跑
+
+### 三句話版本
+
+1. `/start-research` = 在**當前 chat** 內盡量自動一路跑到 blocker / review / final packet。
+2. chat 結束後，任務只會**保存在 `tasks/active/*.yaml`**，不會自己在背景繼續跑。
+3. 想讓它繼續做事，請用 `/resume-task`，或直接開新 chat 說「繼續 task_id=...」。
+
 ---
 
 ## 速查：我想做什麼 → 叫誰？
@@ -29,6 +39,7 @@
 |---------|-------|-------------|
 | 只講目標，讓系統自動分流研究流程 | `@orchestrator` | `幫我研究 forced deleveraging reversal 是否值得做成 satellite strategy` |
 | 查某個研究任務現在卡在哪裡 | `@orchestrator` | `幫我看 task_id=research_20260310_forced_deleveraging_reversal 的狀態` |
+| 先診斷策略到底錯在 alpha、entry、exit 還是 sizing | `@portfolio-strategist` | `診斷目前 LSR contrarian 的核心痛點，幫我定義本輪只做哪一個 experiment family` |
 | 分析 Baseline 弱點 / 找互補策略方向 | `@portfolio-strategist` | `分析目前 A (Baseline) 在哪些 regime 最弱，給我 3 個互補策略方向` |
 | 判斷新方向該做 standalone 還是 filter | `@portfolio-strategist` | `這個策略適合當第二條腿還是 TSMOM 的 filter？` |
 | 探索新策略想法 | `@alpha-researcher` | `幫我研究 Funding Rate 反向策略的可行性` |
@@ -73,10 +84,12 @@
 
 | Command | Agent | 用途 |
 |---------|-------|------|
-| `/start-research` | `@orchestrator` | 建立 research task manifest、做 intake、預設自動串 stage；只有 low confidence 才 review |
+| `/start-research` | `@orchestrator` | 建立 manifest，並在同一 invocation 內預設一路跑到 blocker / review / final packet；只有 low confidence 才 review |
+| `/diagnose-strategy` | `@portfolio-strategist` | 先做 baseline pain 診斷 + experiment family 鎖定 + 研究路由，避免東補西補 |
 | `/task-status` | `@orchestrator` | 讀取 manifest，回報 `running` / `blocked` / `stalled` / `awaiting_approval` 狀態與 rollback 摘要 |
 | `/approve-stage` | `@orchestrator` | 批准或拒絕當前 gate，並讓流程往下一個 stage 前進 |
 | `/resume-task` | `@orchestrator` | 讓 `paused` / `blocked` / `stalled` 的研究任務續跑 |
+| `/continue-cycle` | `@orchestrator` | 讀取 running task 的 manifest + proposal，自動產出下一個 research cycle 的完整 prompt（免手動組裝） |
 | `/deploy` | `@devops` | 部署最新改動到 Oracle Cloud（git push → pull → 重啟） |
 | `/healthcheck` | `@devops` | 完整健康檢查（runner 狀態、持倉、系統資源） |
 | `/backtest` | `@quant-developer` | 跑回測 + `--quick` 驗證（需填入 config 路徑） |
@@ -120,12 +133,26 @@
 - rollback target / rollback steps
 
 但它**不是**你平常要手動推流程的主介面。
+它也**不是** background daemon 的替代品；active chat 內由 orchestrator 前景執行，chat 結束後才回到 manifest-based resume。
+
+### `/resume-task` 預設應回什麼
+
+為了讓跨 chat 續跑更穩定，`/resume-task` 的回覆至少應固定包含：
+- `Task ID`
+- `Current stage`
+- `Status`
+- `Blocker / review reason`（若無則明寫 `none`）
+- `What changed`
+- `What is running`
+- `Next recommended action`
+- `Recommended agent`
+- `Primary files / artifacts`
 
 ### 狀態語意
 
 | 狀態 | 意義 | 你要做什麼 |
 |------|------|-----------|
-| `running` | 任務正常前進中 | 不需要介入，除非你要中止或改 scope |
+| `running` | 任務正常前進中或可續跑 | 不需要介入，除非你要中止或改 scope；若 chat 已結束，代表它是可續跑狀態，不代表有背景程序 |
 | `awaiting_approval` | 到了需要你批准的 gate | 用 `/approve-stage` 決定是否前進 |
 | `blocked` | 缺資料、需求歧義、或有外部依賴卡住 | 補資訊或決定停掉 / 改 scope |
 | `stalled` | 太久沒有 heartbeat，疑似中斷 | 用 `/task-status` 確認，再用 `/resume-task` 續跑 |
@@ -161,24 +188,29 @@ flowchart TD
 
 適合：你想用單一入口管理研究流程，而不是自己手動 dispatch。
 
+> **Execution model**：foreground-autonomous。只要沒有 blocker / review gate，`/start-research` 應在同一個 invocation 內直接跑完整條研究前段流程。
+
 ```
 Step 0: /start-research → @orchestrator
         「給一個研究目標」
-        → 產出: task manifest + intake summary
+        → 產出: task manifest，並立即開始 intake
 
 Step 1: @orchestrator
-        自動執行 strategist stage（必要時對齊 `@portfolio-strategist` contract）
-        → 若高/中信心：直接續跑
+        自動執行 intake + strategist stage（必要時對齊 `@portfolio-strategist` contract）
+        → 若高/中信心：同一 invocation 內直接續跑
         → 若低信心：才停在 review
 
 Step 2: @orchestrator
         自動執行 alpha-research stage（必要時對齊 `@alpha-researcher` contract）
         → 產出: hypothesis / data needs / EDA findings / handoff recommendation
+        → 若 verdict 已清楚：同一 invocation 內直接寫 final packet
 
 Step 3: /task-status 或最終 summary
-        你通常只看 final packet
+        你通常只看 blocker / review / final packet 邊界回覆
         → 決定 handoff / stop / archive / 擴大研究
 ```
+
+> 若 `stop_or_handoff` 的結論是 `handoff_to_quant_developer` / `need_direction_change` / `stop_and_archive`，代表 **Research MVP 已完成**。接下來要不要繼續動手寫程式、重跑驗證、或結案，通常是你依 final packet 手動切到 specialist agent。
 
 ### Mode A: 完整流程（新策略從 0 到上線）
 
@@ -223,6 +255,8 @@ Step 7: @devops
         → 產出: 線上運行
 ```
 
+> 建議把 Mode A 當成「**新策略標準生命週期**」：研究先走 orchestrator / strategist / alpha research，明確 GO 之後才切到 `@quant-developer`、`@quant-researcher`、`@risk-manager`、`@devops`。
+
 ### Mode B: 快速迭代（改進現有策略）
 
 適合：調參數、加 filter、修 bug。若是互補策略方向不明，先找 Portfolio Strategist。
@@ -251,6 +285,62 @@ Step 6: @devops
         「幫我部署最新改動到 Oracle Cloud」
         → Agent 自動：git push → SSH pull → 重啟 runner
 ```
+
+### Mode B.5: Strategy R&D OS（避免東補西補）
+
+適合：你已經知道策略有問題，但**不知道是 alpha source、entry、exit、sizing 還是 portfolio role 出問題**。
+
+核心原則：
+
+1. **每一輪 research cycle 只做一個 primary experiment family**
+2. **先分清楚是在驗證 alpha 存不存在，還是在優化 trade expression**
+3. **Loop A 沒過，不進 Loop B**
+
+#### 五種 Experiment Families
+
+| Family | 典型問題 | 例子 |
+|--------|---------|------|
+| `signal_mechanism` | alpha source 本身有沒有？ | LSR 新 normalization、近資料加權、state label |
+| `entry_timing` | 同一個 edge 要怎麼進得更準？ | band touch、HTF resonance、threshold persistence |
+| `exit_design` | 已確認的 edge 怎麼兌現？ | NW center TP、ATR SL、time stop |
+| `position_sizing` | 好 setup 要不要加碼、弱 setup 要不要縮？ | conviction scaling、regime size multiplier |
+| `portfolio_role` | 這東西該 standalone、overlay 還是 replace？ | long-only variant、satellite vs overlay |
+
+#### 兩個研究迴圈
+
+| Loop | 要回答的問題 | 典型證據 |
+|------|-------------|---------|
+| `Loop A: Alpha Existence` | 這個原始機制真的有 alpha 嗎？ | causal IC、conditional IC、年度穩定性、頻率、pure vs confounded |
+| `Loop B: Trade Expression` | 已存在的 edge 應該怎麼表達？ | expectancy、MDD、hold time、cost drag、trade count |
+
+**硬規則**：
+- 如果 raw signal 還沒證明存在，不要先討論 TP/SL。
+- 如果同一輪同時改 signal + entry + exit，結論通常不可信。
+- 如果 trade count 從 120/yr 掉到 3/yr，就算 conditional return 很漂亮也不能直接當策略成立。
+
+#### 建議操作順序
+
+1. `/diagnose-strategy`
+   - 先讓 `@portfolio-strategist` 產出 `Strategy Diagnosis Card`
+   - 明確寫出 baseline pain、痛點 regime、primary family、pass / kill rule
+2. `@alpha-researcher`
+   - 只跑**一個 family** 的 EDA / ablation
+   - Notebook 中先寫 `Research Cycle Declaration`
+3. `@quant-developer`
+   - 只實作已明確通過研究 gate 的變體
+4. `@quant-researcher`
+   - 拒絕混合多個 family 的模糊勝利
+
+#### 你真正要問 AI 的，不是「怎麼救策略」
+
+而是這一輪固定問：
+
+- `Baseline pain`: 現在哪裡受傷最重？
+- `Experiment family`: 這輪只研究哪一類問題？
+- `Loop type`: Alpha Existence 還是 Trade Expression？
+- `What stays fixed`: 哪些東西這輪不准動？
+- `Pass rule`: 用什麼指標算過關？
+- `Kill rule`: 什麼結果代表方向錯了？
 
 ### Mode C: 日常維運
 
@@ -407,6 +497,21 @@ ssh -i ~/.ssh/oracle-trading-bot.key ubuntu@140.83.57.255 \
 
 ---
 
+## 研究交接封包（Handoff Packet）
+
+不論是 orchestrated 模式還是 manual specialist handoff，研究任務結束時都應盡量收斂成同一種封包欄位，讓下一個 agent 不必回頭翻整串對話：
+
+- `Current status`
+- `Next recommended action`
+- `Recommended agent`
+- `Primary files / artifacts`
+- `Key decision`
+- `Open risks / blockers`
+
+如果是 `@orchestrator` 的 `stop_or_handoff` 邊界回覆，至少前四項要穩定出現。
+
+---
+
 ## Prompt 技巧
 
 ### 1. 指定角色就夠了
@@ -460,7 +565,60 @@ Researcher 判定 NEED_MORE_WORK，原因：
 請調整策略參數或加 regime filter 改善
 ```
 
-### 5. 用 Plan Mode 做大型任務
+### 5. 用固定研究模板發問
+
+當你在討論策略改進，不要直接問：
+
+```text
+這個策略是不是要改 TP / SL / HTF / 權重？
+```
+
+改成：
+
+```markdown
+Baseline pain:
+Experiment family:
+Loop type:
+Hypothesis:
+What stays fixed:
+Pass rule:
+Kill rule:
+Deliverable:
+Relevant files:
+```
+
+例如：
+
+```markdown
+Baseline pain: LSR contrarian 有正 expectancy，但 standalone MDD 太高。
+Experiment family: exit_design
+Loop type: Trade Expression
+Hypothesis: NW center TP 可以在不明顯傷害 expectancy 的前提下降低 MDD。
+What stays fixed: BTC-only、1h、同一個 LSR signal、同一個 cost model、同一個 entry threshold。
+Pass rule: MDD 改善 > 15%，expectancy 下降 < 10%。
+Kill rule: net expectancy <= 0，或 trades/year < 30。
+Deliverable: 3-row exit experiment matrix + 建議下一步。
+Relevant files: src/qtrade/strategy/lsr_contrarian_strategy.py, src/qtrade/strategy/nwkl_strategy.py
+```
+
+### 6. 不要先新增 Agent
+
+大多數情況下，問題不在「少一個 agent」，而在 prompt 與 handoff 沒有鎖定實驗範圍。
+
+預設分工已足夠：
+- `@portfolio-strategist`：先診斷痛點、鎖定 family
+- `@alpha-researcher`：做單一 family 的 EDA 與 falsification
+- `@quant-developer`：只實作已定義清楚的變體
+- `@quant-researcher`：拒絕過擬合與混合結論
+
+優先新增：
+- skill
+- slash command
+- diagnosis / experiment matrix 模板
+
+只有在你能說出「哪個決策責任目前沒有任何 agent 擁有」時，才值得新增 agent。
+
+### 7. 用 Plan Mode 做大型任務
 
 按 `Shift+Tab` 進入 Plan Mode，讓 Agent 先分析 → 提問 → 擬定計畫 → 你確認後再執行。
 適合用在：大重構、新模組設計、多檔案改動。
