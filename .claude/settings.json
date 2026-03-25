@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreCommit": [
+      {
+        "command": "python -m pytest tests/test_code_safety_guard.py tests/test_resample_shift_guard.py -x -q --tb=line 2>&1 | tail -5",
+        "description": "Run safety guards before commit (code safety + resample look-ahead)"
+      }
+    ]
+  }
+}

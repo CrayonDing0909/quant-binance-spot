@@ -21,6 +21,24 @@ If skills aren't working: `cd .claude/skills/gstack && PATH="$HOME/.bun/bin:$PAT
 
 Skip for this project: `/qa`, `/design-*`, `/plan-design-review`, `/canary`, `/benchmark`, `/land-and-deploy` (no web UI, Oracle Cloud deploy)
 
+## Strategy Development Skills
+
+These are interactive workflow skills for the full strategy lifecycle:
+
+| Skill | When to use |
+|---|---|
+| `/check-direction` | **Before** starting research — scan failure registry and dead ends |
+| `/research` | Full research workflow: idea → EDA → handoff gates → PR |
+| `/implement-strategy` | After research GO — implementation checklist |
+| `/validate-strategy` | After implementation — full validation pipeline (11 steps) |
+| `/risk-check` | Pre-launch audit or weekly/monthly portfolio review |
+
+Typical flow: `/check-direction` → `/research` → `/implement-strategy` → `/validate-strategy` → `/risk-check`
+
+## Hooks
+
+Pre-commit hook automatically runs `test_code_safety_guard.py` + `test_resample_shift_guard.py` before every commit. If tests fail, the commit is blocked.
+
 ## Strategy Development — GitHub PR Workflow
 
 Every research cycle should have its own branch and PR:
