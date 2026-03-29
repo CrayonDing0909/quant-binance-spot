@@ -89,10 +89,11 @@ strategy:
   display_name: "HTF Filter v2 + LSR (Simplified)"
   params:
     # ── Default sub-strategy (SOL, AVAX, DOGE) ──
+    # 2026-03-29: Added 10% WQ Alpha (TSMOM corr=-0.004, portfolio SR +0.13)
     # confirmatory mode: w_tsmom / w_basis_carry are dead params (not used)
     sub_strategies:
       - name: "tsmom_carry_v2"
-        weight: 1.0
+        weight: 0.90
         params:
           combination_mode: "confirmatory"
           tier: "default"
@@ -117,9 +118,30 @@ strategy:
           position_step: 0.2       # 2026-03-24: 0.1→0.2 to reduce micro-trades on small account
           min_change_threshold: 0.15  # 2026-03-24: 0.05→0.15 to reduce fee drag
           htf_filter_enabled: true
+      - name: "wq_alpha"
+        weight: 0.10
+        params:
+          # WQ Alpha: price-volume microstructure (TSMOM corr=-0.004)
+          # Blend test: portfolio SR 3.77→3.90 (+0.13), MDD -3.9%→-3.5%
+          use_wq012: true
+          use_wq028: true
+          use_wq055: true
+          pctrank_lookback: 720
+          long_threshold: 0.80
+          short_threshold: 0.20
+          rebalance_hours: 4
+          sl_atr_mult: 3.0
+          sl_atr_lookback: 14
+          max_hold_bars: 48
+          profit_target_pct: 0.03
+          adx_gate_enabled: true
+          adx_threshold: 25.0
+          persist_bars: 2
+          cooldown_bars: 6
 
   symbol_overrides:
-    # ── BTC: 80% tsmom_carry_v2 btc_enhanced + 20% lsr_contrarian satellite ──
+    # ── BTC: 72% tsmom_carry_v2 btc_enhanced + 18% lsr_contrarian + 10% wq_alpha ──
+    # 2026-03-29: Rebalanced from 80/20 to 72/18/10 to add WQ Alpha
     # 2026-03-25: Added LSR Contrarian as diversification sleeve
     #   TSMOM SR=2.49, LSR SR=1.52, corr=0.256 → genuine diversification
     #   Long-only satellite: net exp +0.645%, 55.6 tr/yr
@@ -128,7 +150,7 @@ strategy:
     BTCUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
-          weight: 0.80
+          weight: 0.72
           params:
             combination_mode: "confirmatory"
             tier: "btc_enhanced"
@@ -154,7 +176,7 @@ strategy:
             htf_no_confirm: 0.7
             htf_4h_only_confirm: 0.3
         - name: "lsr_contrarian"
-          weight: 0.20
+          weight: 0.18
           params:
             # Signal (v3: EW pctrank)
             lsr_type: "lsr"
@@ -177,6 +199,24 @@ strategy:
             # Role
             long_only: true
             vol_scale_enabled: false
+        - name: "wq_alpha"
+          weight: 0.10
+          params:
+            use_wq012: true
+            use_wq028: true
+            use_wq055: true
+            pctrank_lookback: 720
+            long_threshold: 0.80
+            short_threshold: 0.20
+            rebalance_hours: 4
+            sl_atr_mult: 3.0
+            sl_atr_lookback: 14
+            max_hold_bars: 48
+            profit_target_pct: 0.03
+            adx_gate_enabled: true
+            adx_threshold: 25.0
+            persist_bars: 2
+            cooldown_bars: 6
 
     # ── ETH: inherits default (was eth_enhanced, but 2026-03-04 deep IC review
     #    showed signal correlation = 1.000 vs default — w_tsmom/w_oi/w_fr/w_basis
@@ -191,7 +231,7 @@ strategy:
     LINKUSDT:
       sub_strategies:
         - name: "tsmom_carry_v2"
-          weight: 1.0
+          weight: 0.90
           params:
             tier: "tsmom_only"
             tsmom_lookback: 168
@@ -204,8 +244,26 @@ strategy:
             position_step: 0.2       # 2026-03-24: 0.1→0.2
             min_change_threshold: 0.15  # 2026-03-24: 0.05→0.15
             htf_filter_enabled: true
+        - name: "wq_alpha"
+          weight: 0.10
+          params:
+            use_wq012: true
+            use_wq028: true
+            use_wq055: true
+            pctrank_lookback: 720
+            long_threshold: 0.80
+            short_threshold: 0.20
+            rebalance_hours: 4
+            sl_atr_mult: 3.0
+            sl_atr_lookback: 14
+            max_hold_bars: 48
+            profit_target_pct: 0.03
+            adx_gate_enabled: true
+            adx_threshold: 25.0
+            persist_bars: 2
+            cooldown_bars: 6
 
-    # SOL, AVAX, DOGE → inherit default (no overrides needed)
+    # SOL, AVAX, DOGE → inherit default (includes 10% WQ Alpha)
     # BNB, ADA removed from universe (no alpha evidence)
 
   # ── Overlay: oi_vol + lsr_confirmatory (identical to prod) ──
