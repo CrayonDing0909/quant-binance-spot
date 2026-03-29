@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-# Polymarket 15-Minute Contrarian Bot
+# Polymarket 15-Minute Bot — Krajekis 5-Layer Strategy v2
 # ═══════════════════════════════════════════════════════════════
-# Strategy: Mean reversion on 15-minute Up/Down markets
-# Edge: Maker orders (0% fee) + crowd overreaction at extremes
+# Source: @krajekis via @lqp2021
+# Layers: Session → Volatility → Price Structure → Timing → Risk
 # ═══════════════════════════════════════════════════════════════
 
 coins:
@@ -10,21 +10,38 @@ coins:
   - ETH
   - SOL
 
-# Bet sizing
-bet_size_usdc: 1.0
-max_positions: 3
+# Volatility thresholds (15-minute ATR in USD)
+volatility:
+  btc_low_threshold: 40
+  btc_high_threshold: 100
+  eth_low_threshold: 2.0
+  eth_high_threshold: 5.0
+  sol_low_threshold: 0.3
+  sol_high_threshold: 1.0
 
-# Entry thresholds
-max_price: 0.45         # Only buy shares cheaper than this (odds > 2.2:1)
-min_price: 0.02         # Skip if too cheap (near resolution)
-min_time_remaining: 120 # Don't enter with <2 min left
+# Entry timing within 15-minute window
+entry_window:
+  sweet_spot_start: 600    # enter after 5 min passed (10 min remaining)
+  sweet_spot_end: 120      # don't enter with <2 min left
 
-# Exit
-take_profit: 0.10       # +$0.10 per share
-stop_loss: 0.05         # -$0.05 per share
+# Price targets by scenario
+pricing:
+  trend_follow:
+    min_price: 0.65        # buy at 65-95¢ (low vol, high probability)
+    max_price: 0.95
+  mean_reversion:
+    min_price: 0.02        # buy at 2-25¢ (high vol, high payoff)
+    max_price: 0.25
+
+# Risk management
+risk:
+  bet_size_usdc: 1.0
+  max_daily_losses: 3
+  max_daily_trades: 15
+  max_positions: 2
 
 # Polling
-poll_interval_seconds: 30  # Check every 30 seconds
+poll_interval_seconds: 30
 
 # Mode
 dry_run: true

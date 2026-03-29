@@ -1,16 +1,20 @@
 """
-15-Minute Polymarket Bot Runner.
+15-Minute Polymarket Bot Runner — v2 (Krajekis 5-Layer Strategy).
 
 Architecture:
     Every 30 seconds:
         1. Find current active 15-minute market
-        2. Check current odds
-        3. If contrarian signal → place limit order (maker = 0% fee)
-        4. Monitor open positions for TP/SL
-        5. When market expires → auto-discover next market
+        2. Fetch real-time Binance 1m klines → compute TA signals
+        3. Determine session + volatility regime
+        4. Evaluate 5-layer strategy (krajekis)
+        5. If signal → place LIMIT order (maker = 0% fee)
+        6. Track daily P&L for risk management
 
-Uses polling (not WebSocket) for simplicity in v1.
-Can upgrade to WebSocket later for faster execution.
+v2 changes vs v1:
+    - Added Binance TA feed (RSI, MACD, EMA, VWAP, ATR)
+    - Session-aware (Asia/London/NY/Weekend)
+    - Two scenarios: trend_follow (expensive side) + mean_reversion (cheap side)
+    - Daily loss limit
 """
 from __future__ import annotations
 
@@ -22,7 +26,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from qtrade.polymarket.market_discovery import find_current_15m_market, Market15m
-from qtrade.polymarket.mean_reversion import evaluate_market, BetSignal
+from qtrade.polymarket.binance_feed import compute_ta_signals
+from qtrade.polymarket.krajekis_strategy import (
+    determine_session,
+    classify_volatility,
+    evaluate_15m_window,
+    TradeSetup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,21 +112,20 @@ def place_limit_order(
 
 def run_once(config: dict, state: dict) -> dict:
     """
-    Single check cycle for 15-minute strategy.
+    Single check cycle — Krajekis 5-layer strategy.
 
     Args:
         config: Bot configuration
-        state: Mutable state (positions, cooldowns)
+        state: Mutable state (positions, daily counters)
 
     Returns:
         Updated state
     """
     coins = config.get("coins", ["BTC"])
-    bet_size = config.get("bet_size_usdc", 1.0)
-    max_price = config.get("max_price", 0.45)
-    min_price = config.get("min_price", 0.02)
-    min_time_remaining = config.get("min_time_remaining", 120.0)
-    max_positions = config.get("max_positions", 3)
+    bet_size = config.get("risk", {}).get("bet_size_usdc", config.get("bet_size_usdc", 1.0))
+    max_positions = config.get("risk", {}).get("max_positions", config.get("max_positions", 3))
+    max_daily_losses = config.get("risk", {}).get("max_daily_losses", 3)
+    max_daily_trades = config.get("risk", {}).get("max_daily_trades", 10)
     dry_run = config.get("dry_run", True)
     wallet_key = config.get("wallet_key", "")
     api_key = config.get("api_key", "")
@@ -125,93 +134,153 @@ def run_once(config: dict, state: dict) -> dict:
     tg_token = config.get("telegram_bot_token", "")
     tg_chat = config.get("telegram_chat_id", "")
 
+    # Volatility thresholds
+    vol_cfg = config.get("volatility", {})
+    # Entry timing
+    entry_cfg = config.get("entry_window", {})
+    sweet_start = entry_cfg.get("sweet_spot_start", 600)
+    sweet_end = entry_cfg.get("sweet_spot_end", 120)
+    # Pricing
+    pricing = config.get("pricing", {})
+    trend_cfg = pricing.get("trend_follow", {})
+    mr_cfg = pricing.get("mean_reversion", {})
+
     now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+
+    # ── Daily risk management ──
+    if state.get("last_date") != today:
+        state["last_date"] = today
+        state["daily_losses"] = 0
+        state["daily_trades"] = 0
+
+    if state.get("daily_losses", 0) >= max_daily_losses:
+        logger.info(f"Daily loss limit reached ({max_daily_losses}). Pausing.")
+        return state
+
+    if state.get("daily_trades", 0) >= max_daily_trades:
+        logger.info(f"Daily trade limit reached ({max_daily_trades}).")
+        return state
+
+    # ── Layer 1: Session ──
+    session = determine_session(now)
 
     # Track positions
     positions = state.get("positions", [])
     active_positions = [p for p in positions if p.get("status") == "open"]
 
     if len(active_positions) >= max_positions:
-        logger.debug(f"Max positions ({max_positions}) reached")
         return state
 
     for coin in coins:
-        # Find current market
+        # Find current 15m market
         market = find_current_15m_market(coin)
         if market is None:
             continue
 
-        # Skip if we already have a position in this market
+        # Skip if already positioned in this window
         if any(p.get("slug") == market.slug for p in active_positions):
             continue
 
-        # Evaluate for entry
-        signal = evaluate_market(
-            market=market,
-            bet_size=bet_size,
-            max_price=max_price,
-            min_price=min_price,
-            min_time_remaining=min_time_remaining,
-        )
-
-        if signal is None:
-            logger.debug(f"  {coin}: no signal (Up=${market.price_up:.3f}, Down=${market.price_down:.3f})")
+        # ── Layer 2-3: Binance TA + Volatility ──
+        ta = compute_ta_signals(coin)
+        if ta is None:
+            logger.warning(f"  {coin}: failed to compute TA")
             continue
 
-        # Place order
+        # Volatility classification (coin-specific thresholds)
+        coin_low = vol_cfg.get(f"{coin.lower()}_low_threshold", 40)
+        coin_high = vol_cfg.get(f"{coin.lower()}_high_threshold", 100)
+        vol_regime = classify_volatility(ta.atr_14, coin_low, coin_high)
+
+        # ── Layer 4+5: Full evaluation ──
+        setup = evaluate_15m_window(
+            market=market,
+            ta=ta,
+            session=session,
+            vol_regime=vol_regime,
+            bet_size=bet_size,
+            sweet_spot_start=sweet_start,
+            sweet_spot_end=sweet_end,
+            trend_min_price=trend_cfg.get("min_price", 0.65),
+            trend_max_price=trend_cfg.get("max_price", 0.95),
+            mr_min_price=mr_cfg.get("min_price", 0.02),
+            mr_max_price=mr_cfg.get("max_price", 0.25),
+        )
+
+        if setup is None:
+            logger.debug(
+                f"  {coin}: no setup [{session}|{vol_regime}vol] "
+                f"Up=${market.price_up:.3f} Down=${market.price_down:.3f} "
+                f"RSI={ta.rsi_14:.0f} remaining={market.time_remaining_seconds():.0f}s"
+            )
+            continue
+
+        # ── Execute ──
+        odds = 1.0 / setup.price_target if setup.price_target > 0 else 0
         msg = (
-            f"{'[DRY] ' if dry_run else ''}*15M BET*\n"
+            f"{'[DRY] ' if dry_run else ''}*15M TRADE*\n"
             f"Coin: {coin}\n"
-            f"Side: {signal.side.upper()}\n"
-            f"Price: ${signal.price:.3f} ({signal.odds:.1f}:1)\n"
-            f"Size: {signal.size_usdc} USDC\n"
-            f"{signal.reason}"
+            f"{setup.reason}"
         )
 
         if dry_run:
-            logger.info(f"DRY RUN: {signal.reason}")
+            logger.info(f"DRY RUN [{coin}]: {setup.reason}")
         else:
             result = place_limit_order(
                 wallet_key=wallet_key,
-                token_id=signal.token_id,
-                price=signal.price,
-                size_usdc=signal.size_usdc,
+                token_id=setup.token_id,
+                price=setup.price_target,
+                size_usdc=setup.size_usdc,
                 api_key=api_key,
                 api_secret=api_secret,
                 api_passphrase=api_passphrase,
             )
             if result:
-                msg += f"\nOrder: OK"
+                msg += "\nOrder: OK"
                 positions.append({
                     "slug": market.slug,
                     "coin": coin,
-                    "side": signal.side,
-                    "entry_price": signal.price,
-                    "size": signal.size_usdc,
-                    "odds": signal.odds,
+                    "side": setup.side,
+                    "entry_price": setup.price_target,
+                    "size": setup.size_usdc,
+                    "scenario": setup.scenario,
+                    "session": setup.session,
+                    "vol_regime": setup.vol_regime,
                     "timestamp": now.isoformat(),
                     "status": "open",
                 })
+                state["daily_trades"] = state.get("daily_trades", 0) + 1
             else:
-                msg += f"\nOrder: FAILED"
+                msg += "\nOrder: FAILED"
 
         send_telegram(msg, tg_token, tg_chat)
 
         # Log trade
         log_dir = Path(config.get("log_dir", "logs/polymarket"))
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"trades_15m_{now.strftime('%Y-%m-%d')}.jsonl"
+        log_file = log_dir / f"trades_15m_{today}.jsonl"
         with open(log_file, "a") as f:
             entry = {
                 "timestamp": now.isoformat(),
                 "dry_run": dry_run,
                 "coin": coin,
                 "slug": market.slug,
-                "side": signal.side,
-                "price": signal.price,
-                "odds": signal.odds,
-                "size": signal.size_usdc,
-                "confidence": signal.confidence,
+                "side": setup.side,
+                "price": setup.price_target,
+                "odds": odds,
+                "size": setup.size_usdc,
+                "scenario": setup.scenario,
+                "session": session,
+                "vol_regime": vol_regime,
+                "confidence": setup.confidence,
+                "ta": {
+                    "rsi": round(ta.rsi_14, 1),
+                    "macd_hist": round(ta.macd_hist, 2),
+                    "vwap_dist": round(ta.vwap_distance_pct, 3),
+                    "atr": round(ta.atr_14, 2),
+                    "ema21_gt_50": ta.ema_21 > ta.ema_50,
+                },
                 "time_remaining": market.time_remaining_seconds(),
             }
             f.write(json.dumps(entry) + "\n")
