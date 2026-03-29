@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════
+# Polymarket Cascade Bot — Configuration
+# ═══════════════════════════════════════════════════════════════
+# Strategy: Bet on daily "BTC/ETH/SOL Up or Down" markets
+#           when OI liquidation cascade is detected.
+#
+# Evidence:
+#   OI 24h drop >10% → BTC avg 24h return +1.72% (2024), WR 82%
+#   Polymarket odds during panic → 5:1 to 25:1 for "Up"
+#   Expected value per bet: +2.96 to +14.18 per USDC risked
+# ═══════════════════════════════════════════════════════════════
+
+# Which symbols to monitor for OI cascade
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+
+# Bet sizing
+bet_amount_usdc: 1.0      # USDC per bet (fixed, simple interest)
+max_daily_bets: 3         # Max bets per day across all symbols
+min_balance_usdc: 2.0     # Don't bet if balance below this
+
+# Signal thresholds
+oi_drop_threshold: -0.10  # OI 24h drop > 10% triggers cascade
+min_odds: 2.0             # Don't bet if odds < 2:1 (price > 0.50)
+max_odds: 50.0            # Skip if odds > 50:1 (suspicious)
+max_price: 0.50           # Don't buy shares priced above this
+
+# Cooldowns
+cooldown_hours: 24        # Don't bet same symbol within 24h
+check_interval_seconds: 3600  # Check every 1 hour
+
+# Mode
+dry_run: true             # Set to false for real trading
+
+# Logging
+log_dir: "logs/polymarket"
+
+# Telegram notifications (optional — fill in to enable)
+# telegram_bot_token: ""
+# telegram_chat_id: ""
