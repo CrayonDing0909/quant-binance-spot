@@ -19,11 +19,9 @@ Shows: agent tasks, research pipeline, strategy rankings (per-symbol WR%/PnL/DD)
 
 Use `/browse` from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
 
-Available skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/review`, `/investigate`, `/cso`, `/retro`, `/careful`, `/guard`, `/freeze`, `/unfreeze`, `/browse`, `/ship`, `/codex`, `/gstack-upgrade`
+Available gstack skills: `/browse`, `/careful`, `/codex`, `/cso`, `/freeze`, `/unfreeze`, `/guard`, `/investigate`, `/plan-ceo-review`, `/plan-eng-review`, `/retro`, `/review`, `/ship`
 
 If skills aren't working: `cd .claude/skills/gstack && PATH="$HOME/.bun/bin:$PATH" ./setup`
-
-Skip for this project: `/qa`, `/design-*`, `/plan-design-review`, `/canary`, `/benchmark`, `/land-and-deploy` (no web UI, Oracle Cloud deploy)
 
 ## Strategy Development Skills
 
@@ -36,8 +34,17 @@ These are interactive workflow skills for the full strategy lifecycle:
 | `/implement-strategy` | After research GO — implementation checklist |
 | `/validate-strategy` | After implementation — full validation pipeline (11 steps) |
 | `/risk-check` | Pre-launch audit or weekly/monthly portfolio review |
+| `/quant-signals-reference` | When choosing signal parameters — academic evidence, anti-overfit methodology, known pitfalls |
 
 Typical flow: `/check-direction` → `/research` → `/implement-strategy` → `/validate-strategy` → `/risk-check`
+
+## Research Notes (Obsidian Vault)
+
+`docs/` directory doubles as an Obsidian vault. Open with: `open -a Obsidian docs/`
+
+- `docs/research/README.md` — Map of Content (MOC) index
+- Research notes use YAML frontmatter + `[[wikilinks]]` for Obsidian graph view
+- `.obsidian/` is in `.gitignore` (local settings only)
 
 ## Hooks
 

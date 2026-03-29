@@ -1,3 +1,7 @@
+# Obsidian
+.obsidian/
+docs/daily/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -78,3 +82,4 @@ reports/validation/
 
 # Runtime files
 reports/**/paper_state.json
+.gstack/
