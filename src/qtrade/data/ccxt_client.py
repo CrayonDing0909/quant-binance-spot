@@ -33,7 +33,8 @@ EXCHANGE_HISTORY = {
     "bitstamp": {"btc_start": "2011-08-18", "note": "最早的交易所之一"},
     "kraken": {"btc_start": "2013-10-06", "note": "歐洲主要交易所，數據完整"},
     "bitfinex": {"btc_start": "2013-04-01", "note": "專業交易所"},
-    "coinbasepro": {"btc_start": "2015-01-26", "note": "美國合規交易所，改名 Coinbase Exchange"},
+    "coinbaseexchange": {"btc_start": "2015-01-26", "note": "美國合規交易所（原 Coinbase Pro）"},
+    "coinbasepro": {"btc_start": "2015-01-26", "note": "已棄用，請用 coinbaseexchange"},
     "binance": {"btc_start": "2017-08-17", "note": "全球最大"},
     "okx": {"btc_start": "2017-08-17", "note": "前 OKEx"},
     "huobi": {"btc_start": "2017-09-01", "note": "中國起家"},
@@ -59,7 +60,7 @@ SYMBOL_MAPPING = {
 }
 
 # 早期交易所通常只有 BTC/USD，沒有 USDT
-USDT_TO_USD_EXCHANGES = {"bitstamp", "kraken", "coinbasepro", "bitfinex"}
+USDT_TO_USD_EXCHANGES = {"bitstamp", "kraken", "coinbasepro", "coinbaseexchange", "bitfinex"}
 
 
 def convert_symbol(binance_symbol: str, exchange: str) -> str:
@@ -198,8 +199,9 @@ def fetch_ccxt_klines(
         last_timestamp = ohlcv[-1][0]
         current_since = last_timestamp + 1
         
-        # 如果返回的數據少於請求的數量，說明已經到達末尾
-        if len(ohlcv) < limit_per_request:
+        # 如果返回的數據遠少於請求的數量，說明已經到達末尾
+        # 使用 90% 閾值以容忍交易所回傳略少於 limit 的情況（如 Coinbase 回 299/300）
+        if len(ohlcv) < limit_per_request * 0.5:
             break
         
         # 進度提示（每 10000 筆）

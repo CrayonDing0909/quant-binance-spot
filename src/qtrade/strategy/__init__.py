@@ -124,3 +124,6 @@ from . import derivatives_enhanced_strategy  # noqa: E402
 from . import low_freq_portfolio_strategy  # noqa: E402
 from . import lsr_contrarian_strategy  # noqa: E402
 from . import orderflow_composite_strategy  # noqa: E402
+from . import cb_premium_strategy  # noqa: E402
+from . import huashan_convergence_strategy  # noqa: E402
+from . import wq_alpha_strategy  # noqa: E402

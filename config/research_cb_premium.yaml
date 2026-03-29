@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — CB Premium v1 (Coinbase-Binance Spread Standalone)
+# ═══════════════════════════════════════════════════════════════
+# Source:   华山论剑 (@huashanlunjians) methodology
+# Origin:   research_cb_premium_eda.py (2026-03-28)
+# Mode:     Standalone — portfolio-level diversifier
+#
+# RESEARCH EVIDENCE:
+#   IC: +0.022~+0.031 @ 1h, BTC+ETH both positive, pct+ 68-73%
+#   Best: LO 50 daily, BTC SR=1.462 MDD=-43.4%, ETH SR=1.368
+#   TSMOM correlation: +0.009 (BTC), -0.068 (ETH) — near zero
+#
+# DATA DEPENDENCY:
+#   Coinbase 1h klines cached at data/coinbase/{BTC,ETH}_USD_1h.parquet
+#   Auto-fetched by research EDA script, or manually:
+#     PYTHONPATH=src python scripts/research/research_cb_premium_eda.py
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: "1h"
+  start: "2020-01-01"
+  end: null
+  market_type: "spot"
+
+strategy:
+  name: "cb_premium"
+  display_name: "CB Premium v1 (Coinbase-Binance Spread)"
+  params:
+    # ── Signal ──
+    signal_variant: "zscore_24h"   # best IC stability across horizons
+    pctrank_lookback: 720          # 30 days rolling percentile
+
+    # ── Position ──
+    long_threshold: 0.5            # pctrank > 0.5 → long
+    short_threshold: -1.0          # disabled (long-only)
+    rebalance_hours: 24            # daily rebalance
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"       # signal_delay=1 — signal at close[i], trade at open[i+1]
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: false
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.50
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.5
+    ETHUSDT: 0.5
+
+output:
+  report_dir: "./reports"

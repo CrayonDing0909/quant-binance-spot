@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — WorldQuant Alpha Composite v1.2 (15m candles)
+# ═══════════════════════════════════════════════════════════════
+# Same alphas as 1h version, but on 15m candles.
+# Lookbacks rescaled ×4 to maintain equivalent time windows.
+# WQ Alphas are short-term microstructure signals — expect
+# stronger IC at higher frequency.
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: "15m"
+  start: "2022-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "long_only"
+
+strategy:
+  name: "wq_alpha"
+  display_name: "WQ Alpha Composite v1.2 (15m)"
+  params:
+    use_wq012: true
+    use_wq028: true
+    use_wq055: true
+
+    # Lookbacks rescaled ×4 for 15m (720 bars @1h = 2880 bars @15m)
+    pctrank_lookback: 2880
+    long_threshold: 0.80
+    short_threshold: 0.20
+    rebalance_hours: 4        # every 4 bars = 1 hour (same real-time frequency as 1h version's 4h)
+
+    # Exit design (rescaled ×4)
+    sl_atr_mult: 3.0
+    sl_atr_lookback: 56       # 14 bars @1h = 56 bars @15m
+    max_hold_bars: 192        # 48 bars @1h = 192 bars @15m (still 2 days)
+    profit_target_pct: 0.03
+
+    # Entry filter
+    adx_gate_enabled: true
+    adx_threshold: 25.0
+    adx_period: 56            # 14 @1h = 56 @15m
+    persist_bars: 2
+    cooldown_bars: 24         # 6 bars @1h × 4 = 24 bars @15m
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.50
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.5
+    ETHUSDT: 0.5
+
+output:
+  report_dir: "./reports"

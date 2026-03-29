@@ -1,0 +1,89 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — WorldQuant Alpha Composite v1
+# ═══════════════════════════════════════════════════════════════
+# Source:   Kakushadze 2016 (arXiv:1601.00991) — 101 Formulaic Alphas
+# Origin:   IC scan on BTC+ETH 1h (2020-2026), 20260329
+# Mode:     Standalone — price-volume microstructure (orthogonal to TSMOM)
+#
+# SELECTED ALPHAS (IC > 0.01 at 24h):
+#   wq012: sign(Δvol) × (-Δclose)       IC=+0.011, pct+=65%
+#   wq028: corr(adv20,low,5)+mid-close  IC=+0.008, pct+=72%
+#   wq055: -corr(rank(%K),rank(vol),6)  IC=-0.013, ETH stronger
+#
+# CHARACTERISTICS:
+#   - Fast signals (low autocorr) → 4h rebalance, 48h max hold
+#   - Different alpha type from TSMOM (price-volume vs trend)
+#   - No external data needed — pure OHLCV
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: "1h"
+  start: "2020-01-01"
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "long_only"    # v1.2: short side consistently loses in crypto bull regime
+
+strategy:
+  name: "wq_alpha"
+  display_name: "WQ Alpha Composite v1 (012+028+055)"
+  params:
+    # ── Alpha selection ──
+    use_wq012: true
+    use_wq028: true
+    use_wq055: true
+
+    # ── Signal processing ──
+    pctrank_lookback: 720
+    long_threshold: 0.80       # v1.1: much stricter (was 0.65)
+    short_threshold: 0.20     # v1.1: much stricter (was 0.35)
+    rebalance_hours: 4
+
+    # ── Exit design ──
+    sl_atr_mult: 3.0
+    sl_atr_lookback: 14
+    max_hold_bars: 48
+    profit_target_pct: 0.03
+
+    # ── Entry filter ──
+    adx_gate_enabled: true    # v1.1: ON — filter out choppy periods
+    adx_threshold: 25.0
+    persist_bars: 2           # v1.1: need 2 consecutive signals
+    cooldown_bars: 6          # v1.1: 24h cooldown
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.50
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.5
+    ETHUSDT: 0.5
+
+output:
+  report_dir: "./reports"

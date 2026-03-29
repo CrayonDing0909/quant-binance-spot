@@ -1,0 +1,129 @@
+# ═══════════════════════════════════════════════════════════════
+# RESEARCH — 华山论剑 Multi-Signal Convergence v2.2 (per-symbol)
+# ═══════════════════════════════════════════════════════════════
+# Source:   华山论剑 TG (@huashanlunjians) — 5 pillar system
+# Origin:   Full channel scrape + methodology reconstruction (2026-03-28)
+# Mode:     Standalone — portfolio-level diversifier (TSMOM corr < 0.07)
+#
+# 5 PILLARS:
+#   1. OI change rate z-score (contrarian: OI decline = bullish)
+#   2. Funding Rate z-score (contrarian: negative FR = bullish)
+#   3. LSR z-score (contrarian: retail crowded = fade)
+#   4. CB Premium z-score (directional: US institutional flow)
+#   5. Stablecoin momentum (directional: capital inflow)
+#
+# ENTRY: convergence score > threshold (multiple signals align)
+# EXIT:  score reversal OR profit target (BTC ≥8%, ETH ≥10%)
+#
+# DATA DEPS:
+#   - OI: data/binance/futures/open_interest/merged/
+#   - FR: data/binance/futures/funding_rate/
+#   - LSR: data/binance/futures/derivatives/
+#   - CB: data/coinbase/ (fetched by research_cb_premium_eda.py)
+#   - SC: data/onchain/defillama/stablecoin_mcap.parquet
+# ═══════════════════════════════════════════════════════════════
+
+market:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  interval: "1h"
+  start: "2022-01-01"    # All data sources available from here
+  end: null
+  market_type: "futures"
+
+futures:
+  leverage: 1
+  margin_type: "ISOLATED"
+  position_mode: "ONE_WAY"
+  direction: "both"
+
+strategy:
+  name: "huashan_convergence"
+  display_name: "华山论剑 Convergence v2.2 (per-symbol)"
+  params:
+    # ── Base params (used for BTC, overridden for ETH below) ──
+    # ── Pillar weights (v2: SC lowered per CryptoQuant CEO insight) ──
+    w_oi: 1.0
+    w_fr: 1.0
+    w_lsr: 1.0
+    w_cb: 1.0
+    w_sc: 0.3              # v2: lowered from 0.5 (BTC liquidity now via ETF, not stablecoins)
+
+    # ── Entry/Exit ──
+    entry_threshold: 0.25  # v2.1: lowered from 0.3 for more trade opportunities
+    exit_threshold: 0.0    # score < 0.0 → exit
+    min_signals: 3         # need at least 3/5 pillars active
+    rebalance_hours: 4     # v2.1: 4h rebalance (was 24h) — 6x more observation points
+
+    # ── Profit target exit (华山论剑 rule) ──
+    use_profit_target: true
+    profit_target_pct: 0.08   # BTC ≥8% → take profit
+
+    # ── v2: Exit design (from LSR v3 Cycle 2 validation) ──
+    sl_atr_mult: 3.0          # ATR 3.0x stop-loss (LSR v3: optimal across 2.0-4.0 sweep)
+    sl_atr_lookback: 14       # ATR calculation period
+    max_hold_bars: 168        # 7d time stop (LSR v3: prevents zombie holdings)
+
+    # ── v2: Entry filters (from LSR v3 Cycle 1 validation) ──
+    adx_gate_enabled: true    # ADX regime gate — only trade in trending markets
+    adx_period: 14
+    adx_threshold: 25.0       # ADX > 25 = trending (LSR v3 validated)
+    persist_bars: 2           # score must be above threshold for 2 consecutive rebalance periods (= 8h at 4h rebalance)
+    cooldown_bars: 12         # v2.1: 12 bars × 4h = 48h cooldown (was 24 bars × 24h = 24 days equivalent)
+
+    # ── Sub-signal params ──
+    oi_lookback: 24           # 24h price/OI change for 4-quadrant
+    fr_zscore_window: 168     # 7d FR z-score
+    lsr_zscore_window: 168    # 7d LSR z-score
+    cb_zscore_window: 60      # v2: 60-day CB premium z-score (CryptoQuant SMA-50 consensus)
+    sc_mom_window: 30         # 30d stablecoin momentum
+    sc_zscore_window: 90      # 90d z-score normalization
+
+  # ── Per-symbol overrides (v2.2) ──────────────────────────
+  # ETH needs slower rebalance + lower FR/CB/SC weights
+  # Reason: docs/research/20260328_btc_eth_signal_divergence.md
+  #   - ETH FR polluted by staking delta-hedge (87.5% at floor)
+  #   - ETH <12h trades avg -1.96% vs BTC -0.40%
+  #   - ETH on-chain signals confounded by DeFi mechanical flows
+  symbol_overrides:
+    ETHUSDT:
+      rebalance_hours: 24       # daily (was 4h) — ETH whipsaws 5x more on short TF
+      entry_threshold: 0.3      # stricter than BTC 0.25 — fewer but higher quality entries
+      cooldown_bars: 24         # 24h cooldown (vs BTC 12 bars × 4h = 48h)
+      persist_bars: 2           # same persist but at daily cadence = 48h confirmation
+      w_fr: 0.3                 # lowered: ETH FR polluted by staking hedge noise
+      w_cb: 0.3                 # lowered: CB Premium weak on ETH
+      w_sc: 0.1                 # minimal: stablecoin signal most degraded on ETH
+      profit_target_pct: 0.10   # ETH needs 10% target (华山论剑: "以太吃了最少10%")
+      max_hold_bars: 336        # 14d time stop (ETH trends develop slower)
+
+backtest:
+  initial_cash: 10000
+  fee_bps: 5
+  slippage_bps: 3
+  trade_on: "next_open"
+  validate_data: true
+  clean_data: true
+  funding_rate:
+    enabled: true
+    default_rate_8h: 0.0001
+    use_historical: true
+  slippage_model:
+    enabled: false
+
+risk:
+  max_drawdown_pct: 0.50
+
+position_sizing:
+  method: "fixed"
+  position_pct: 1.0
+
+portfolio:
+  cash_reserve: 0
+  allocation:
+    BTCUSDT: 0.5
+    ETHUSDT: 0.5
+
+output:
+  report_dir: "./reports"
