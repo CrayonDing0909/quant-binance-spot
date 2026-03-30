@@ -27,7 +27,8 @@ entry_window:
 
 # Strategy A: Momentum — buy leading side if not too expensive
 # Backtest: ETH t=5 max$0.65: 319 trades, 63.6% WR, +$35.4 PnL
-momentum_max_price: 0.65    # only buy leading side if < $0.65
+momentum_min_price: 0.55    # skip if < $0.55 (too close to 50/50, no edge)
+momentum_max_price: 0.65    # skip if > $0.65 (too expensive, low payoff)
 momentum_start: 630         # t=4.5min (10.5min remaining)
 momentum_end: 540           # t=6min (9min remaining)
 

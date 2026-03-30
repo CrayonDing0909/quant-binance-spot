@@ -241,13 +241,14 @@ def run_once(config: dict, state: dict) -> dict:
         momentum_start = config.get("momentum_start", 630)  # 10.5min remaining = t=4.5
         momentum_end = config.get("momentum_end", 540)       # 9min remaining = t=6
 
+        momentum_min = config.get("momentum_min_price", 0.55)  # skip < 0.55 (too close to 50/50)
         if momentum_start >= remaining >= momentum_end:
-            if market.price_up > 0.50 and market.price_up < momentum_max:
+            if market.price_up >= momentum_min and market.price_up < momentum_max:
                 side = "up"
                 share_price = market.price_up
                 token_id = market.token_id_up
                 strategy_name = "momentum"
-            elif market.price_down > 0.50 and market.price_down < momentum_max:
+            elif market.price_down >= momentum_min and market.price_down < momentum_max:
                 side = "down"
                 share_price = market.price_down
                 token_id = market.token_id_down
@@ -340,17 +341,24 @@ def run_once(config: dict, state: dict) -> dict:
         session_zh = {"asia": "亞洲", "london_kill": "倫敦", "ny_open": "紐約", "london_close": "倫敦收盤", "weekend": "週末"}.get(session, session)
         win_amount = setup.size_usdc * (odds - 1) if odds > 1 else 0
         disp_pct = (binance_price - window_open) / window_open * 100 if window_open > 0 else 0
+        strategy_zh = "動量跟隨" if strategy_name == "momentum" else "逆向微偏"
+        settle_min = remaining_min  # minutes until this market settles
 
         msg = (
             f"{'🧪 ' if dry_run else '💰 '}*Polymarket 15m*\n"
             f"\n"
             f"{side_emoji} *{coin} → {setup.side.upper()}*\n"
-            f"📊 策略: {'動量跟隨' if strategy_name == 'momentum' else '逆向微偏'}\n"
-            f"💵 下注: ${setup.size_usdc:.2f} @ ${setup.price_target:.3f}\n"
-            f"🎯 賠率: {odds:.1f}:1 (贏${win_amount:.2f} / 虧${setup.size_usdc:.2f})\n"
-            f"📈 Binance: {binance_price:.0f} ({disp_pct:+.3f}% from open)\n"
-            f"📊 偏差: PM={setup.polymarket_odds:.2f} vs fair={setup.fair_odds:.2f} (gap={setup.divergence:+.2f})\n"
-            f"⏱ 剩餘: {remaining_min:.0f} 分鐘 | 🕐 {session_zh}\n"
+            f"📊 策略: {strategy_zh}\n"
+            f"💵 買入: ${setup.size_usdc:.2f} @ ${setup.price_target:.3f} ({odds:.1f}:1)\n"
+            f"\n"
+            f"📌 *結算*\n"
+            f"  ✅ 贏: 拿回 ${setup.size_usdc * odds:.2f} (淨賺 ${win_amount:.2f})\n"
+            f"  ❌ 輸: 損失 ${setup.size_usdc:.2f}\n"
+            f"  ⏱ {settle_min:.0f} 分鐘後自動結算\n"
+            f"\n"
+            f"📈 Binance: {binance_price:.0f} ({disp_pct:+.3f}%)\n"
+            f"📊 PM: Up=${market.price_up:.3f} Down=${market.price_down:.3f}\n"
+            f"🕐 {session_zh}\n"
         )
 
         if dry_run:
