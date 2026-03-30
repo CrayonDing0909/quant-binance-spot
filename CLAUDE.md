@@ -163,6 +163,13 @@ Use `AGENTS.md` for which agent to use when. Use `/start-research`, `/resume-tas
 - Never use `--real` in tests or development — always `--paper` or `--dry-run`.
 - Never write direct Binance API calls outside broker classes.
 - Never restart the live runner without checking current positions first.
+
+### Polymarket
+
+- **NEVER transfer USDC directly to any Polymarket address via on-chain transfer (web3/usdc.transfer).** Always use Polymarket website/app "Deposit" button. Direct transfers go to proxy wallets that only Polymarket's relay can control — funds will be stuck. ($9 was lost this way on 2026-03-30.)
+- Polymarket CLOB requires `signature_type=2` + `funder=proxy_address` for orders.
+- First trade must be done manually on Polymarket to trigger auto-approve of all allowances.
+- Proxy address: `POLYMARKET_SAFE_ADDRESS` in `.env` (not the Settings "Address" — that's a different proxy).
 - `_apply_position_sizing` clips to `[-1, 1]`, not `[0, 1]`. Spot negative clip happens in `runner.run_once()`, not in position sizing.
 - Production: `scripts/start_live.sh` on Oracle Cloud (canonical startup, `@reboot` cron).
 - Active config: `prod_candidate_simplified.yaml` (6 symbols: BTC, ETH, SOL, DOGE, AVAX, LINK).

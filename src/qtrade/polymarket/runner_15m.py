@@ -233,10 +233,24 @@ def run_once(config: dict, state: dict) -> dict:
 
         # ── Execute ──
         odds = 1.0 / setup.price_target if setup.price_target > 0 else 0
+        remaining_min = market.time_remaining_seconds() / 60
+
+        # Telegram message — human readable
+        side_emoji = "🟢" if setup.side == "up" else "🔴"
+        scenario_zh = "趨勢跟隨" if setup.scenario == "trend_follow" else "均值回歸"
+        session_zh = {"asia": "亞洲", "london_kill": "倫敦", "ny_open": "紐約", "london_close": "倫敦收盤", "weekend": "週末"}.get(setup.session, setup.session)
+
         msg = (
-            f"{'[DRY] ' if dry_run else ''}*15M TRADE*\n"
-            f"Coin: {coin}\n"
-            f"{setup.reason}"
+            f"{'🧪 ' if dry_run else '💰 '}*Polymarket 15m*\n"
+            f"\n"
+            f"{side_emoji} *{coin} → {setup.side.upper()}*\n"
+            f"📊 策略: {scenario_zh} ({setup.vol_regime} vol)\n"
+            f"💵 下注: ${setup.size_usdc:.2f} @ ${setup.price_target:.3f}\n"
+            f"🎯 賠率: {odds:.1f}:1 ({'贏${:.2f}'.format(setup.size_usdc * (odds - 1))} / 虧${setup.size_usdc:.2f})\n"
+            f"⏱ 剩餘: {remaining_min:.0f} 分鐘\n"
+            f"🕐 時段: {session_zh}\n"
+            f"\n"
+            f"_RSI={ta.rsi_14:.0f} | VWAP {ta.vwap_distance_pct:+.2f}% | 信心={setup.confidence}_"
         )
 
         if dry_run:
@@ -252,7 +266,7 @@ def run_once(config: dict, state: dict) -> dict:
                 api_passphrase=api_passphrase,
             )
             if result:
-                msg += "\nOrder: OK"
+                msg += "\n\n✅ 下單成功"
                 positions.append({
                     "slug": market.slug,
                     "coin": coin,
@@ -267,7 +281,7 @@ def run_once(config: dict, state: dict) -> dict:
                 })
                 state["daily_trades"] = state.get("daily_trades", 0) + 1
             else:
-                msg += "\nOrder: FAILED"
+                msg += "\n\n❌ 下單失敗"
 
         send_telegram(msg, tg_token, tg_chat)
 
