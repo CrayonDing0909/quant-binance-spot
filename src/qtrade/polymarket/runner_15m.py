@@ -270,6 +270,28 @@ def run_once(config: dict, state: dict) -> dict:
                     token_id = market.token_id_down
                     strategy_name = "contrarian"
 
+        # ── Log every window snapshot (for post-hoc analysis) ──
+        # Records PM odds + Binance price at this moment, regardless of signal
+        snapshot_log = Path(config.get("log_dir", "logs/polymarket")) / f"snapshots_{today}.jsonl"
+        snapshot_log.parent.mkdir(parents=True, exist_ok=True)
+        disp_pct = (binance_price - window_open) / window_open * 100 if window_open > 0 else 0
+        snapshot = {
+            "timestamp": now.isoformat(),
+            "coin": coin,
+            "slug": market.slug,
+            "remaining_s": remaining,
+            "pm_up": market.price_up,
+            "pm_down": market.price_down,
+            "binance_price": binance_price,
+            "window_open": window_open,
+            "displacement_pct": round(disp_pct, 4),
+            "signal": strategy_name,  # None if no signal
+            "signal_side": side,
+            "signal_price": share_price,
+        }
+        with open(snapshot_log, "a") as f:
+            f.write(json.dumps(snapshot) + "\n")
+
         if side is None:
             logger.debug(
                 f"  {coin}: no signal | "
