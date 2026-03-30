@@ -168,6 +168,8 @@ def run_once(config: dict, state: dict) -> dict:
     # Track positions
     positions = state.get("positions", [])
     active_positions = [p for p in positions if p.get("status") == "open"]
+    # Dedup: track which slugs we already signaled (even in dry run)
+    signaled_slugs = state.get("signaled_slugs", set())
 
     if len(active_positions) >= max_positions:
         return state
@@ -176,6 +178,11 @@ def run_once(config: dict, state: dict) -> dict:
         # Find current 15m market
         market = find_current_15m_market(coin)
         if market is None:
+            continue
+
+        # Dedup: skip if we already signaled this exact window+coin
+        dedup_key = f"{market.slug}_{coin}"
+        if dedup_key in signaled_slugs:
             continue
 
         # Skip if already positioned in this window
@@ -256,6 +263,9 @@ def run_once(config: dict, state: dict) -> dict:
 
         send_telegram(msg, tg_token, tg_chat)
 
+        # Mark as signaled (dedup)
+        signaled_slugs.add(dedup_key)
+
         # Log trade
         log_dir = Path(config.get("log_dir", "logs/polymarket"))
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -286,6 +296,10 @@ def run_once(config: dict, state: dict) -> dict:
             f.write(json.dumps(entry) + "\n")
 
     state["positions"] = positions
+    # Clean old slugs (keep only last 200 to prevent memory leak)
+    if len(signaled_slugs) > 200:
+        signaled_slugs = set(list(signaled_slugs)[-100:])
+    state["signaled_slugs"] = signaled_slugs
     return state
 
 

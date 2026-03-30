@@ -161,9 +161,9 @@ def determine_direction(ta: TASignals, session: str) -> str | None:
             return "up"
 
         # Also: simple VWAP reversion if price is extended
-        if ta.vwap_distance_pct > 0.3 and not ta.macd_expanding_bull:
+        if ta.vwap_distance_pct > 0.15 and not ta.macd_expanding_bull:
             return "down"
-        if ta.vwap_distance_pct < -0.3 and not ta.macd_expanding_bear:
+        if ta.vwap_distance_pct < -0.15 and not ta.macd_expanding_bear:
             return "up"
 
         return None

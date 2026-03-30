@@ -12,12 +12,12 @@ coins:
 
 # Volatility thresholds (15-minute ATR in USD)
 volatility:
-  btc_low_threshold: 40
-  btc_high_threshold: 100
-  eth_low_threshold: 2.0
-  eth_high_threshold: 5.0
-  sol_low_threshold: 0.3
-  sol_high_threshold: 1.0
+  btc_low_threshold: 80       # was 40 — BTC normal 15m range is $50-100
+  btc_high_threshold: 200     # was 100 — only extreme moves count as "high vol"
+  eth_low_threshold: 3.0      # was 2.0
+  eth_high_threshold: 8.0     # was 5.0
+  sol_low_threshold: 0.5      # was 0.3
+  sol_high_threshold: 2.0     # was 1.0
 
 # Entry timing within 15-minute window
 entry_window:
