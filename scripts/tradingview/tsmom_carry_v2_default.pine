@@ -1,0 +1,259 @@
+// ═══════════════════════════════════════════════════════════════
+// TSMOM Carry V2 — Default Tier (1:1 replica of Python production)
+// ═══════════════════════════════════════════════════════════════
+// Source: src/qtrade/strategy/tsmom_carry_v2_strategy.py
+// Config: config/prod_candidate_simplified.yaml (default tier)
+//
+// 用法: 貼到 TradingView → 選 BTCUSDT.P 或 ETHUSDT.P 1h 圖表
+//
+// 邏輯:
+//   1. TSMOM: sign(168h cumulative return) × vol_scaling
+//   2. EMA alignment: EMA(20) vs EMA(50) → agree=1.0x, disagree=0.3x
+//   3. Basis signal: -tanh((EMA24-EMA168)/EMA168 × 50)
+//   4. FR signal: -sign(rolling_mean(FR, 72))
+//   5. BasisCarry = 0.7×FR + 0.3×Basis
+//   6. Confirmatory: carry同向→1.0x, 反向→0.7x, 中性→0.85x
+//   7. Carry confirm smoothing: EMA(24)
+//   8. HTF Filter: 4h trend + daily regime → 4-level scaling
+//   9. Turnover: EMA(12) → quantize(0.2) → deadzone(0.15)
+//
+// ⚠️ signal_delay=1: 信號在 close[i] 產生，在 open[i+1] 執行
+//    TradingView 的 strategy.entry 預設就是 next bar open
+// ═══════════════════════════════════════════════════════════════
+
+//@version=6
+strategy("TSMOM Carry V2 (Default Tier)", overlay=true,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     process_orders_on_close=false,  // execute on next bar open = signal_delay=1
+     calc_on_every_tick=false)
+
+// ── Parameters (matching prod_candidate_simplified.yaml) ──
+tsmom_lookback    = input.int(168, "TSMOM Lookback (hours)")
+vol_target        = input.float(0.15, "Vol Target (annualized)")
+ema_fast          = input.int(20, "EMA Fast")
+ema_slow          = input.int(50, "EMA Slow")
+agree_weight      = input.float(1.0, "TSMOM-EMA Agree Weight")
+disagree_weight   = input.float(0.3, "TSMOM-EMA Disagree Weight")
+
+basis_ema_fast    = input.int(24, "Basis EMA Fast")
+basis_ema_slow    = input.int(168, "Basis EMA Slow")
+basis_tanh_scale  = input.float(50.0, "Basis Tanh Scale")
+
+fr_rolling_window = input.int(72, "FR Rolling Window")
+fr_weight         = input.float(0.7, "BasisCarry FR Weight")
+basis_weight      = input.float(0.3, "BasisCarry Basis Weight")
+
+carry_agree       = input.float(1.0, "Carry Agree Scale")
+carry_disagree    = input.float(0.7, "Carry Disagree Scale")
+carry_neutral     = input.float(0.85, "Carry Neutral Scale")
+carry_smooth      = input.int(24, "Carry Confirm Smoothing")
+
+htf_enabled       = input.bool(true, "HTF Filter Enabled")
+htf_4h_fast       = input.int(20, "HTF 4h EMA Fast")
+htf_4h_slow       = input.int(50, "HTF 4h EMA Slow")
+htf_adx_period    = input.int(14, "HTF ADX Period")
+htf_adx_threshold = input.float(25.0, "HTF ADX Threshold")
+htf_full          = input.float(1.0, "HTF Full Confirm")
+htf_partial       = input.float(0.85, "HTF Partial Confirm")
+htf_4h_only       = input.float(0.7, "HTF 4h Only Confirm")
+htf_no            = input.float(0.0, "HTF No Confirm")
+
+composite_ema_len = input.int(12, "Composite EMA")
+position_step     = input.float(0.2, "Position Step")
+min_change_thr    = input.float(0.15, "Min Change Threshold")
+
+
+// ═══════════════════════════════════════════════════════════
+// Sub-factor 1: TSMOM + EMA Alignment
+// Python: _tsmom_ema_signal()
+// ═══════════════════════════════════════════════════════════
+
+// Returns (1h)
+returns = (close - close[1]) / close[1]
+
+// Cumulative return over lookback
+cum_ret = math.sum(returns, tsmom_lookback)
+
+// Rolling volatility (annualized for 1h: sqrt(8760))
+vol_raw = ta.stdev(returns, tsmom_lookback) * math.sqrt(8760)
+vol = vol_raw == 0 ? vol_target : vol_raw
+
+// TSMOM raw signal: sign of cumulative return
+tsmom_sign = cum_ret > 0 ? 1.0 : cum_ret < 0 ? -1.0 : 0.0
+
+// Vol scaling: target / realized, clipped [0.1, 2.0]
+vol_scale = math.max(0.1, math.min(2.0, vol_target / vol))
+
+// TSMOM signal (before EMA alignment)
+tsmom_raw = math.max(-1.0, math.min(1.0, tsmom_sign * vol_scale))
+
+// EMA trend
+ema_f = ta.ema(close, ema_fast)
+ema_s = ta.ema(close, ema_slow)
+ema_trend = ema_f > ema_s ? 1.0 : ema_f < ema_s ? -1.0 : 0.0
+
+// Agreement: same direction = agree
+tsmom_dir = tsmom_raw > 0 ? 1.0 : tsmom_raw < 0 ? -1.0 : 0.0
+is_agree = tsmom_dir == ema_trend and tsmom_dir != 0
+
+// Apply agree/disagree weight
+sig_tsmom = is_agree ? tsmom_raw * agree_weight : tsmom_raw * disagree_weight
+sig_tsmom := math.max(-1.0, math.min(1.0, sig_tsmom))
+
+
+// ═══════════════════════════════════════════════════════════
+// Sub-factor 2: Basis Signal
+// Python: _basis_signal()
+// ═══════════════════════════════════════════════════════════
+
+basis_fast = ta.ema(close, basis_ema_fast)
+basis_slow = ta.ema(close, basis_ema_slow)
+basis_spread = (basis_fast - basis_slow) / basis_slow
+
+// Python: -np.tanh(spread * tanh_scale)
+// Pine Script doesn't have tanh, approximate: tanh(x) ≈ x / (1 + |x|) for small x
+// But for accuracy: tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
+tanh_input = basis_spread * basis_tanh_scale
+exp2x = math.exp(2 * math.max(-10, math.min(10, tanh_input)))  // clip to prevent overflow
+sig_basis = -((exp2x - 1) / (exp2x + 1))
+
+
+// ═══════════════════════════════════════════════════════════
+// Sub-factor 3: FR Signal (approximated — TV doesn't have FR data)
+// Python: _fr_signal()
+// ⚠️ TV 沒有 funding rate 數據，這裡用 0（等同於 tsmom_only tier）
+// 如果你有 FR 的外部數據源，可以替換
+// ═══════════════════════════════════════════════════════════
+
+// FR not available in TradingView — use 0 (neutral)
+// This means BasisCarry = 0.7×0 + 0.3×Basis = 0.3×Basis
+sig_fr = 0.0
+
+
+// ═══════════════════════════════════════════════════════════
+// BasisCarry Combination
+// Python: sig_carry = fr_weight * sig_fr + basis_weight * sig_basis
+// ═══════════════════════════════════════════════════════════
+
+sig_carry = fr_weight * sig_fr + basis_weight * sig_basis
+
+
+// ═══════════════════════════════════════════════════════════
+// Confirmatory Mode: Carry as position scaler
+// Python: _carry_confirmation_scale()
+// ═══════════════════════════════════════════════════════════
+
+carry_dir = sig_carry > 0 ? 1.0 : sig_carry < 0 ? -1.0 : 0.0
+agreement = tsmom_dir * carry_dir
+
+// Scale: agree → carry_agree, disagree → carry_disagree, neutral → carry_neutral
+raw_scale = agreement > 0 ? carry_agree : agreement < 0 ? carry_disagree : carry_neutral
+
+// Smooth the scale with EMA
+confirm_scale = ta.ema(raw_scale, carry_smooth)
+
+// Apply scale to TSMOM
+pos_after_carry = sig_tsmom * confirm_scale
+
+
+// ═══════════════════════════════════════════════════════════
+// HTF Filter: 4h trend + daily regime
+// Python: _apply_htf_filter()
+// ═══════════════════════════════════════════════════════════
+
+// 4h EMA trend (using request.security for causal HTF data)
+htf_4h_ema_f = request.security(syminfo.tickerid, "240", ta.ema(close, htf_4h_fast)[1], lookahead=barmerge.lookahead_on)
+htf_4h_ema_s = request.security(syminfo.tickerid, "240", ta.ema(close, htf_4h_slow)[1], lookahead=barmerge.lookahead_on)
+// [1] + lookahead_on = use previous bar's value = causal (matches Python shift(1) + ffill)
+htf_4h_trend_val = htf_4h_ema_f > htf_4h_ema_s ? 1.0 : htf_4h_ema_f < htf_4h_ema_s ? -1.0 : 0.0
+
+// Daily regime: EMA(20) trend + ADX for trending/ranging
+htf_daily_ema = request.security(syminfo.tickerid, "1D", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+htf_daily_close = request.security(syminfo.tickerid, "1D", close[1], lookahead=barmerge.lookahead_on)
+htf_daily_trend = htf_daily_close > htf_daily_ema ? 1.0 : htf_daily_close < htf_daily_ema ? -1.0 : 0.0
+
+// Daily ADX for trending/ranging classification
+htf_daily_adx = request.security(syminfo.tickerid, "1D", ta.adx(htf_adx_period)[1], lookahead=barmerge.lookahead_on)
+is_trending = htf_daily_adx > htf_adx_threshold
+
+// 4h agreement with signal
+pos_dir = pos_after_carry > 0 ? 1.0 : pos_after_carry < 0 ? -1.0 : 0.0
+htf_4h_agrees = (pos_dir == htf_4h_trend_val) or htf_4h_trend_val == 0
+htf_daily_agrees = (pos_dir == htf_daily_trend) or htf_daily_trend == 0
+
+// C_4h+daily_hard confirmation weights
+htf_scale = htf_no  // default: 4h disagree = 0
+if htf_4h_agrees and htf_daily_agrees and is_trending
+    htf_scale := htf_full       // 4h+daily agree + trending → 1.0
+else if htf_4h_agrees and htf_daily_agrees and not is_trending
+    htf_scale := htf_partial    // 4h+daily agree + ranging → 0.85
+else if htf_4h_agrees and not htf_daily_agrees
+    htf_scale := htf_4h_only   // 4h agree only → 0.7
+
+pos_after_htf = htf_enabled ? pos_after_carry * htf_scale : pos_after_carry
+
+
+// ═══════════════════════════════════════════════════════════
+// Turnover Control: EMA smooth → quantize → deadzone
+// Python: _apply_turnover_control()
+// ═══════════════════════════════════════════════════════════
+
+// 1. EMA smooth
+smoothed = ta.ema(pos_after_htf, composite_ema_len)
+
+// 2. Quantize to position_step
+quantized = math.round(smoothed / position_step) * position_step
+
+// 3. Deadzone: only update if change > threshold
+var float current_pos = 0.0
+if math.abs(quantized - current_pos) >= min_change_thr
+    current_pos := quantized
+
+final_pos = current_pos
+
+
+// ═══════════════════════════════════════════════════════════
+// Plotting & Strategy Execution
+// ═══════════════════════════════════════════════════════════
+
+// Plots
+plot(sig_tsmom, "TSMOM Signal", color=color.blue, linewidth=1)
+plot(sig_carry, "Carry Signal", color=color.orange, linewidth=1)
+plot(pos_after_carry, "After Carry", color=color.purple, linewidth=1)
+plot(pos_after_htf, "After HTF", color=color.red, linewidth=1)
+plot(final_pos, "Final Position", color=color.white, linewidth=2)
+hline(0, "Zero", color=color.gray)
+hline(1, "+1", color=color.green, linestyle=hline.style_dotted)
+hline(-1, "-1", color=color.red, linestyle=hline.style_dotted)
+
+// Background color for HTF filter status
+bgcolor(htf_enabled and htf_scale == 0 ? color.new(color.red, 90) : na, title="HTF Blocked")
+bgcolor(htf_enabled and htf_scale == htf_full ? color.new(color.green, 90) : na, title="HTF Full")
+
+// Strategy execution (process_orders_on_close=false → executes on next bar open)
+if final_pos > 0.01
+    strategy.entry("Long", strategy.long)
+else if final_pos < -0.01
+    strategy.entry("Short", strategy.short)
+else
+    strategy.close_all("Flat")
+
+// ── Info Table ──
+var table infoTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(infoTable, 0, 0, "TSMOM", text_color=color.gray)
+    table.cell(infoTable, 1, 0, str.tostring(sig_tsmom, "#.##"), text_color=sig_tsmom > 0 ? color.green : color.red)
+    table.cell(infoTable, 0, 1, "Carry", text_color=color.gray)
+    table.cell(infoTable, 1, 1, str.tostring(sig_carry, "#.##"), text_color=sig_carry > 0 ? color.green : color.red)
+    table.cell(infoTable, 0, 2, "HTF Scale", text_color=color.gray)
+    table.cell(infoTable, 1, 2, str.tostring(htf_scale, "#.##"), text_color=htf_scale > 0.5 ? color.green : color.red)
+    table.cell(infoTable, 0, 3, "Final Pos", text_color=color.gray)
+    table.cell(infoTable, 1, 3, str.tostring(final_pos, "#.##"), text_color=final_pos > 0 ? color.green : final_pos < 0 ? color.red : color.gray)
+    table.cell(infoTable, 0, 4, "4h Trend", text_color=color.gray)
+    table.cell(infoTable, 1, 4, htf_4h_trend_val > 0 ? "↑" : htf_4h_trend_val < 0 ? "↓" : "→", text_color=htf_4h_trend_val > 0 ? color.green : color.red)
+    table.cell(infoTable, 0, 5, "Daily Trend", text_color=color.gray)
+    table.cell(infoTable, 1, 5, htf_daily_trend > 0 ? "↑" : htf_daily_trend < 0 ? "↓" : "→", text_color=htf_daily_trend > 0 ? color.green : color.red)
+    table.cell(infoTable, 0, 6, "ADX", text_color=color.gray)
+    table.cell(infoTable, 1, 6, str.tostring(htf_daily_adx, "#.#"), text_color=is_trending ? color.green : color.orange)
+    table.cell(infoTable, 0, 7, "Vol Scale", text_color=color.gray)
+    table.cell(infoTable, 1, 7, str.tostring(vol_scale, "#.##"), text_color=color.white)
