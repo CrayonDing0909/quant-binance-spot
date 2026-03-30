@@ -96,10 +96,14 @@ def place_limit_order(
         # Each share pays $1 if we win
         shares = size_usdc / price
 
+        # Polymarket min order = $1 notional (shares * price >= 1)
+        min_shares = max(shares, 1.0 / price + 0.01) if price > 0 else shares
+        shares = max(shares, min_shares)
+
         order_args = OrderArgs(
             token_id=token_id,
             price=price,
-            size=round(shares, 2),
+            size=round(shares, 1),
             side="BUY",
         )
 
