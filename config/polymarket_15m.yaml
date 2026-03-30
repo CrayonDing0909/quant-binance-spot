@@ -24,12 +24,10 @@ entry_window:
   sweet_spot_start: 600    # enter after 5 min passed (10 min remaining)
   sweet_spot_end: 120      # don't enter with <2 min left
 
-# Odds divergence strategy (v3 — friend's insight)
-divergence:
-  min_divergence: 0.15     # minimum gap between fair odds and Polymarket odds
-  odds_range_low: 0.30     # only trade when PM odds outside 30%-70% (rule 1)
-  odds_range_high: 0.70
-  trend_filter_pct: 0.5    # skip if displacement > 0.5% (obvious trend, rule 2)
+# Simple contrarian (v3.1 — matches backtest with real PM odds)
+# Buy whichever PM side is < cheap_threshold
+cheap_threshold: 0.35      # buy when PM prices side < $0.35 (odds > 2.9:1)
+trend_filter_pct: 0.5      # skip if Binance displacement > 0.5% (obvious trend)
 
 # Risk management
 risk:

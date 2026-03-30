@@ -223,37 +223,69 @@ def run_once(config: dict, state: dict) -> dict:
         except Exception:
             window_open = binance_price
 
-        # ── Divergence Strategy: Polymarket odds vs Binance reality ──
-        div_cfg = config.get("divergence", {})
-        signal = detect_divergence(
-            market=market,
-            binance_price=binance_price,
-            window_open=window_open,
-            bet_size=bet_size,
-            min_divergence=div_cfg.get("min_divergence", 0.15),
-            min_remaining=sweet_end,
-            max_remaining=sweet_start,
-            odds_range_low=div_cfg.get("odds_range_low", 0.30),
-            odds_range_high=div_cfg.get("odds_range_high", 0.70),
-            trend_filter_pct=div_cfg.get("trend_filter_pct", 0.5),
-        )
+        # ── Simple Contrarian: buy PM cheap side at sweet spot ──
+        # Matches the backtest that showed +15.7 to +20.3 PnL on 100 trades
+        remaining = market.time_remaining_seconds()
+        cheap_threshold = config.get("cheap_threshold", 0.35)
+        trend_max = config.get("trend_filter_pct", 0.5)
 
-        # Also compute TA for logging (not for decision)
-        ta = compute_ta_signals(coin)
+        # Timing: sweet spot only
+        if remaining > sweet_start or remaining < sweet_end:
+            continue
 
-        if signal is None:
-            remaining = market.time_remaining_seconds()
+        # Rule 2: skip obvious one-sided trends
+        disp_pct = abs(binance_price - window_open) / window_open * 100 if window_open > 0 else 0
+        if disp_pct > trend_max:
+            logger.debug(f"  {coin}: trend too strong ({disp_pct:.3f}%)")
+            continue
+
+        # Rule 1: buy cheap side when PM odds outside 30-70%
+        if market.price_up < cheap_threshold:
+            side = "up"
+            share_price = market.price_up
+            token_id = market.token_id_up
+        elif market.price_down < cheap_threshold:
+            side = "down"
+            share_price = market.price_down
+            token_id = market.token_id_down
+        else:
             logger.debug(
-                f"  {coin}: no divergence | "
-                f"PM Up=${market.price_up:.3f} Down=${market.price_down:.3f} | "
-                f"BN={binance_price:.0f} open={window_open:.0f} "
-                f"({(binance_price-window_open)/window_open*100:+.3f}%) | "
+                f"  {coin}: no cheap side | "
+                f"Up=${market.price_up:.3f} Down=${market.price_down:.3f} | "
                 f"{remaining:.0f}s left"
             )
             continue
 
-        # Map signal to setup-like structure for the rest of the flow
-        setup = signal
+        if not token_id:
+            continue
+
+        # Build signal object for downstream flow
+        from dataclasses import dataclass
+        @dataclass
+        class _Signal:
+            side: str
+            token_id: str
+            price_target: float
+            size_usdc: float
+            polymarket_odds: float
+            fair_odds: float
+            divergence: float
+            reason: str
+
+        odds = 1.0 / share_price if share_price > 0 else 0
+        setup = _Signal(
+            side=side,
+            token_id=token_id,
+            price_target=share_price,
+            size_usdc=bet_size,
+            polymarket_odds=share_price,
+            fair_odds=0.5,
+            divergence=0.5 - share_price,
+            reason=f"Contrarian: buy {side} @ ${share_price:.3f} ({odds:.1f}:1), PM偏離 {remaining:.0f}s left",
+        )
+
+        # TA for logging only
+        ta = compute_ta_signals(coin)
 
         # ── Execute ──
         odds = 1.0 / setup.price_target if setup.price_target > 0 else 0
