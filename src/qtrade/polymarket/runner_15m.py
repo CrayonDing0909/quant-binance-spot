@@ -222,13 +222,21 @@ def run_once(config: dict, state: dict) -> dict:
         except Exception:
             window_open = binance_price
 
-        # ── Simple Contrarian: buy PM cheap side at sweet spot ──
-        # Matches the backtest that showed +15.7 to +20.3 PnL on 100 trades
+        # ── v4: Buy "slightly cheap" side in London/NY only ──
+        # Based on 2178-market backtest: edge at $0.35-$0.45, NOT at extremes
         remaining = market.time_remaining_seconds()
-        cheap_threshold = config.get("cheap_threshold", 0.35)
+        cheap_lo = config.get("cheap_threshold_low", 0.35)
+        cheap_hi = config.get("cheap_threshold_high", 0.45)
         trend_max = config.get("trend_filter_pct", 0.5)
+        hours_start = config.get("active_hours_start", 7)
+        hours_end = config.get("active_hours_end", 17)
 
-        # Timing: sweet spot only
+        # Session filter: London + NY only
+        current_hour = now.hour
+        if current_hour < hours_start or current_hour >= hours_end:
+            continue
+
+        # Timing: sweet spot only (~t=7min)
         if remaining > sweet_start or remaining < sweet_end:
             continue
 
@@ -238,20 +246,20 @@ def run_once(config: dict, state: dict) -> dict:
             logger.debug(f"  {coin}: trend too strong ({disp_pct:.3f}%)")
             continue
 
-        # Rule 1: buy cheap side when PM odds outside 30-70%
-        if market.price_up < cheap_threshold:
+        # v4: buy side in $0.35-$0.45 range (NOT extremes — PM is too accurate there)
+        if cheap_lo <= market.price_up < cheap_hi:
             side = "up"
             share_price = market.price_up
             token_id = market.token_id_up
-        elif market.price_down < cheap_threshold:
+        elif cheap_lo <= market.price_down < cheap_hi:
             side = "down"
             share_price = market.price_down
             token_id = market.token_id_down
         else:
             logger.debug(
-                f"  {coin}: no cheap side | "
+                f"  {coin}: no edge zone | "
                 f"Up=${market.price_up:.3f} Down=${market.price_down:.3f} | "
-                f"{remaining:.0f}s left"
+                f"need ${cheap_lo}-${cheap_hi} | {remaining:.0f}s left"
             )
             continue
 

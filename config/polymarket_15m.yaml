@@ -5,10 +5,9 @@
 # Layers: Session → Volatility → Price Structure → Timing → Risk
 # ═══════════════════════════════════════════════════════════════
 
+# v4: ETH only — PM misprices ETH more than BTC/SOL
 coins:
-  - BTC
   - ETH
-  - SOL
 
 # Volatility thresholds (15-minute ATR in USD)
 volatility:
@@ -21,13 +20,20 @@ volatility:
 
 # Entry timing within 15-minute window
 entry_window:
-  sweet_spot_start: 600    # enter after 5 min passed (10 min remaining)
-  sweet_spot_end: 420      # stop at t=8min (7 min remaining) — t=10+ is negative PnL in backtest
+  sweet_spot_start: 510    # enter at t=6.5min (8.5 min remaining)
+  sweet_spot_end: 420      # stop at t=8min (7 min remaining) — narrow window around t=7
 
-# Simple contrarian (v3.1 — matches backtest with real PM odds)
-# Buy whichever PM side is < cheap_threshold
-cheap_threshold: 0.35      # buy when PM prices side < $0.35 (odds > 2.9:1)
-trend_filter_pct: 0.5      # skip if Binance displacement > 0.5% (obvious trend)
+# v4: Buy "slightly cheap" side in London/NY only
+# Based on 2178-market backtest with real PM odds:
+#   - Edge exists at $0.35-$0.45 (NOT < $0.35 — PM is too accurate there)
+#   - London (UTC 7-12) has strongest edge (+$0.209/trade)
+#   - t=7min is optimal entry (t=5 and t=3 both lose)
+cheap_threshold_low: 0.35   # don't buy below this (PM is right at extremes)
+cheap_threshold_high: 0.45  # don't buy above this (too close to 50/50, no edge)
+trend_filter_pct: 0.5
+# Session filter: only trade during these UTC hours
+active_hours_start: 7       # London open
+active_hours_end: 17        # NY close
 
 # Risk management
 risk:
