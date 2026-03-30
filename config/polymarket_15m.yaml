@@ -23,7 +23,15 @@ entry_window:
   sweet_spot_start: 510    # enter at t=6.5min (8.5 min remaining)
   sweet_spot_end: 420      # stop at t=8min (7 min remaining) — narrow window around t=7
 
-# v4: Buy "slightly cheap" side in London/NY only
+# v5: Two strategies — Momentum (t=5, all hours) + Contrarian (t=7, London/NY)
+
+# Strategy A: Momentum — buy leading side if not too expensive
+# Backtest: ETH t=5 max$0.65: 319 trades, 63.6% WR, +$35.4 PnL
+momentum_max_price: 0.65    # only buy leading side if < $0.65
+momentum_start: 630         # t=4.5min (10.5min remaining)
+momentum_end: 540           # t=6min (9min remaining)
+
+# Strategy B: Contrarian — buy "slightly cheap" side in London/NY only
 # Based on 2178-market backtest with real PM odds:
 #   - Edge exists at $0.35-$0.45 (NOT < $0.35 — PM is too accurate there)
 #   - London (UTC 7-12) has strongest edge (+$0.209/trade)

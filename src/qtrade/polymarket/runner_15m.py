@@ -222,44 +222,59 @@ def run_once(config: dict, state: dict) -> dict:
         except Exception:
             window_open = binance_price
 
-        # ── v4: Buy "slightly cheap" side in London/NY only ──
-        # Based on 2178-market backtest: edge at $0.35-$0.45, NOT at extremes
+        # ── v5: Two strategies — Momentum (t=5) + Contrarian (t=7) ──
         remaining = market.time_remaining_seconds()
         cheap_lo = config.get("cheap_threshold_low", 0.35)
         cheap_hi = config.get("cheap_threshold_high", 0.45)
-        trend_max = config.get("trend_filter_pct", 0.5)
+        momentum_max = config.get("momentum_max_price", 0.65)
         hours_start = config.get("active_hours_start", 7)
         hours_end = config.get("active_hours_end", 17)
 
-        # Session filter: London + NY only
-        current_hour = now.hour
-        if current_hour < hours_start or current_hour >= hours_end:
-            continue
+        side = None
+        share_price = None
+        token_id = None
+        strategy_name = None
 
-        # Timing: sweet spot only (~t=7min)
-        if remaining > sweet_start or remaining < sweet_end:
-            continue
+        # ── Strategy A: Momentum at t=5 (all hours) ──
+        # Buy leading side if < $0.65 (not too expensive)
+        # Backtest: ETH 319 trades, 63.6% WR, +$35.4 PnL
+        momentum_start = config.get("momentum_start", 630)  # 10.5min remaining = t=4.5
+        momentum_end = config.get("momentum_end", 540)       # 9min remaining = t=6
 
-        # Rule 2: skip obvious one-sided trends
-        disp_pct = abs(binance_price - window_open) / window_open * 100 if window_open > 0 else 0
-        if disp_pct > trend_max:
-            logger.debug(f"  {coin}: trend too strong ({disp_pct:.3f}%)")
-            continue
+        if momentum_start >= remaining >= momentum_end:
+            if market.price_up > 0.50 and market.price_up < momentum_max:
+                side = "up"
+                share_price = market.price_up
+                token_id = market.token_id_up
+                strategy_name = "momentum"
+            elif market.price_down > 0.50 and market.price_down < momentum_max:
+                side = "down"
+                share_price = market.price_down
+                token_id = market.token_id_down
+                strategy_name = "momentum"
 
-        # v4: buy side in $0.35-$0.45 range (NOT extremes — PM is too accurate there)
-        if cheap_lo <= market.price_up < cheap_hi:
-            side = "up"
-            share_price = market.price_up
-            token_id = market.token_id_up
-        elif cheap_lo <= market.price_down < cheap_hi:
-            side = "down"
-            share_price = market.price_down
-            token_id = market.token_id_down
-        else:
+        # ── Strategy B: Contrarian at t=7 (London+NY only) ──
+        # Buy slightly cheap side $0.35-$0.45
+        # Backtest: ETH London 63 trades, 47.6% WR, +$11.8 PnL
+        if side is None and sweet_start >= remaining >= sweet_end:
+            current_hour = now.hour
+            if hours_start <= current_hour < hours_end:
+                if cheap_lo <= market.price_up < cheap_hi:
+                    side = "up"
+                    share_price = market.price_up
+                    token_id = market.token_id_up
+                    strategy_name = "contrarian"
+                elif cheap_lo <= market.price_down < cheap_hi:
+                    side = "down"
+                    share_price = market.price_down
+                    token_id = market.token_id_down
+                    strategy_name = "contrarian"
+
+        if side is None:
             logger.debug(
-                f"  {coin}: no edge zone | "
+                f"  {coin}: no signal | "
                 f"Up=${market.price_up:.3f} Down=${market.price_down:.3f} | "
-                f"need ${cheap_lo}-${cheap_hi} | {remaining:.0f}s left"
+                f"{remaining:.0f}s left"
             )
             continue
 
@@ -288,7 +303,7 @@ def run_once(config: dict, state: dict) -> dict:
             polymarket_odds=share_price,
             fair_odds=0.5,
             divergence=0.5 - share_price,
-            reason=f"Contrarian: buy {side} @ ${share_price:.3f} ({odds:.1f}:1), PM偏離 {remaining:.0f}s left",
+            reason=f"{strategy_name}: buy {side} @ ${share_price:.3f} ({odds:.1f}:1), {remaining:.0f}s left",
         )
 
         # TA for logging only
@@ -308,7 +323,7 @@ def run_once(config: dict, state: dict) -> dict:
             f"{'🧪 ' if dry_run else '💰 '}*Polymarket 15m*\n"
             f"\n"
             f"{side_emoji} *{coin} → {setup.side.upper()}*\n"
-            f"📊 策略: Odds 偏差 (PM vs Binance)\n"
+            f"📊 策略: {'動量跟隨' if strategy_name == 'momentum' else '逆向微偏'}\n"
             f"💵 下注: ${setup.size_usdc:.2f} @ ${setup.price_target:.3f}\n"
             f"🎯 賠率: {odds:.1f}:1 (贏${win_amount:.2f} / 虧${setup.size_usdc:.2f})\n"
             f"📈 Binance: {binance_price:.0f} ({disp_pct:+.3f}% from open)\n"
@@ -365,7 +380,7 @@ def run_once(config: dict, state: dict) -> dict:
                 "price": setup.price_target,
                 "odds": odds,
                 "size": setup.size_usdc,
-                "strategy": "odds_divergence",
+                "strategy": strategy_name,
                 "divergence": setup.divergence,
                 "polymarket_odds": setup.polymarket_odds,
                 "fair_odds": setup.fair_odds,
