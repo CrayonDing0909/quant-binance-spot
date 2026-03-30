@@ -26,13 +26,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from qtrade.polymarket.market_discovery import find_current_15m_market, Market15m
-from qtrade.polymarket.binance_feed import compute_ta_signals
-from qtrade.polymarket.krajekis_strategy import (
-    determine_session,
-    classify_volatility,
-    evaluate_15m_window,
-    TradeSetup,
-)
+from qtrade.polymarket.binance_feed import compute_ta_signals, fetch_recent_klines
+from qtrade.polymarket.odds_divergence import detect_divergence, DivergenceSignal
+from qtrade.polymarket.krajekis_strategy import determine_session
 
 logger = logging.getLogger(__name__)
 
@@ -197,39 +193,63 @@ def run_once(config: dict, state: dict) -> dict:
         if any(p.get("slug") == market.slug for p in active_positions):
             continue
 
-        # ── Layer 2-3: Binance TA + Volatility ──
-        ta = compute_ta_signals(coin)
-        if ta is None:
-            logger.warning(f"  {coin}: failed to compute TA")
+        # ── Get current Binance price for divergence check ──
+        from qtrade.polymarket.binance_feed import BINANCE_SYMBOLS
+        import httpx as _httpx
+        bn_symbol = BINANCE_SYMBOLS.get(coin.upper(), f"{coin}USDT")
+        try:
+            _resp = _httpx.get(
+                "https://fapi.binance.com/fapi/v1/ticker/price",
+                params={"symbol": bn_symbol}, timeout=5,
+            )
+            binance_price = float(_resp.json()["price"])
+        except Exception:
+            logger.warning(f"  {coin}: failed to get Binance price")
             continue
 
-        # Volatility classification (coin-specific thresholds)
-        coin_low = vol_cfg.get(f"{coin.lower()}_low_threshold", 40)
-        coin_high = vol_cfg.get(f"{coin.lower()}_high_threshold", 100)
-        vol_regime = classify_volatility(ta.atr_14, coin_low, coin_high)
+        # ── Get window open price (first trade of this 15m window) ──
+        # Approximate: use market's implied price structure
+        # Better: get the kline open for this 15m window
+        try:
+            klines = fetch_recent_klines(coin, interval="15m", limit=2)
+            if klines is not None and len(klines) >= 1:
+                window_open = float(klines["open"].iloc[-1])
+            else:
+                window_open = binance_price
+        except Exception:
+            window_open = binance_price
 
-        # ── Layer 4+5: Full evaluation ──
-        setup = evaluate_15m_window(
+        # ── Divergence Strategy: Polymarket odds vs Binance reality ──
+        div_cfg = config.get("divergence", {})
+        signal = detect_divergence(
             market=market,
-            ta=ta,
-            session=session,
-            vol_regime=vol_regime,
+            binance_price=binance_price,
+            window_open=window_open,
             bet_size=bet_size,
-            sweet_spot_start=sweet_start,
-            sweet_spot_end=sweet_end,
-            trend_min_price=trend_cfg.get("min_price", 0.65),
-            trend_max_price=trend_cfg.get("max_price", 0.95),
-            mr_min_price=mr_cfg.get("min_price", 0.02),
-            mr_max_price=mr_cfg.get("max_price", 0.25),
+            min_divergence=div_cfg.get("min_divergence", 0.15),
+            min_remaining=sweet_end,
+            max_remaining=sweet_start,
+            odds_range_low=div_cfg.get("odds_range_low", 0.30),
+            odds_range_high=div_cfg.get("odds_range_high", 0.70),
+            trend_filter_pct=div_cfg.get("trend_filter_pct", 0.5),
         )
 
-        if setup is None:
+        # Also compute TA for logging (not for decision)
+        ta = compute_ta_signals(coin)
+
+        if signal is None:
+            remaining = market.time_remaining_seconds()
             logger.debug(
-                f"  {coin}: no setup [{session}|{vol_regime}vol] "
-                f"Up=${market.price_up:.3f} Down=${market.price_down:.3f} "
-                f"RSI={ta.rsi_14:.0f} remaining={market.time_remaining_seconds():.0f}s"
+                f"  {coin}: no divergence | "
+                f"PM Up=${market.price_up:.3f} Down=${market.price_down:.3f} | "
+                f"BN={binance_price:.0f} open={window_open:.0f} "
+                f"({(binance_price-window_open)/window_open*100:+.3f}%) | "
+                f"{remaining:.0f}s left"
             )
             continue
+
+        # Map signal to setup-like structure for the rest of the flow
+        setup = signal
 
         # ── Execute ──
         odds = 1.0 / setup.price_target if setup.price_target > 0 else 0
@@ -237,20 +257,20 @@ def run_once(config: dict, state: dict) -> dict:
 
         # Telegram message — human readable
         side_emoji = "🟢" if setup.side == "up" else "🔴"
-        scenario_zh = "趨勢跟隨" if setup.scenario == "trend_follow" else "均值回歸"
-        session_zh = {"asia": "亞洲", "london_kill": "倫敦", "ny_open": "紐約", "london_close": "倫敦收盤", "weekend": "週末"}.get(setup.session, setup.session)
+        session_zh = {"asia": "亞洲", "london_kill": "倫敦", "ny_open": "紐約", "london_close": "倫敦收盤", "weekend": "週末"}.get(session, session)
+        win_amount = setup.size_usdc * (odds - 1) if odds > 1 else 0
+        disp_pct = (binance_price - window_open) / window_open * 100 if window_open > 0 else 0
 
         msg = (
             f"{'🧪 ' if dry_run else '💰 '}*Polymarket 15m*\n"
             f"\n"
             f"{side_emoji} *{coin} → {setup.side.upper()}*\n"
-            f"📊 策略: {scenario_zh} ({setup.vol_regime} vol)\n"
+            f"📊 策略: Odds 偏差 (PM vs Binance)\n"
             f"💵 下注: ${setup.size_usdc:.2f} @ ${setup.price_target:.3f}\n"
-            f"🎯 賠率: {odds:.1f}:1 ({'贏${:.2f}'.format(setup.size_usdc * (odds - 1))} / 虧${setup.size_usdc:.2f})\n"
-            f"⏱ 剩餘: {remaining_min:.0f} 分鐘\n"
-            f"🕐 時段: {session_zh}\n"
-            f"\n"
-            f"_RSI={ta.rsi_14:.0f} | VWAP {ta.vwap_distance_pct:+.2f}% | 信心={setup.confidence}_"
+            f"🎯 賠率: {odds:.1f}:1 (贏${win_amount:.2f} / 虧${setup.size_usdc:.2f})\n"
+            f"📈 Binance: {binance_price:.0f} ({disp_pct:+.3f}% from open)\n"
+            f"📊 偏差: PM={setup.polymarket_odds:.2f} vs fair={setup.fair_odds:.2f} (gap={setup.divergence:+.2f})\n"
+            f"⏱ 剩餘: {remaining_min:.0f} 分鐘 | 🕐 {session_zh}\n"
         )
 
         if dry_run:
@@ -273,9 +293,9 @@ def run_once(config: dict, state: dict) -> dict:
                     "side": setup.side,
                     "entry_price": setup.price_target,
                     "size": setup.size_usdc,
-                    "scenario": setup.scenario,
-                    "session": setup.session,
-                    "vol_regime": setup.vol_regime,
+                    "strategy": "odds_divergence",
+                    "divergence": setup.divergence,
+                    "session": session,
                     "timestamp": now.isoformat(),
                     "status": "open",
                 })
@@ -302,10 +322,13 @@ def run_once(config: dict, state: dict) -> dict:
                 "price": setup.price_target,
                 "odds": odds,
                 "size": setup.size_usdc,
-                "scenario": setup.scenario,
+                "strategy": "odds_divergence",
+                "divergence": setup.divergence,
+                "polymarket_odds": setup.polymarket_odds,
+                "fair_odds": setup.fair_odds,
                 "session": session,
-                "vol_regime": vol_regime,
-                "confidence": setup.confidence,
+                "binance_price": binance_price,
+                "window_open": window_open,
                 "ta": {
                     "rsi": round(ta.rsi_14, 1),
                     "macd_hist": round(ta.macd_hist, 2),

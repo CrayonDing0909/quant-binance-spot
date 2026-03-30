@@ -24,14 +24,12 @@ entry_window:
   sweet_spot_start: 600    # enter after 5 min passed (10 min remaining)
   sweet_spot_end: 120      # don't enter with <2 min left
 
-# Price targets by scenario
-pricing:
-  trend_follow:
-    min_price: 0.65        # buy at 65-95¢ (low vol, high probability)
-    max_price: 0.95
-  mean_reversion:
-    min_price: 0.02        # buy at 2-25¢ (high vol, high payoff)
-    max_price: 0.25
+# Odds divergence strategy (v3 — friend's insight)
+divergence:
+  min_divergence: 0.15     # minimum gap between fair odds and Polymarket odds
+  odds_range_low: 0.30     # only trade when PM odds outside 30%-70% (rule 1)
+  odds_range_high: 0.70
+  trend_filter_pct: 0.5    # skip if displacement > 0.5% (obvious trend, rule 2)
 
 # Risk management
 risk:
