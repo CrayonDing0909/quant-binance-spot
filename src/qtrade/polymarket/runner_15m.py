@@ -426,8 +426,22 @@ def run_once(config: dict, state: dict) -> dict:
             f"🕐 {session_zh}\n"
         )
 
+        # Track position for settlement (both dry run and real)
+        pos_entry = {
+            "slug": market.slug,
+            "coin": coin,
+            "side": setup.side,
+            "entry_price": setup.price_target,
+            "size": setup.size_usdc,
+            "strategy": strategy_name,
+            "session": session,
+            "timestamp": now.isoformat(),
+            "status": "open",
+        }
+
         if dry_run:
             logger.info(f"DRY RUN [{coin}]: {setup.reason}")
+            positions.append(pos_entry)
         else:
             result = place_limit_order(
                 wallet_key=wallet_key,
@@ -440,18 +454,7 @@ def run_once(config: dict, state: dict) -> dict:
             )
             if result:
                 msg += "\n\n✅ 下單成功"
-                positions.append({
-                    "slug": market.slug,
-                    "coin": coin,
-                    "side": setup.side,
-                    "entry_price": setup.price_target,
-                    "size": setup.size_usdc,
-                    "strategy": "odds_divergence",
-                    "divergence": setup.divergence,
-                    "session": session,
-                    "timestamp": now.isoformat(),
-                    "status": "open",
-                })
+                positions.append(pos_entry)
                 state["daily_trades"] = state.get("daily_trades", 0) + 1
             else:
                 msg += "\n\n❌ 下單失敗"
