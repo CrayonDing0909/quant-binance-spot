@@ -71,11 +71,18 @@ def place_limit_order(
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType, ApiCreds
 
-        client = ClobClient(
-            "https://clob.polymarket.com",
-            key=wallet_key,
-            chain_id=137,
-        )
+        # signature_type=2 + funder for Polymarket proxy wallet
+        safe_address = os.environ.get("POLYMARKET_SAFE_ADDRESS", "")
+        sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
+        init_kwargs = {
+            "host": "https://clob.polymarket.com",
+            "key": wallet_key,
+            "chain_id": 137,
+            "signature_type": sig_type,
+        }
+        if safe_address:
+            init_kwargs["funder"] = safe_address
+        client = ClobClient(**init_kwargs)
 
         # Set API creds if available
         if api_key and api_secret and api_passphrase:
@@ -97,6 +104,7 @@ def place_limit_order(
             token_id=token_id,
             price=price,
             size=round(shares, 2),
+            side="BUY",
         )
 
         signed_order = client.create_order(order_args)
