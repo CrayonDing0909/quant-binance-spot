@@ -22,7 +22,7 @@ volatility:
 # Entry timing within 15-minute window
 entry_window:
   sweet_spot_start: 600    # enter after 5 min passed (10 min remaining)
-  sweet_spot_end: 120      # don't enter with <2 min left
+  sweet_spot_end: 420      # stop at t=8min (7 min remaining) — t=10+ is negative PnL in backtest
 
 # Simple contrarian (v3.1 — matches backtest with real PM odds)
 # Buy whichever PM side is < cheap_threshold
