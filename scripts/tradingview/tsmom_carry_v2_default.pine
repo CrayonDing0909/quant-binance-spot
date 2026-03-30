@@ -173,7 +173,9 @@ htf_daily_close = request.security(syminfo.tickerid, "1D", close[1], lookahead=b
 htf_daily_trend = htf_daily_close > htf_daily_ema ? 1.0 : htf_daily_close < htf_daily_ema ? -1.0 : 0.0
 
 // Daily ADX for trending/ranging classification
-htf_daily_adx = request.security(syminfo.tickerid, "1D", ta.adx(htf_adx_period)[1], lookahead=barmerge.lookahead_on)
+// Pine v6 doesn't have ta.adx() — compute manually: ADX = smoothed(DX) where DX = |+DI - -DI| / (+DI + -DI)
+[htf_di_plus, htf_di_minus, htf_adx_val] = request.security(syminfo.tickerid, "1D", ta.dmi(htf_adx_period, htf_adx_period), lookahead=barmerge.lookahead_on)
+htf_daily_adx = htf_adx_val[1]  // [1] for causal delay (matches Python shift(1))
 is_trending = htf_daily_adx > htf_adx_threshold
 
 // 4h agreement with signal
