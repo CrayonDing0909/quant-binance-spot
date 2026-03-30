@@ -25,12 +25,20 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from qtrade.polymarket.market_discovery import find_current_15m_market, Market15m
+from qtrade.polymarket.market_discovery import find_current_15m_market, get_market_by_slug, Market15m
 from qtrade.polymarket.binance_feed import compute_ta_signals, fetch_recent_klines
 from qtrade.polymarket.odds_divergence import detect_divergence, DivergenceSignal
 from qtrade.polymarket.krajekis_strategy import determine_session
 
 logger = logging.getLogger(__name__)
+
+
+def find_current_15m_market_by_slug(slug: str, coin: str) -> Market15m | None:
+    """Check if a specific market is still active (not yet settled)."""
+    market = get_market_by_slug(slug)
+    if market and market.accepting_orders and market.time_remaining_seconds() > 0:
+        return market
+    return None
 
 
 def send_telegram(message: str, bot_token: str, chat_id: str) -> None:
@@ -169,11 +177,68 @@ def run_once(config: dict, state: dict) -> dict:
         logger.info(f"Daily trade limit reached ({max_daily_trades}).")
         return state
 
+    # ── Check settlements on open positions ──
+    positions = state.get("positions", [])
+    for pos in positions:
+        if pos.get("status") != "open":
+            continue
+
+        # Check if market has settled (price goes to ~0 or ~1)
+        try:
+            settled_market = find_current_15m_market_by_slug(pos["slug"], pos["coin"])
+            if settled_market is None:
+                # Market no longer active = settled. Check resolution.
+                from qtrade.polymarket.market_discovery import get_market_by_slug
+                resolved = get_market_by_slug(pos["slug"])
+                if resolved:
+                    final_up = resolved.price_up
+                    won = (pos["side"] == "up" and final_up > 0.5) or \
+                          (pos["side"] == "down" and final_up < 0.5)
+
+                    entry = pos["entry_price"]
+                    if won:
+                        pnl = pos["size"] * (1.0 / entry - 1)
+                        result_emoji = "✅"
+                        result_text = f"贏了！淨賺 ${pnl:.2f}"
+                    else:
+                        pnl = -pos["size"]
+                        result_emoji = "❌"
+                        result_text = f"輸了，虧 ${abs(pnl):.2f}"
+
+                    pos["status"] = "settled"
+                    pos["won"] = won
+                    pos["pnl"] = pnl
+                    state["cumulative_pnl"] = state.get("cumulative_pnl", 0) + pnl
+                    if not won:
+                        state["daily_losses"] = state.get("daily_losses", 0) + 1
+
+                    settle_msg = (
+                        f"{result_emoji} *結算: {pos['coin']} {pos['side'].upper()}*\n"
+                        f"買入: ${entry:.3f} → {'贏' if won else '輸'}\n"
+                        f"PnL: ${pnl:+.2f}\n"
+                        f"今日累計: ${state.get('cumulative_pnl', 0):+.2f}"
+                    )
+                    send_telegram(settle_msg, tg_token, tg_chat)
+                    logger.info(f"SETTLED [{pos['coin']}]: {result_text} (cumulative: ${state.get('cumulative_pnl', 0):+.2f})")
+
+                    # Log settlement
+                    log_dir = Path(config.get("log_dir", "logs/polymarket"))
+                    log_file = log_dir / f"settlements_{today}.jsonl"
+                    with open(log_file, "a") as f:
+                        f.write(json.dumps({
+                            "timestamp": now.isoformat(),
+                            "coin": pos["coin"], "slug": pos["slug"],
+                            "side": pos["side"], "entry_price": entry,
+                            "won": won, "pnl": pnl,
+                            "strategy": pos.get("strategy", "unknown"),
+                            "cumulative_pnl": state.get("cumulative_pnl", 0),
+                        }) + "\n")
+        except Exception as e:
+            logger.debug(f"Settlement check error: {e}")
+
     # ── Layer 1: Session ──
     session = determine_session(now)
 
-    # Track positions
-    positions = state.get("positions", [])
     active_positions = [p for p in positions if p.get("status") == "open"]
     # Dedup: track which slugs we already signaled (even in dry run)
     signaled_slugs = state.get("signaled_slugs", set())
