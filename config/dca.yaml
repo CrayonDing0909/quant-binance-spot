@@ -1,0 +1,25 @@
+dca:
+  # Keep true for setup tests. Live orders require passing --execute.
+  dry_run: true
+
+  # Duplicate protection period: daily, weekly, or monthly.
+  schedule: daily
+  timezone: Asia/Taipei
+  state_path: reports/dca/state.json
+
+  quote_asset: USDT
+  min_quote_balance_after: 20.0
+  max_total_quote_per_run: 100.0
+  max_total_quote_per_day: 100.0
+
+  # If spot USDT is insufficient, redeem USDT Simple Earn Flexible to Spot first.
+  redeem_flexible_before_order: true
+  redeem_extra_quote: 20.0
+
+  notify: true
+
+  orders:
+    - symbol: BTCUSDT
+      quote_qty: 50.0
+    - symbol: ETHUSDT
+      quote_qty: 50.0

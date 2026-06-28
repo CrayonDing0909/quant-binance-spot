@@ -114,7 +114,7 @@ class BinanceSpotBroker:
         self._avg_entries: dict[str, float] = {}  # 追蹤買入均價（用於計算 PnL）
         self._active_stop_orders: dict[str, str] = {}  # symbol → orderId（活躍的止損單）
 
-        if not self.http.api_key or not self.http.api_secret:
+        if not dry_run and (not self.http.api_key or not self.http.api_secret):
             raise RuntimeError(
                 "❌ 需要設置環境變數 BINANCE_API_KEY 和 BINANCE_API_SECRET\n"
                 "   請在 .env 檔案中配置"
