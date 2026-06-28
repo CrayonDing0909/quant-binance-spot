@@ -24,6 +24,7 @@ from scripts.post_dca_social import (
     post_instagram,
     post_threads,
     render_report_image,
+    send_telegram,
     truncate_caption,
     THREADS_TEXT_LIMIT,
 )
@@ -95,12 +96,15 @@ def test_load_credentials_threads_token_falls_back_to_meta(monkeypatch):
     monkeypatch.setenv("IG_USER_ID", "ig-123")
     monkeypatch.setenv("THREADS_USER_ID", "th-456")
     monkeypatch.delenv("THREADS_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tg-bot")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "tg-chat")
 
     creds = load_credentials()
     assert creds.meta_access_token == "meta-tok"
     assert creds.threads_access_token == "meta-tok"  # fallback
     assert creds.instagram_ready is True
     assert creds.threads_ready is True
+    assert creds.telegram_ready is True
 
 
 def test_load_credentials_separate_threads_token(monkeypatch):
@@ -178,6 +182,30 @@ def test_post_instagram_dry_run_no_network(capsys):
     assert "https://x/y.jpg" in capsys.readouterr().out
 
 
+def test_send_telegram_dry_run_no_network(capsys):
+    creds = SocialCredentials(None, None, None, None)
+    res = send_telegram(creds, "今日文案", dry_run=True)
+    assert res["dry_run"] is True and res["channel"] == "telegram"
+    assert "今日文案" in capsys.readouterr().out
+
+
+def test_send_telegram_missing_creds_degrades():
+    creds = SocialCredentials(None, None, None, None)  # telegram_ready False
+    res = send_telegram(creds, "x", dry_run=False)
+    assert res["dry_run"] is True
+
+
+def test_send_telegram_live_calls_api(fake_requests):
+    fake = fake_requests(post_responses=[_FakeResp({"result": {"message_id": 999}})])
+    creds = SocialCredentials(None, None, None, None,
+                              telegram_bot_token="botT", telegram_chat_id="42")
+    res = send_telegram(creds, "貼文文案", dry_run=False)
+    assert res["id"] == 999 and res["dry_run"] is False
+    assert "/botbotT/sendMessage" in fake.posts[0]["url"]
+    assert fake.posts[0]["data"]["chat_id"] == "42"
+    assert fake.posts[0]["data"]["text"] == "貼文文案"
+
+
 # ── 兩步發文流程（mock requests）──────────────────────────────────────────
 
 def test_post_threads_live_two_step_flow(fake_requests):
@@ -246,12 +274,13 @@ def test_get_report_text_raises_on_failure(monkeypatch):
 
 # ── main dry-run 整合（無網路、無 token）──────────────────────────────────
 
-def test_main_dry_run_previews_both_channels(monkeypatch, tmp_path, capsys):
+def test_main_dry_run_previews_all_channels(monkeypatch, tmp_path, capsys):
     import scripts.post_dca_social as mod
 
     monkeypatch.setattr(mod, "load_dotenv", lambda *a, **k: None)
     monkeypatch.setattr(mod, "get_report_text", lambda *a, **k: SAMPLE_REPORT)
-    for var in ("META_ACCESS_TOKEN", "IG_USER_ID", "THREADS_USER_ID", "THREADS_ACCESS_TOKEN"):
+    for var in ("META_ACCESS_TOKEN", "IG_USER_ID", "THREADS_USER_ID", "THREADS_ACCESS_TOKEN",
+                "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
         monkeypatch.delenv(var, raising=False)
 
     rc = main(["--dry-run", "--image-out", str(tmp_path / "r.jpg")])
@@ -259,6 +288,27 @@ def test_main_dry_run_previews_both_channels(monkeypatch, tmp_path, capsys):
 
     assert rc == 0
     assert "定投報告" in out
+    assert "[Telegram]" in out
     assert "[Threads]" in out
     assert "[Instagram]" in out
     assert (tmp_path / "r.jpg").exists()  # 圖片仍會被產生
+
+
+def test_main_send_telegram_only_skips_other_channels(monkeypatch, tmp_path, capsys):
+    import scripts.post_dca_social as mod
+
+    monkeypatch.setattr(mod, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "get_report_text", lambda *a, **k: SAMPLE_REPORT)
+    for var in ("META_ACCESS_TOKEN", "IG_USER_ID", "THREADS_USER_ID", "THREADS_ACCESS_TOKEN",
+                "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        monkeypatch.delenv(var, raising=False)
+
+    img = tmp_path / "nope.jpg"
+    rc = main(["--send-telegram", "--dry-run", "--image-out", str(img)])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "[Telegram]" in out
+    assert "[Threads]" not in out
+    assert "[Instagram]" not in out
+    assert not img.exists()  # 沒選 IG → 不渲染圖片

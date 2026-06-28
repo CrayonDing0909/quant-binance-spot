@@ -67,6 +67,8 @@ class SocialCredentials:
     ig_user_id: str | None
     threads_user_id: str | None
     threads_access_token: str | None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
 
     @property
     def threads_ready(self) -> bool:
@@ -75,6 +77,10 @@ class SocialCredentials:
     @property
     def instagram_ready(self) -> bool:
         return bool(self.meta_access_token and self.ig_user_id)
+
+    @property
+    def telegram_ready(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
 
 
 def load_credentials() -> SocialCredentials:
@@ -88,6 +94,8 @@ def load_credentials() -> SocialCredentials:
         ig_user_id=os.getenv("IG_USER_ID") or None,
         threads_user_id=os.getenv("THREADS_USER_ID") or None,
         threads_access_token=threads_token,
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
+        telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
     )
 
 
@@ -365,6 +373,40 @@ def post_threads(creds: SocialCredentials, text: str, *, dry_run: bool = False, 
     return {"dry_run": False, "channel": "threads", "id": media_id, "creation_id": creation_id}
 
 
+# ── Telegram 推送（把文案推到手機，手動貼到 Threads）──────────────────────
+
+def send_telegram(creds: SocialCredentials, text: str, *, dry_run: bool = False) -> dict:
+    """
+    用既有的 Telegram bot 把「排版好、可直接貼到 Threads 的文案」推到你的手機。
+
+    這是免 Threads API 的省事路線：機器人每天把當日文案傳給你，你複製貼上即可。
+    直接打 Telegram Bot API（不依賴 qtrade），用 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID。
+    """
+    if dry_run or not creds.telegram_ready:
+        if not creds.telegram_ready and not dry_run:
+            logger.warning("Telegram 憑證未設定（TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID），改為 dry-run。")
+        print("─" * 48)
+        print("[Telegram] 將推送以下文案到你的手機（複製貼到 Threads）：")
+        print(text)
+        print("─" * 48)
+        return {"dry_run": True, "channel": "telegram", "text": text}
+
+    import requests  # 延遲匯入
+    resp = requests.post(
+        f"https://api.telegram.org/bot{creds.telegram_bot_token}/sendMessage",
+        data={
+            "chat_id": creds.telegram_chat_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    message_id = resp.json().get("result", {}).get("message_id")
+    logger.info("Telegram 已推送文案，message_id=%s", message_id)
+    return {"dry_run": False, "channel": "telegram", "id": message_id}
+
+
 # ── Instagram 發文 ────────────────────────────────────────────────────────
 
 def _wait_ig_container_ready(
@@ -461,9 +503,11 @@ def post_instagram(
 # ── 主流程 ────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="把 DCA 中文報告自動發到 Instagram / Threads")
+    parser = argparse.ArgumentParser(description="把 DCA 中文報告發到 Telegram / Threads / Instagram")
     parser.add_argument("--config", "-c", default="config/dca.yaml", help="DCA 設定檔（傳給 run_dca --report）")
-    parser.add_argument("--post-threads", action="store_true", help="發布 Threads 純文字貼文")
+    parser.add_argument("--send-telegram", action="store_true",
+                        help="用 Telegram bot 把可貼到 Threads 的文案推到手機（免 Threads API）")
+    parser.add_argument("--post-threads", action="store_true", help="發布 Threads 純文字貼文（需 Threads API token）")
     parser.add_argument("--post-instagram", action="store_true", help="發布 Instagram 圖文")
     parser.add_argument("--dry-run", action="store_true", help="只印出將發文內容，不呼叫任何 API")
     parser.add_argument("--image-out", default="reports/dca/dca_report.jpg", help="報表圖輸出路徑")
@@ -477,9 +521,11 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     creds = load_credentials()
 
-    # 沒指定任何頻道時，預設兩個都做（dry-run 預覽）。
-    do_threads = args.post_threads or not (args.post_threads or args.post_instagram)
-    do_instagram = args.post_instagram or not (args.post_threads or args.post_instagram)
+    # 沒指定任何頻道時，預設三個都做（dry-run 預覽用）。
+    any_flag = args.send_telegram or args.post_threads or args.post_instagram
+    do_telegram = args.send_telegram or not any_flag
+    do_threads = args.post_threads or not any_flag
+    do_instagram = args.post_instagram or not any_flag
 
     # Threads 與 IG 通常是不同的 token；提醒 fallback 的情況（實際呼叫會 190 失敗）。
     if do_threads and not args.dry_run and creds.threads_ready and os.getenv("THREADS_ACCESS_TOKEN") is None:
@@ -491,10 +537,14 @@ def main(argv: list[str] | None = None) -> int:
     report = get_report_text(args.config)
     print(report)  # 一律先把完整報告印到 stdout，方便排程 log 與肉眼檢查
 
+    # Telegram 與 Threads 共用同一份「可貼上、已壓到 500 字內」的文案。
+    threads_text = condense_report_for_threads(report)
     results: list[dict] = []
 
+    if do_telegram:
+        results.append(send_telegram(creds, threads_text, dry_run=args.dry_run))
+
     if do_threads:
-        threads_text = condense_report_for_threads(report)
         results.append(post_threads(creds, threads_text, dry_run=args.dry_run))
 
     if do_instagram:

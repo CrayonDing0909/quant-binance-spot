@@ -3,12 +3,12 @@
 # DCA 定投 + 社群自動發文 — Cron 設定
 #
 # 兩個排程（台灣時間，Asia/Taipei）：
-#   03:00  買入 DCA（XIRR 回測顯示每日 BTC50U+ETH50U 最佳買點 ≈ 03:00）
+#   23:00  買入 DCA（逐時 XIRR 差距是雜訊等級；23:00 為當前資料的最高，僅供參考）
 #          ⚠️ 預設「不帶 --execute」= dry-run，不會真的下單。
 #          確認無誤要正式上線時，才把買入那行的 RUN_FLAGS 改成 "--execute"。
-#   18:00  發文（目前只發 Threads 純文字）
+#   18:00  發文（預設用 Telegram 把可貼到 Threads 的文案推到手機）
 #          缺 token 時會自動降級成 dry-run，所以現在就能安裝。
-#          想日後也發 Instagram 圖文，在下方那行加 --post-instagram 即可。
+#          想改用官方 API 直接發，把 --send-telegram 換成 --post-threads（並設好 token）。
 #
 # 用法：
 #   ./scripts/setup_dca_cron.sh              # 預覽（預設）
@@ -54,15 +54,15 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # 讓下方時間以台灣時間解讀（Linux Vixie cron 支援；macOS 不支援）
 CRON_TZ=Asia/Taipei
 
-# 1. 買入 DCA — 每日台灣時間 03:00（預設 dry-run，不帶 --execute）
-0 3 * * * cd $PROJECT_ROOT && ${ACTIVATE}python scripts/run_dca.py -c $CONFIG_FILE $RUN_FLAGS >> $LOG_DIR/dca_buy.log 2>&1
+# 1. 買入 DCA — 每日台灣時間 23:00（預設 dry-run，不帶 --execute）
+0 23 * * * cd $PROJECT_ROOT && ${ACTIVATE}python scripts/run_dca.py -c $CONFIG_FILE $RUN_FLAGS >> $LOG_DIR/dca_buy.log 2>&1
 
-# 2. 社群發文 — 每日台灣時間 18:00（目前只發 Threads；要發 IG 再加 --post-instagram）
-0 18 * * * cd $PROJECT_ROOT && ${ACTIVATE}python scripts/post_dca_social.py -c $CONFIG_FILE --post-threads >> $LOG_DIR/dca_social.log 2>&1
+# 2. 社群發文 — 每日台灣時間 18:00（Telegram 推文案到手機；要直接發 Threads 改 --post-threads）
+0 18 * * * cd $PROJECT_ROOT && ${ACTIVATE}python scripts/post_dca_social.py -c $CONFIG_FILE --send-telegram >> $LOG_DIR/dca_social.log 2>&1
 
 # ── 若系統 cron 不支援 CRON_TZ（例如 macOS），改用 UTC 時間（= 台灣時間 -8）：
-#   買入 03:00 台灣 = 19:00 UTC（前一日）: 0 19 * * *
-#   發文 18:00 台灣 = 10:00 UTC:          0 10 * * *
+#   買入 23:00 台灣 = 15:00 UTC: 0 15 * * *
+#   發文 18:00 台灣 = 10:00 UTC: 0 10 * * *
 $CRON_MARKER - END
 EOF
 }
